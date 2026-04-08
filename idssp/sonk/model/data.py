@@ -1,0 +1,172 @@
+import nibabel as nib
+import numpy as np
+
+from idssp.sonk.view import utils
+
+class VolumeWrapper:
+    def __init__(self, id, img_path, label_path):
+        self.id = id
+        self.img_path = img_path
+        self.label_path = label_path
+        self.image = None
+        self.image_data = None
+        self.label = None
+        self.label_data = None
+        self.mask_unique_values = None
+
+    def load_data(self):
+        print(f"Loading data for volume {self.id}...")
+        self.image = nib.load(self.img_path)
+        self.label = nib.load(self.label_path)
+
+        self.image_data = self.image.get_fdata()
+        self.label_data = self.label.get_fdata()
+
+        print("Data loaded successfully.")
+        print("Calculating unique values in the label data...")
+        self.mask_unique_values = np.unique(self.label_data)
+        self.convert_mask_to_long()
+
+    def load_image(self):
+        if self.image is None:
+            self.image = nib.load(self.img_path)
+        return self.image
+
+    def load_label(self):
+        if self.label is None:
+            self.label = nib.load(self.label_path)
+        return self.label
+    
+    def convert_mask_to_long(self):
+        if self.label_data is not None:
+            self.label_data = self.label_data.astype(np.uint8)
+        else:
+            print("Label data is not loaded. Please load the label data before converting to long.")
+
+    def print_slice_summary(self):
+        num_of_slices = self.image_data.shape[2]
+        print(f"Volume {self.id} has {num_of_slices} slices.")
+
+        first_liver_slice = None
+        first_tumor_slice = None
+
+        last_liver_slice = None
+        last_tumor_slice = None
+
+        for i in range(num_of_slices):
+            slice_mask = self.label_data[:, :, i]
+
+            if np.any(slice_mask == 1):  # Check if there's any liver in the slice
+                if first_liver_slice is None:
+                    first_liver_slice = i
+                last_liver_slice = i
+
+            if np.any(slice_mask == 2):  # Check if there's any tumor in the slice
+                if first_tumor_slice is None:
+                    first_tumor_slice = i
+                last_tumor_slice = i
+        
+        print(f"Liver slices range from {first_liver_slice} to {last_liver_slice}")
+        print(f"Tumor slices range from {first_tumor_slice} to {last_tumor_slice}")
+
+class DataWrapper:
+    def __init__(self, files_dir, img_prefix, label_prefix, file_extension=".nii.gz"):
+        self.dir = files_dir
+        self.img_prefix = img_prefix
+        self.label_prefix = label_prefix
+        self.file_extension = file_extension
+        self.volume = None
+
+    def get_paths_of_volume(self, volume_id):
+        '''
+        Returns the paths for the image and label files of a given volume ID
+        in the form of a dictionary with keys "image" and "label" (as expected by
+        the MONAI dataset).
+        Params
+        ------
+        `volume_id`: int
+            The ID of the volume to get the paths for.
+        Returns
+        -------
+        dict
+            A dictionary with keys "image" and "label", containing the paths to the
+            image and label files, respectively.
+            `{"image": <path_to_image>, "label": <path_to_label>}`
+        '''
+        img_path = f"{self.dir}/{self.img_prefix}{volume_id}{self.file_extension}"
+        mask_path = f"{self.dir}/{self.label_prefix}{volume_id}{self.file_extension}"
+        return {
+            "image":img_path, 
+            "label": mask_path
+        }
+
+    def print_summary_of_volume(self, volume_id):
+        '''
+        Prints a summary of the image and label files of a given volume ID, including
+        their paths and shapes.
+        Params
+        ------
+        `volume_id`: int
+            The ID of the volume to print the summary for.
+        '''
+        if self.volume is None or self.volume.id != volume_id:
+            paths = self.get_paths_of_volume(volume_id)
+            img_path, mask_path = paths['image'], paths['label']
+            self.volume = VolumeWrapper(volume_id, img_path, mask_path)
+            self.volume.load_data()
+
+        print(f"Volume {volume_id} summary:")
+        print("--------------------File paths--------------------")
+        print(f"Image path: {self.volume.img_path}")
+        print(f"Label path: {self.volume.label_path}")
+
+        print("--------------------File shapes--------------------")
+        print(f"Image shape: {self.volume.image.shape}")
+        print(f"Label shape: {self.volume.label.shape}")
+
+        # Check if the shapes match
+        if self.volume.image.shape != self.volume.label.shape:
+            print("Warning: Image and label shapes do not match!")
+
+        print("--------------------Data arrays--------------------")
+        print('Image data shape: %s' % str(self.volume.image_data.shape))
+        print('Mask data shape: %s' % str(self.volume.label_data.shape))
+
+        # TODO: use this information to decide on the necessary preprocessing steps (e.g., resampling, normalization, etc.)
+        print("--------------------- value ranges--------------------")
+        print("CT intensity range:", self.volume.image_data.min(), "to", self.volume.image_data.max())
+        print("Mask intensity range:", self.volume.label_data.min(), "to", self.volume.label_data.max())
+
+        print("Voxel dimensions (mm):", self.volume.image.header.get_zooms())
+
+        print("--------------------Affine information--------------------")
+        print("Image affine transformation matrix:\n", self.volume.image.affine)
+        print("Human readable header affine:\n", nib.aff2axcodes(self.volume.image.affine))
+
+        # Check the unique values in the label data to understand the classes present
+        print("--------------------Unique labels in segmentation--------------------")
+        print("Unique labels in segmentation:", self.volume.mask_unique_values)
+        print("Check if the unique labels match the expected classes (e.g., 0 for background, 1 for liver, 2 for tumor).")
+
+        print("---------------------Slice information---------------------")
+        self.volume.print_slice_summary()
+
+    def plot_slice(self, volume_id, slice_index):
+        '''
+        Plots a specific slice of the image and its corresponding label for a given volume ID.
+        Params
+        ------
+        `volume_id`: int
+            The ID of the volume to plot the slice from.
+        `slice_index`: int
+            The index of the slice to plot.
+        '''
+        if self.volume is None or self.volume.id != volume_id:
+            paths = self.get_paths_of_volume(volume_id)
+            img_path, mask_path = paths['image'], paths['label']
+            self.volume = VolumeWrapper(volume_id, img_path, mask_path)
+            self.volume.load_data()
+        
+        print(f"Plotting slice {slice_index} of volume {volume_id}...")
+        utils.plot_slice(self.volume.image_data, self.volume.label_data, slice_index)
+        utils.plot_mixed_slice(self.volume.image_data, self.volume.label_data, slice_index)
