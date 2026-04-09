@@ -131,12 +131,20 @@ class ModelBuilder:
         if num_epochs is None:
             num_epochs = config.NUM_EPOCHS
 
+        # Dice Metric setup
+        post_trans = Compose([
+            Activations(softmax=True),
+            AsDiscrete(argmax=True, to_onehot=True, num_classes=config.NUM_CLASSES)
+        ])
+        dice_metric = DiceMetric(include_background=False, reduction="mean")
+        best_val_dice = -1.0
+        best_ckpt_path = config.CHECKPOINT_DIR / "best_model.pth"
+
         for epoch in range(num_epochs):
-            print(f"Epoch {epoch+1}/{num_epochs}")
+            print(f"\nEpoch {epoch+1}/{num_epochs}")
             self.model.train()
             train_loss = 0
 
-            # Training
             for batch in self.train_dl:
                 images = batch["image"].to(self.device)
                 labels = batch["label"].to(self.device)
@@ -144,10 +152,8 @@ class ModelBuilder:
                 self.optimizer.zero_grad()
                 preds = self.model(images)
                 loss = self.loss_fn(preds, labels)
-
                 loss.backward()
                 self.optimizer.step()
-
                 train_loss += loss.item()
 
             avg_train_loss = train_loss / len(self.train_dl)
@@ -156,15 +162,33 @@ class ModelBuilder:
             # Validation
             self.model.eval()
             val_loss = 0
+            dice_metric.reset()
             with torch.no_grad():
                 for batch in self.val_dl:
                     images = batch["image"].to(self.device)
-                    # NIfTI labels are often stored as float, but we need them as long for the loss function
-                    labels = batch["label"].to(self.device).long()
+                    labels = batch["label"].to(self.device)
 
                     preds = self.model(images)
-                    loss = self.loss_fn(preds, labels)
-                    val_loss += loss.item()
+                    val_loss += self.loss_fn(preds, labels).item()
+
+                    # Track Dice
+                    val_preds = post_trans(preds)
+                    dice_metric(y_pred=val_preds, y=labels)
 
             avg_val_loss = val_loss / len(self.val_dl)
-            print(f"  Validation loss: {avg_val_loss:.4f}")
+            epoch_dice = dice_metric.aggregate().item()
+            print(f"  Validation loss: {avg_val_loss:.4f} | Dice: {epoch_dice:.4f}")
+
+            # Checkpoint saving
+            if epoch_dice > best_val_dice:
+                best_val_dice = epoch_dice
+                print(f"  ✅ New best Dice: {best_val_dice:.4f}. Saving checkpoint...")
+                torch.save({
+                    "epoch": epoch,
+                    "model_state_dict": self.model.state_dict(),
+                    "optimizer_state_dict": self.optimizer.state_dict(),
+                    "best_dice": best_val_dice,
+                }, best_ckpt_path)
+
+        print(f"\nTraining complete. Best validation Dice: {best_val_dice:.4f}")
+        print(f"Checkpoint saved to: {best_ckpt_path}")
