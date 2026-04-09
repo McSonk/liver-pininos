@@ -131,12 +131,19 @@ class ModelBuilder:
         if num_epochs is None:
             num_epochs = config.NUM_EPOCHS
 
-        # Dice Metric setup
-        post_trans = Compose([
+        # 1. Post-processing for Predictions: Softmax -> Argmax -> One-Hot
+        pred_trans = Compose([
             Activations(softmax=True),
-            AsDiscrete(argmax=True, to_onehot=True, num_classes=config.NUM_CLASSES)
+            AsDiscrete(argmax=True, to_onehot=config.NUM_CLASSES)
         ])
+
+        # 2. Post-processing for Labels: Index -> One-Hot
+        # This converts labels like [0, 1, 2] into one-hot vectors [[1,0,0], [0,1,0], [0,0,1]]
+        label_trans = AsDiscrete(to_onehot=config.NUM_CLASSES)
+
+        # 3. Initialize Metric (No extra args needed here)
         dice_metric = DiceMetric(include_background=False, reduction="mean")
+        
         best_val_dice = -1.0
         best_ckpt_path = config.CHECKPOINT_DIR / "best_model.pth"
 
@@ -163,6 +170,7 @@ class ModelBuilder:
             self.model.eval()
             val_loss = 0
             dice_metric.reset()
+            
             with torch.no_grad():
                 for batch in self.val_dl:
                     images = batch["image"].to(self.device)
@@ -171,9 +179,12 @@ class ModelBuilder:
                     preds = self.model(images)
                     val_loss += self.loss_fn(preds, labels).item()
 
-                    # Track Dice
-                    val_preds = post_trans(preds)
-                    dice_metric(y_pred=val_preds, y=labels)
+                    # 4. Apply transformations before passing to metric
+                    val_preds = pred_trans(preds)   # Model output -> One-Hot
+                    val_labels = label_trans(labels) # Label indices -> One-Hot
+
+                    # 5. Calculate Dice on matching one-hot tensors
+                    dice_metric(y_pred=val_preds, y=val_labels)
 
             avg_val_loss = val_loss / len(self.val_dl)
             epoch_dice = dice_metric.aggregate().item()
