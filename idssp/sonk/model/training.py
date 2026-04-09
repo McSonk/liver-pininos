@@ -1,14 +1,13 @@
 import torch
+import torch.nn as nn
 import torch.optim as optim
-from monai.data import DataLoader, Dataset
+from monai.data import DataLoader, Dataset, decollate_batch
 from monai.losses import DiceLoss
 from monai.metrics import DiceMetric
 from monai.networks.nets import UNet
-from monai.transforms import (
-    Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged,
-    RandSpatialCropd, CenterSpatialCropd, SqueezeDimd, RandFlipd,
-    EnsureTyped, Activations, AsDiscrete
-)
+from monai.transforms import (Compose, EnsureTyped, LoadImaged, RandFlipd,
+                              RandSpatialCropd, CenterSpatialCropd, SqueezeDimd,
+                              ScaleIntensityRanged, Activations, AsDiscrete)
 
 from idssp.sonk.model.data import DataWrapper
 from idssp.sonk import config
@@ -21,6 +20,16 @@ class ModelBuilder:
         self.loss_fn = None
         self.optimizer = None
         self.device = torch.device(config.DEVICE)
+
+        # Post-processing & Metrics
+        self.pred_trans = Compose([
+            Activations(softmax=True),
+            AsDiscrete(argmax=True, to_onehot=config.NUM_CLASSES)
+        ])
+        self.label_trans = AsDiscrete(to_onehot=config.NUM_CLASSES)
+        self.dice_metric = DiceMetric(include_background=False, reduction="mean")
+        self.history = {"train_loss": [], "val_loss": [], "val_dice": []}
+
         print("ModelBuilder initialized. Device set to:", self.device)
 
     def get_train_transforms(self):
@@ -103,7 +112,7 @@ class ModelBuilder:
         print("Creating validation dataloader...")
         self.val_dl = DataLoader(
             val_ds, 
-            batch_size=config.BATCH_SIZE, # Keep val batch size 1 for safety
+            batch_size=config.VAL_BATCH_SIZE, 
             shuffle=False, 
             num_workers=config.NUM_WORKERS, 
             pin_memory=config.PIN_MEMORY
@@ -131,19 +140,6 @@ class ModelBuilder:
         if num_epochs is None:
             num_epochs = config.NUM_EPOCHS
 
-        # 1. Post-processing for Predictions: Softmax -> Argmax -> One-Hot
-        pred_trans = Compose([
-            Activations(softmax=True),
-            AsDiscrete(argmax=True, to_onehot=config.NUM_CLASSES)
-        ])
-
-        # 2. Post-processing for Labels: Index -> One-Hot
-        # This converts labels like [0, 1, 2] into one-hot vectors [[1,0,0], [0,1,0], [0,0,1]]
-        label_trans = AsDiscrete(to_onehot=config.NUM_CLASSES)
-
-        # 3. Initialize Metric (No extra args needed here)
-        dice_metric = DiceMetric(include_background=False, reduction="mean")
-        
         best_val_dice = -1.0
         best_ckpt_path = config.CHECKPOINT_DIR / "best_model.pth"
 
@@ -169,8 +165,7 @@ class ModelBuilder:
             # Validation
             self.model.eval()
             val_loss = 0
-            dice_metric.reset()
-            
+            self.dice_metric.reset()
             with torch.no_grad():
                 for batch in self.val_dl:
                     images = batch["image"].to(self.device)
@@ -179,21 +174,28 @@ class ModelBuilder:
                     preds = self.model(images)
                     val_loss += self.loss_fn(preds, labels).item()
 
-                    # 4. Apply transformations before passing to metric
-                    val_preds = pred_trans(preds)   # Model output -> One-Hot
-                    val_labels = label_trans(labels) # Label indices -> One-Hot
+                    # MONAI best practice: decollate batch before applying per-sample transforms
+                    val_preds = decollate_batch(preds)
+                    val_labels = decollate_batch(labels)
 
-                    # 5. Calculate Dice on matching one-hot tensors
-                    dice_metric(y_pred=val_preds, y=val_labels)
+                    # Use self. attributes defined in __init__
+                    val_preds = [self.pred_trans(p) for p in val_preds]
+                    val_labels = [self.label_trans(l) for l in val_labels]
+
+                    self.dice_metric(y_pred=val_preds, y=val_labels)
 
             avg_val_loss = val_loss / len(self.val_dl)
-            epoch_dice = dice_metric.aggregate().item()
+            epoch_dice = self.dice_metric.aggregate().item()
             print(f"  Validation loss: {avg_val_loss:.4f} | Dice: {epoch_dice:.4f}")
+
+            # Track history for plotting
+            self.history["train_loss"].append(avg_train_loss)
+            self.history["val_loss"].append(avg_val_loss)
+            self.history["val_dice"].append(epoch_dice)
 
             # Checkpoint saving
             if epoch_dice > best_val_dice:
                 best_val_dice = epoch_dice
-                print(f"  ✅ New best Dice: {best_val_dice:.4f}. Saving checkpoint...")
                 torch.save({
                     "epoch": epoch,
                     "model_state_dict": self.model.state_dict(),
