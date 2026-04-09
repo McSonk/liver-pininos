@@ -1,6 +1,7 @@
 import matplotlib as mpl
-import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib import animation
 
 # For the animation to display the full slices range
@@ -169,3 +170,23 @@ def plot_animation(img_data, mask_data, first_slice, last_slice, first_tumour_sl
 
     plt.close(fig)
     return ani
+
+# voxel coordinate (x=0, y=0, z=slice_index)
+def slice_to_world_coordinates(image_object, slice_index):
+    '''
+    Converts a slice index to world coordinates. Useful for comparing with 
+    visualisation tools like 3D Slicer that use world coordinates.
+    Params
+    ------
+    `image_object` : nibabel.Nifti1Image
+        The image object containing the affine transformation
+    `slice_index` : int
+        Index of the slice to convert
+    Returns
+    -------
+    `world_coord` : float
+        The world coordinate of the slice
+    '''
+    voxel_coord = np.array([0, 0, slice_index, 1])  # homogeneous coordinate
+    world_coord = image_object.affine @ voxel_coord
+    return world_coord[2]

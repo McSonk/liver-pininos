@@ -13,8 +13,12 @@ class VolumeWrapper:
         self.label = None
         self.label_data = None
         self.mask_unique_values = None
+        self.slice_thresholds = None
 
     def load_data(self):
+        '''
+        Loads the image and label data for the volume.
+        '''
         print(f"Loading data for volume {self.id}...")
         self.image = nib.load(self.img_path)
         self.label = nib.load(self.label_path)
@@ -26,32 +30,22 @@ class VolumeWrapper:
         print("Calculating unique values in the label data...")
         self.mask_unique_values = np.unique(self.label_data)
         self.convert_mask_to_long()
+        print("Finding slice information...")
+        self.find_slice_thresholds()
+        print("done!")
 
-    def load_image(self):
-        if self.image is None:
-            self.image = nib.load(self.img_path)
-        return self.image
 
-    def load_label(self):
-        if self.label is None:
-            self.label = nib.load(self.label_path)
-        return self.label
-    
-    def convert_mask_to_long(self):
-        if self.label_data is not None:
-            self.label_data = self.label_data.astype(np.uint8)
-        else:
-            print("Label data is not loaded. Please load the label data before converting to long.")
-
-    def print_slice_summary(self):
-        num_of_slices = self.image_data.shape[2]
-        print(f"Volume {self.id} has {num_of_slices} slices.")
-
+    def find_slice_thresholds(self):
+        '''
+        Finds the threshold slices for liver and tumor regions.
+        '''
         first_liver_slice = None
         first_tumor_slice = None
 
         last_liver_slice = None
         last_tumor_slice = None
+
+        num_of_slices = self.image_data.shape[2]
 
         for i in range(num_of_slices):
             slice_mask = self.label_data[:, :, i]
@@ -65,9 +59,38 @@ class VolumeWrapper:
                 if first_tumor_slice is None:
                     first_tumor_slice = i
                 last_tumor_slice = i
-        
-        print(f"Liver slices range from {first_liver_slice} to {last_liver_slice}")
-        print(f"Tumor slices range from {first_tumor_slice} to {last_tumor_slice}")
+
+        self.slice_thresholds = {
+            "liver": {
+                "first": first_liver_slice,
+                "last": last_liver_slice
+            },
+            "tumor": {
+                "first": first_tumor_slice,
+                "last": last_tumor_slice
+            }
+        }
+
+    def load_image(self):
+        if self.image is None:
+            self.image = nib.load(self.img_path)
+        return self.image
+
+    def load_label(self):
+        if self.label is None:
+            self.label = nib.load(self.label_path)
+        return self.label
+
+    def convert_mask_to_long(self):
+        if self.label_data is not None:
+            self.label_data = self.label_data.astype(np.uint8)
+        else:
+            print("Label data is not loaded. Please load the label data before converting to long.")
+
+    def print_slice_summary(self):
+        print(f"Volume {self.id} has {self.image_data.shape[2]} slices.")
+        print(f"Liver slices range from {self.slice_thresholds['liver']['first']} to {self.slice_thresholds['liver']['last']}")
+        print(f"Tumor slices range from {self.slice_thresholds['tumor']['first']} to {self.slice_thresholds['tumor']['last']}")
 
 class DataWrapper:
     def __init__(self, files_dir, img_prefix, label_prefix, file_extension=".nii.gz"):
@@ -76,6 +99,19 @@ class DataWrapper:
         self.label_prefix = label_prefix
         self.file_extension = file_extension
         self.volume = None
+
+    def set_volume(self, volume_id):
+        '''
+        Sets the volume for the data wrapper.
+        Params
+        ------
+        `volume_id`: int
+            The ID of the volume to set.
+        '''
+        paths = self.get_paths_of_volume(volume_id)
+        img_path, mask_path = paths['image'], paths['label']
+        self.volume = VolumeWrapper(volume_id, img_path, mask_path)
+        self.volume.load_data()
 
     def get_paths_of_volume(self, volume_id):
         '''
@@ -100,7 +136,7 @@ class DataWrapper:
             "label": mask_path
         }
 
-    def print_summary_of_volume(self, volume_id):
+    def print_summary_of_volume(self):
         '''
         Prints a summary of the image and label files of a given volume ID, including
         their paths and shapes.
@@ -109,13 +145,10 @@ class DataWrapper:
         `volume_id`: int
             The ID of the volume to print the summary for.
         '''
-        if self.volume is None or self.volume.id != volume_id:
-            paths = self.get_paths_of_volume(volume_id)
-            img_path, mask_path = paths['image'], paths['label']
-            self.volume = VolumeWrapper(volume_id, img_path, mask_path)
-            self.volume.load_data()
+        if self.volume is None:
+            raise ValueError("Volume is not set. Please set the volume using set_volume() before printing the summary.")
 
-        print(f"Volume {volume_id} summary:")
+        print(f"Volume {self.volume.id} summary:")
         print("--------------------File paths--------------------")
         print(f"Image path: {self.volume.img_path}")
         print(f"Label path: {self.volume.label_path}")
@@ -151,22 +184,39 @@ class DataWrapper:
         print("---------------------Slice information---------------------")
         self.volume.print_slice_summary()
 
-    def plot_slice(self, volume_id, slice_index):
+    def plot_slice(self, slice_index):
         '''
         Plots a specific slice of the image and its corresponding label for a given volume ID.
         Params
         ------
-        `volume_id`: int
-            The ID of the volume to plot the slice from.
         `slice_index`: int
             The index of the slice to plot.
         '''
-        if self.volume is None or self.volume.id != volume_id:
-            paths = self.get_paths_of_volume(volume_id)
-            img_path, mask_path = paths['image'], paths['label']
-            self.volume = VolumeWrapper(volume_id, img_path, mask_path)
-            self.volume.load_data()
-        
-        print(f"Plotting slice {slice_index} of volume {volume_id}...")
+        if self.volume is None:
+            raise ValueError("Volume is not set. Please set the volume using set_volume() before plotting a slice.")
+
+        print(f"Plotting slice {slice_index} of volume {self.volume.id}...")
         utils.plot_slice(self.volume.image_data, self.volume.label_data, slice_index)
         utils.plot_mixed_slice(self.volume.image_data, self.volume.label_data, slice_index)
+
+
+    def get_animation_motion(self):
+        '''
+        Creates an animation of the slices of the image and their corresponding labels for a given volume ID.
+        Returns
+        -------
+        matplotlib.animation.FuncAnimation
+            The animation object that can be displayed in a Jupyter notebook or saved as a video file.
+        '''
+        if self.volume is None:
+            raise ValueError("Volume is not set. Please set the volume using set_volume() before creating an animation.")
+
+        print(f"Creating animation for volume {self.volume.id}...")
+        ani = utils.plot_animation(
+            self.volume.image_data,
+            self.volume.label_data,
+            first_slice=self.volume.slice_thresholds['liver']['first'],
+            last_slice=self.volume.slice_thresholds['liver']['last'],
+            first_tumour_slice=self.volume.slice_thresholds['tumor']['first']
+            )
+        return ani
