@@ -10,8 +10,9 @@ from monai.transforms import (Compose, EnsureTyped, LoadImaged, RandFlipd,
                               ScaleIntensityRanged, SqueezeDimd, ToTensord)
 
 from idssp.sonk.model.data import DataWrapper
+from idssp.sonk import config
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device(config.DEVICE)
 
 class ModelBuilder:
     def __init__(self):
@@ -20,7 +21,7 @@ class ModelBuilder:
         self.model = None
         self.loss_fn = None
         self.optimizer = None
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(config.DEVICE)
 
         print("ModelBuilder initialized. Device set to:", self.device)
 
@@ -29,7 +30,6 @@ class ModelBuilder:
         # [-175, 250] covers the liver and tumor intensities well, while also removing
         # some of the irrelevant background noise.
         # TODO: verify if this range is good for our data. We can adjust it based on the actual intensity distribution of the liver and tumor in our dataset.
-        HU_MIN, HU_MAX = -175, 250
 
         return Compose([
             LoadImaged(keys=['image', 'label'], ensure_channel_first=True),
@@ -40,7 +40,7 @@ class ModelBuilder:
             # a -> input range, b -> output range
             ScaleIntensityRanged(
                 keys=["image"],
-                a_min=HU_MIN, a_max=HU_MAX,
+                a_min=config.HU_WINDOW_MIN, a_max=config.HU_WINDOW_MAX,
                 b_min=0.0,  b_max=1.0,
                 clip=True,
             ),
@@ -68,7 +68,7 @@ class ModelBuilder:
             LoadImaged(keys=["image", "label"], ensure_channel_first=True),
             ScaleIntensityRanged(
                 keys=["image"],
-                a_min=-175, a_max=250,
+                a_min=config.HU_WINDOW_MIN, a_max=config.HU_WINDOW_MAX,
                 b_min=0.0,  b_max=1.0,
                 clip=True,
             ),
@@ -101,10 +101,23 @@ class ModelBuilder:
         print("Creating training dataloader...")
         # TODO: change the number of workers when we have GPU access.
         # TODO: remove pin_memory=False when we have GPU access, as it can speed up data transfer to GPU.
-        self.train_dl = DataLoader(train_ds, batch_size=1, shuffle=True, num_workers=0, pin_memory=False)
+
+        self.train_dl = DataLoader(
+            train_ds, 
+            batch_size=config.BATCH_SIZE, 
+            shuffle=True, 
+            num_workers=config.NUM_WORKERS, 
+            pin_memory=config.PIN_MEMORY
+        )
 
         print("Creating validation dataloader...")
-        self.val_dl = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=0, pin_memory=False)
+        self.val_dl = DataLoader(
+            val_ds, 
+            batch_size=config.BATCH_SIZE, # Keep val batch size 1 for safety
+            shuffle=False, 
+            num_workers=config.NUM_WORKERS, 
+            pin_memory=config.PIN_MEMORY
+        )
 
         print("Data loaders initialized successfully.")
 
@@ -122,9 +135,12 @@ class ModelBuilder:
         ).to(self.device)
 
         self.loss_fn = DiceLoss(to_onehot_y=True, softmax=True)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=1e-3)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=config.LEARNING_RATE)
 
-    def train(self, num_epochs):
+    def train(self, num_epochs=None):
+        if num_epochs is None:
+            num_epochs = config.NUM_EPOCHS
+
         for epoch in range(num_epochs):
             print(f"Epoch {epoch+1}/{num_epochs}")
             self.model.train()

@@ -2,6 +2,7 @@ import nibabel as nib
 import numpy as np
 
 from idssp.sonk.view import utils
+from idssp.sonk import config
 
 class VolumeWrapper:
     def __init__(self, id, img_path, label_path):
@@ -93,11 +94,7 @@ class VolumeWrapper:
         print(f"Tumor slices range from {self.slice_thresholds['tumor']['first']} to {self.slice_thresholds['tumor']['last']}")
 
 class DataWrapper:
-    def __init__(self, files_dir, img_prefix, label_prefix, file_extension=".nii.gz"):
-        self.dir = files_dir
-        self.img_prefix = img_prefix
-        self.label_prefix = label_prefix
-        self.file_extension = file_extension
+    def __init__(self):
         self.volume = None
 
     def set_volume(self, volume_id):
@@ -129,8 +126,11 @@ class DataWrapper:
             image and label files, respectively.
             `{"image": <path_to_image>, "label": <path_to_label>}`
         '''
-        img_path = f"{self.dir}/{self.img_prefix}{volume_id}{self.file_extension}"
-        mask_path = f"{self.dir}/{self.label_prefix}{volume_id}{self.file_extension}"
+        img_filename = config.IMG_FILENAME_PATTERN.format(volume_id)
+        mask_filename = config.MASK_FILENAME_PATTERN.format(volume_id)
+
+        img_path = config.CT_ROOT / img_filename
+        mask_path = config.CT_ROOT / mask_filename
         return {
             "image":img_path, 
             "label": mask_path
