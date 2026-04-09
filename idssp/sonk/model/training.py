@@ -1,18 +1,17 @@
 import torch
-import torch.nn as nn
 import torch.optim as optim
 from monai.data import DataLoader, Dataset
 from monai.losses import DiceLoss
 from monai.metrics import DiceMetric
 from monai.networks.nets import UNet
-from monai.transforms import (Compose, EnsureTyped, LoadImaged, RandFlipd,
-                              RandSpatialCropd, ScaleIntensityd,
-                              ScaleIntensityRanged, SqueezeDimd, ToTensord)
+from monai.transforms import (
+    Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged,
+    RandSpatialCropd, CenterSpatialCropd, SqueezeDimd, RandFlipd,
+    EnsureTyped, Activations, AsDiscrete
+)
 
 from idssp.sonk.model.data import DataWrapper
 from idssp.sonk import config
-
-device = torch.device(config.DEVICE)
 
 class ModelBuilder:
     def __init__(self):
@@ -22,15 +21,9 @@ class ModelBuilder:
         self.loss_fn = None
         self.optimizer = None
         self.device = torch.device(config.DEVICE)
-
         print("ModelBuilder initialized. Device set to:", self.device)
 
     def get_train_transforms(self):
-        # Liver window: [-175, 250] HU is standard
-        # [-175, 250] covers the liver and tumor intensities well, while also removing
-        # some of the irrelevant background noise.
-        # TODO: verify if this range is good for our data. We can adjust it based on the actual intensity distribution of the liver and tumor in our dataset.
-
         return Compose([
             LoadImaged(keys=['image', 'label'], ensure_channel_first=True),
             # CTs are in Hounsfield Units: -1000 (air), 0 (water), 40-60 (soft tissues), 100+ (bone)
@@ -59,8 +52,10 @@ class ModelBuilder:
             RandFlipd(keys=["image", "label"], spatial_axis=0, prob=0.5),
             RandFlipd(keys=["image", "label"], spatial_axis=1, prob=0.5),
             # Ensure the data is in the correct tensor format
-            EnsureTyped(keys=["image", "label"]),
-            ToTensord(keys=['image', 'label'])
+            EnsureTyped(keys=["image"]),
+            # Labels must be long for the loss function
+            # this ensures that the dtype is consistent across all transforms
+            EnsureTyped(keys=["label"], dtype=torch.long),
         ])
 
     def get_val_transforms(self):
@@ -72,16 +67,15 @@ class ModelBuilder:
                 b_min=0.0,  b_max=1.0,
                 clip=True,
             ),
-            RandSpatialCropd(
+            # Deterministic crop for reliable validation metrics
+            CenterSpatialCropd(
                 keys=["image", "label"],
                 roi_size=(-1, -1, 1),
-                random_size=False,
             ),
             SqueezeDimd(keys=["image", "label"], dim=-1),
-            # EnsureTyped already converts to tensor, so we don't need ToTensord here
-            EnsureTyped(keys=["image", "label"]),
+            EnsureTyped(keys=["image"]),
+            EnsureTyped(keys=["label"], dtype=torch.long),
         ])
-
 
     def init_data_loaders(self, train_files, val_files):
         print("Creating training transforms object...")
@@ -95,13 +89,9 @@ class ModelBuilder:
         train_ds = Dataset(data=train_files, transform=train_transforms)
 
         print("Initializing validation dataset...")
-        # TODO: check if we can change this to be a CacheDataset
         val_ds = Dataset(data=val_files, transform=val_transforms)
 
         print("Creating training dataloader...")
-        # TODO: change the number of workers when we have GPU access.
-        # TODO: remove pin_memory=False when we have GPU access, as it can speed up data transfer to GPU.
-
         self.train_dl = DataLoader(
             train_ds, 
             batch_size=config.BATCH_SIZE, 
