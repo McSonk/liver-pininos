@@ -1,6 +1,6 @@
-import numpy as np
+import time
+
 import torch
-import torch.nn as nn
 import torch.optim as optim
 from monai.data import CacheDataset, DataLoader, Dataset, decollate_batch
 from monai.losses import DiceCELoss
@@ -13,7 +13,6 @@ from monai.transforms import (Activations, AsDiscrete, CenterSpatialCropd,
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from idssp.sonk import config
-from idssp.sonk.model.data import DataWrapper
 
 
 class ModelBuilder:
@@ -258,7 +257,14 @@ class ModelBuilder:
         best_val_dice = -1.0
         best_ckpt_path = config.CHECKPOINT_DIR / "best_model.pth"
 
+        # --- START TOTAL TIMER ---
+        total_start_time = time.time()
+        print(f"Starting training for {num_epochs} epochs...")
+
         for epoch in range(num_epochs):
+            # --- START EPOCH TIMER ---
+            epoch_start_time = time.time()
+
             print(f"\nEpoch {epoch+1}/{num_epochs}")
             
             avg_train_loss = self.train_epoch()
@@ -267,7 +273,12 @@ class ModelBuilder:
             # Get current learning rate for logging
             current_lr = self.optimizer.param_groups[0]['lr']
 
+            # --- CALCULATE EPOCH TIME ---
+            epoch_end_time = time.time()
+            epoch_duration = epoch_end_time - epoch_start_time
+
             print(f"  Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | Dice: {epoch_dice:.4f} | LR: {current_lr:.6f}")
+            print(f"  Epoch Time: {epoch_duration:.2f} seconds")
 
             # Track history
             self.history["train_loss"].append(avg_train_loss)
@@ -285,5 +296,17 @@ class ModelBuilder:
                 }, best_ckpt_path)
                 print(f"  -> New Best Model Saved (Dice: {best_val_dice:.4f})")
 
-        print(f"\nTraining complete. Best validation Dice: {best_val_dice:.4f}")
+        # --- END TOTAL TIMER ---
+        total_end_time = time.time()
+        total_duration = total_end_time - total_start_time
+
+        # Convert seconds to hours/minutes for readability
+        hours, rem = divmod(total_duration, 3600)
+        minutes, seconds = divmod(rem, 60)
+
+        print(f"\n{'='*40}")
+        print(f"Training Complete!")
+        print(f"Best Validation Dice: {best_val_dice:.4f}")
+        print(f"Total Training Time: {int(hours)}h {int(minutes)}m {seconds:.2f}s")
         print(f"Checkpoint saved to: {best_ckpt_path}")
+        print(f"{'='*40}")
