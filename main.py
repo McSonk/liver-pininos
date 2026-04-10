@@ -5,14 +5,20 @@ from idssp.sonk.model.training import ModelBuilder
 if __name__ == "__main__":
     print("Initializing data wrapper and model builder...")
     wrapper = DataWrapper()
-    VOLUMES_TO_ANALYSE = [2, 3]
+    VOLUMES_TO_ANALYSE = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
 
     # Get the file paths
+    paths = []
     train_files = []
     val_files = []
 
-    train_files.append(wrapper.get_paths_of_volume(VOLUMES_TO_ANALYSE[0]))
-    val_files.append(wrapper.get_paths_of_volume(VOLUMES_TO_ANALYSE[1]))
+    for volume in VOLUMES_TO_ANALYSE:
+        path = wrapper.get_paths_of_volume(volume)
+        paths.append(path)
+
+
+    train_files.extend(paths[:8])
+    val_files.extend(paths[8:])
 
     print("Training files:")
     for file in train_files:
