@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from monai.data import DataLoader, Dataset, decollate_batch
+from monai.data import DataLoader, Dataset, CacheDataset, decollate_batch
 from monai.losses import DiceLoss
 from monai.metrics import DiceMetric
 from monai.networks.nets import UNet
@@ -33,23 +33,25 @@ class ModelBuilder:
         print("ModelBuilder initialized. Device set to:", self.device)
 
     def get_train_transforms(self):
+        '''Returns the transforms for the training data.'''
         return Compose([
             LoadImaged(keys=['image', 'label'], ensure_channel_first=True),
-            # CTs are in Hounsfield Units: -1000 (air), 0 (water), 40-60 (soft tissues), 100+ (bone)
-            # we just need liver and tumor, so we can clip the intensities to a smaller range
-            # We then scale this range to [0, 1] for better training stability.
-            # Values outside the range are clipped.
-            # a -> input range, b -> output range
             ScaleIntensityRanged(
                 keys=["image"],
+                # We clip the HU values to the defined liver/tumour range
                 a_min=config.HU_WINDOW_MIN, a_max=config.HU_WINDOW_MAX,
+                # We then scale that range to [0, 1] for better training stability.
                 b_min=0.0,  b_max=1.0,
+                # Values outside liver/tumour range are clipped.
                 clip=True,
             ),
             # TODO: this is temporal. Replace with RandCropByPosNegLabel
+            # https://monai-dev.readthedocs.io/en/stable/transforms.html#monai.transforms.RandCropByPosNegLabel
             # By now, this just converts the 3D volume into a 2D slice by cropping the depth to 1
-            # But it picks it randomly, so we get different slices each epoch. 
-            # This is a simple way to augment our data and train on 2D slices until we have GPU access for 3D training.
+            # But it picks it randomly, so we get different slices each epoch.
+            # (so it might pick a slice outside the liver/tumour region)
+            # This is a simple way to augment our data and train on 2D slices
+            # until we have GPU access for 3D training.
             RandSpatialCropd(
                 keys=["image", "label"],
                 roi_size=(-1, -1, 1),   # full H×W, depth=1
@@ -57,7 +59,8 @@ class ModelBuilder:
             ),
             # Just to remove the extra dimension added by the previous transform
             SqueezeDimd(keys=["image", "label"], dim=-1),  # (C,H,W,1) → (C,H,W)
-            # Randomly flip the image and label horizontally and vertically with 50% probability each
+            # Randomly flip the image and label horizontally and vertically with
+            # 50% probability each
             RandFlipd(keys=["image", "label"], spatial_axis=0, prob=0.5),
             RandFlipd(keys=["image", "label"], spatial_axis=1, prob=0.5),
             # Ensure the data is in the correct tensor format
@@ -68,6 +71,7 @@ class ModelBuilder:
         ])
 
     def get_val_transforms(self):
+        '''Returns the transforms for the validation data.'''
         return Compose([
             LoadImaged(keys=["image", "label"], ensure_channel_first=True),
             ScaleIntensityRanged(
@@ -86,47 +90,80 @@ class ModelBuilder:
             EnsureTyped(keys=["label"], dtype=torch.long),
         ])
 
-    def init_data_loaders(self, train_files, val_files):
+    def init_data_loaders(self, train_files: list, val_files: list):
+        '''
+        Initializes the training and validation data loaders.
+        This includes creating the datasets with the appropriate transforms and
+        then wrapping them in DataLoader objects.
+
+        Params
+        -----
+        `train_files`: list
+            A list of file paths for the training data. Each item in the list
+            should be a dictionary with keys "image" and "label" pointing to the
+            respective file paths.
+        `val_files`: list
+            A list of file paths for the validation data. Each item in the list
+            should be a dictionary with keys "image" and "label" pointing to the
+            respective file paths.
+        '''
         print("Creating training transforms object...")
         train_transforms = self.get_train_transforms()
 
         print("Creating validation transforms object...")
         val_transforms = self.get_val_transforms()
 
-        print("Initializing training dataset...")
-        # TODO: check if we can change this to be a CacheDataset
-        train_ds = Dataset(data=train_files, transform=train_transforms)
-
-        print("Initializing validation dataset...")
-        val_ds = Dataset(data=val_files, transform=val_transforms)
+        print("Initializing training and validation datasets...")
+        if config.is_limited_env():
+            print("Limited environment detected. Using regular Dataset for training.")
+            train_ds = Dataset(data=train_files, transform=train_transforms)
+            val_ds = Dataset(data=val_files, transform=val_transforms)
+        else:
+            print("Sufficient resources detected. Using CacheDataset for training.")
+            # NOTE: A 40gb RAM can store ~ 250 volumes with cache_rate=1.0.
+            train_ds = CacheDataset(
+                data=train_files,
+                transform=train_transforms,
+                cache_rate=1.0,
+                num_workers=config.NUM_WORKERS
+            )
+            val_ds = CacheDataset(
+                data=val_files,
+                transform=val_transforms,
+                cache_rate=1.0,
+                num_workers=config.NUM_WORKERS
+            )
 
         print("Creating training dataloader...")
         self.train_dl = DataLoader(
-            train_ds, 
-            batch_size=config.BATCH_SIZE, 
-            shuffle=True, 
-            num_workers=config.NUM_WORKERS, 
+            train_ds,
+            batch_size=config.BATCH_SIZE,
+            shuffle=True,
+            num_workers=config.NUM_WORKERS,
             pin_memory=config.PIN_MEMORY
         )
 
         print("Creating validation dataloader...")
         self.val_dl = DataLoader(
-            val_ds, 
-            batch_size=config.VAL_BATCH_SIZE, 
-            shuffle=False, 
-            num_workers=config.NUM_WORKERS, 
+            val_ds,
+            batch_size=config.VAL_BATCH_SIZE,
+            shuffle=False,
+            num_workers=config.NUM_WORKERS,
             pin_memory=config.PIN_MEMORY
         )
 
         print("Data loaders initialized successfully.")
 
     def init_model(self):
+        '''Initializes the model (uNet), loss function, and optimizer.'''
         print("Initializing model...")
         self.model = UNet(
             # TODO: By now (no GPU) we will train on 2D slices. Replace with 3D UNet when we have GPU access
             spatial_dims=2,
+            # Just 1 channel for the grayscale CT image. For RGB images, this would be 3.
             in_channels=1,
-            out_channels=3,  # background, liver, tumor
+            out_channels=config.NUM_CLASSES,
+            # TODO: these are just example channel sizes. We can experiment with different configurations later.
             #channels=(16, 32, 64, 128),
             channels=(8, 16, 32, 64),
             strides=(2, 2, 2),

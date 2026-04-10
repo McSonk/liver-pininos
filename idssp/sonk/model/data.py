@@ -193,7 +193,7 @@ class DataWrapper:
             The index of the slice to plot.
         '''
         if self.volume is None:
-            raise ValueError("Volume is not set. Please set the volume using set_volume() before plotting a slice.")
+            raise ValueError("Volume is not set. Please set the volume using set_volume()")
 
         print(f"Plotting slice {slice_index} of volume {self.volume.id}...")
         utils.plot_slice(self.volume.image_data, self.volume.label_data, slice_index)
