@@ -3,13 +3,14 @@ import time
 import torch
 import torch.optim as optim
 from monai.data import CacheDataset, DataLoader, Dataset, decollate_batch
+from monai.inferers import SlidingWindowInferer
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from monai.networks.nets import UNet
 from monai.transforms import (Activations, AsDiscrete, CenterSpatialCropd,
-                              Compose, EnsureTyped, LoadImaged, RandFlipd,
-                              RandSpatialCropd, ScaleIntensityRanged,
-                              SqueezeDimd)
+                              Compose, EnsureTyped, LoadImaged,
+                              RandCropByPosNegLabeld, RandFlipd,
+                              ScaleIntensityRanged)
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from idssp.sonk import config
@@ -52,24 +53,25 @@ class ModelBuilder:
                 # Values outside liver/tumour range are clipped.
                 clip=True,
             ),
-            # TODO: this is temporal. Replace with RandCropByPosNegLabel
-            # https://monai-dev.readthedocs.io/en/stable/transforms.html#monai.transforms.RandCropByPosNegLabel
-            # By now, this just converts the 3D volume into a 2D slice by cropping the depth to 1
-            # But it picks it randomly, so we get different slices each epoch.
-            # (so it might pick a slice outside the liver/tumour region)
-            # This is a simple way to augment our data and train on 2D slices
-            # until we have GPU access for 3D training.
-            RandSpatialCropd(
+
+            # Sample patches with a balanced ratio of positive (tumor) and
+            # negative (background) examples.
+            RandCropByPosNegLabeld(
                 keys=["image", "label"],
-                roi_size=(-1, -1, 1),   # full H×W, depth=1
-                random_size=False,
+                label_key="label",
+                spatial_size=config.TRAIN_PATCH_SIZE,
+                pos=1,   # sample from foreground (tumor) regions
+                neg=1,   # sample from background regions
+                num_samples=2,  # number of samples to generate per volume
+                image_key="image",
+                image_threshold=0,  # consider non-zero pixels as foreground for sampling
             ),
-            # Just to remove the extra dimension added by the previous transform
-            SqueezeDimd(keys=["image", "label"], dim=-1),  # (C,H,W,1) → (C,H,W)
-            # Randomly flip the image and label horizontally and vertically with
-            # 50% probability each
+
+            # Randomly flip the image and label horizontally, vertically and
+            # depth-wise with a 50% chance each to augment the data and improve generalization.
             RandFlipd(keys=["image", "label"], spatial_axis=0, prob=0.5),
             RandFlipd(keys=["image", "label"], spatial_axis=1, prob=0.5),
+            RandFlipd(keys=["image", "label"], spatial_axis=2, prob=0.5),
             # Ensure the data is in the correct tensor format
             EnsureTyped(keys=["image"]),
             # Labels must be long for the loss function
@@ -79,7 +81,7 @@ class ModelBuilder:
 
     def get_val_transforms(self):
         '''Returns the transforms for the validation data.'''
-        return Compose([
+        compose_list = [
             LoadImaged(keys=["image", "label"], ensure_channel_first=True),
             ScaleIntensityRanged(
                 keys=["image"],
@@ -87,15 +89,23 @@ class ModelBuilder:
                 b_min=0.0,  b_max=1.0,
                 clip=True,
             ),
-            # Deterministic crop for reliable validation metrics
-            CenterSpatialCropd(
-                keys=["image", "label"],
-                roi_size=(-1, -1, 1),
-            ),
-            SqueezeDimd(keys=["image", "label"], dim=-1),
+        ]
+
+        if config.is_limited_env():
+            print("Validation transforms: Using simple center crop for limited environment.")
+            compose_list.extend([
+                CenterSpatialCropd(
+                    keys=["image", "label"],
+                    roi_size=config.VAL_PATCH_SIZE
+                )
+            ])
+        # In GPU we can afford to run inference on the full volume, so we skip the cropping.
+
+        compose_list.extend([
             EnsureTyped(keys=["image"]),
             EnsureTyped(keys=["label"], dtype=torch.long),
         ])
+        return Compose(compose_list)
 
     def init_data_loaders(self, train_files: list, val_files: list):
         '''
@@ -164,16 +174,17 @@ class ModelBuilder:
         '''Initializes the model (uNet), loss function, and optimizer.'''
         print("Initializing model...")
         self.model = UNet(
-            # TODO: By now (no GPU) we will train on 2D slices. Replace with 3D UNet when we have GPU access
-            spatial_dims=2,
+            spatial_dims=3,
             # Just 1 channel for the grayscale CT image. For RGB images, this would be 3.
             in_channels=1,
             out_channels=config.NUM_CLASSES,
             # TODO: these are just example channel sizes. We can experiment with different configurations later.
             #channels=(16, 32, 64, 128),
-            channels=(8, 16, 32, 64),
+            #channels=(8, 16, 32, 64),
+            channels=(4, 8, 16),
             strides=(2, 2, 2),
-            num_res_units=2
+            # TODO: This is temporal for low-resource environments. 
+            num_res_units=1
         ).to(self.device)
 
         self.loss_fn = DiceCELoss(
@@ -223,13 +234,31 @@ class ModelBuilder:
         self.model.eval()
         val_loss = 0
         self.dice_metric.reset()
+        inferer: SlidingWindowInferer = None
+
+        if not config.is_limited_env():
+            # Initialize sliding window inferer (run once outside loop)
+            inferer = SlidingWindowInferer(
+                roi_size=config.TRAIN_PATCH_SIZE,  # (96, 96, 96)
+                sw_batch_size=4,      # Process 4 patches in parallel during inference
+                overlap=0.25,         # 25% overlap for smooth stitching
+                mode="gaussian",      # Weight centre of patch more heavily
+                device=self.device,
+                progress=False
+            )
+            print("Validation: Using SlidingWindowInferer for full-volume inference")
 
         with torch.no_grad():
             for batch in self.val_dl:
                 images = batch["image"].to(self.device)
                 labels = batch["label"].to(self.device)
 
-                preds = self.model(images)
+                if inferer is not None:
+                    # GPU: Process full volume via sliding window
+                    preds = inferer(images, self.model)
+                else:
+                    # CPU: Images are already cropped to VAL_PATCH_SIZE, run directly
+                    preds = self.model(images)
                 val_loss += self.loss_fn(preds, labels).item()
 
                 # MONAI best practice: decollate batch before applying per-sample transforms
@@ -288,6 +317,7 @@ class ModelBuilder:
             # Checkpoint saving
             if epoch_dice > best_val_dice:
                 best_val_dice = epoch_dice
+                # TODO: add load_checkpoint method
                 torch.save({
                     "epoch": epoch,
                     "model_state_dict": self.model.state_dict(),

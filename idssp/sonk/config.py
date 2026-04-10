@@ -58,6 +58,8 @@ BATCH_SIZE: int
 '''DataLoader's batch size. Set to 1 for memory safety, especially with large 3D volumes.'''
 
 NUM_EPOCHS: int
+TRAIN_PATCH_SIZE: tuple
+VAL_PATCH_SIZE: tuple
 
 if ENV == "local":
     print("Running in LOCAL environment.")
@@ -66,6 +68,8 @@ if ENV == "local":
     PIN_MEMORY = False
     BATCH_SIZE = 1
     NUM_EPOCHS = 10
+    TRAIN_PATCH_SIZE = (32, 32, 32)
+    VAL_PATCH_SIZE = (64, 64, 64)
 
     CT_ROOT = Path("/media/sonk/77E0938A53FF065D/ct-scans/media/nas/01_Datasets/CT/LITS/Training Batch 1/")
     CHECKPOINT_DIR = Path("./checkpoints")
@@ -77,6 +81,8 @@ elif ENV == "cloud":
     PIN_MEMORY = True
     BATCH_SIZE = 1
     NUM_EPOCHS = 100
+    TRAIN_PATCH_SIZE = (96, 96, 96)
+    VAL_PATCH_SIZE = (128, 128, 128) # Going to be ignored, just for consistency
 
     CT_ROOT = Path("/workspace/data/CT")
     CHECKPOINT_DIR = Path("/workspace/checkpoints")
