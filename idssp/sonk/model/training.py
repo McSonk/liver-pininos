@@ -32,6 +32,9 @@ class ModelBuilder:
             AsDiscrete(argmax=True, to_onehot=config.NUM_CLASSES)
         ])
         self.label_trans = AsDiscrete(to_onehot=config.NUM_CLASSES)
+        
+        # include_background=False is standard for multi-class segmentation 
+        # to avoid background dominating the metric.
         self.dice_metric = DiceMetric(include_background=False, reduction="mean")
         self.history = {"train_loss": [], "val_loss": [], "val_dice": []}
 
@@ -120,12 +123,11 @@ class ModelBuilder:
 
         print("Initializing training and validation datasets...")
         if config.is_limited_env():
-            print("Limited environment detected. Using regular Dataset for training.")
+            print("Limited environment detected. Using regular Dataset.")
             train_ds = Dataset(data=train_files, transform=train_transforms)
             val_ds = Dataset(data=val_files, transform=val_transforms)
         else:
-            print("Sufficient resources detected. Using CacheDataset for training.")
-            # NOTE: A 40gb RAM can store ~ 250 volumes with cache_rate=1.0.
+            print("Sufficient resources detected. Using CacheDataset.")
             train_ds = CacheDataset(
                 data=train_files,
                 transform=train_transforms,
@@ -199,7 +201,7 @@ class ModelBuilder:
             patience=5
         )
 
-        print(f"Scheduler initialized: ReduceLROnPlateau (patience=5, factor=0.5)")
+        print("Scheduler initialized: ReduceLROnPlateau (patience=5, factor=0.5)")
 
     def train_epoch(self):
         self.model.train()
@@ -221,7 +223,6 @@ class ModelBuilder:
     def validate_epoch(self):
         self.model.eval()
         val_loss = 0
-        dice_scores = []
         self.dice_metric.reset()
 
         with torch.no_grad():
@@ -236,21 +237,19 @@ class ModelBuilder:
                 val_preds = decollate_batch(preds)
                 val_labels = decollate_batch(labels)
 
-                # Use self. attributes defined in __init__
                 val_preds = [self.pred_trans(p) for p in val_preds]
                 val_labels = [self.label_trans(l) for l in val_labels]
 
-                dice = self.dice_metric(y_pred=val_preds, y=val_labels)
-                dice_scores.append(dice)
+                # Accumulate metrics
+                self.dice_metric(y_pred=val_preds, y=val_labels)
 
         avg_val_loss = val_loss / len(self.val_dl)
         epoch_dice = self.dice_metric.aggregate().item()
 
+        # Step scheduler based on validation loss
         self.scheduler.step(avg_val_loss)
 
         return avg_val_loss, epoch_dice
-
-
 
     def train(self, num_epochs=None):
         if num_epochs is None:
@@ -260,15 +259,17 @@ class ModelBuilder:
         best_ckpt_path = config.CHECKPOINT_DIR / "best_model.pth"
 
         for epoch in range(num_epochs):
-            current_lr = self.optimizer.param_groups[0]['lr']
-            print(f"\nEpoch {epoch+1}/{num_epochs}. Current LR: {current_lr:.6f}")
+            print(f"\nEpoch {epoch+1}/{num_epochs}")
+            
             avg_train_loss = self.train_epoch()
-            print(f"  Training loss: {avg_train_loss:.4f}")
-
             avg_val_loss, epoch_dice = self.validate_epoch()
-            print(f"  Validation loss: {avg_val_loss:.4f} | Dice: {epoch_dice:.4f}")
+            
+            # Get current learning rate for logging
+            current_lr = self.optimizer.param_groups[0]['lr']
 
-            # Track history for plotting
+            print(f"  Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | Dice: {epoch_dice:.4f} | LR: {current_lr:.6f}")
+
+            # Track history
             self.history["train_loss"].append(avg_train_loss)
             self.history["val_loss"].append(avg_val_loss)
             self.history["val_dice"].append(epoch_dice)
@@ -282,7 +283,7 @@ class ModelBuilder:
                     "optimizer_state_dict": self.optimizer.state_dict(),
                     "best_dice": best_val_dice,
                 }, best_ckpt_path)
+                print(f"  -> New Best Model Saved (Dice: {best_val_dice:.4f})")
 
-        print(f"  Training loss: {avg_train_loss:.4f}")
         print(f"\nTraining complete. Best validation Dice: {best_val_dice:.4f}")
         print(f"Checkpoint saved to: {best_ckpt_path}")
