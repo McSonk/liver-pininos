@@ -1,16 +1,20 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from monai.data import DataLoader, Dataset, CacheDataset, decollate_batch
+from monai.data import CacheDataset, DataLoader, Dataset, decollate_batch
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from monai.networks.nets import UNet
-from monai.transforms import (Compose, EnsureTyped, LoadImaged, RandFlipd,
-                              RandSpatialCropd, CenterSpatialCropd, SqueezeDimd,
-                              ScaleIntensityRanged, Activations, AsDiscrete)
+from monai.transforms import (Activations, AsDiscrete, CenterSpatialCropd,
+                              Compose, EnsureTyped, LoadImaged, RandFlipd,
+                              RandSpatialCropd, ScaleIntensityRanged,
+                              SqueezeDimd)
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
-from idssp.sonk.model.data import DataWrapper
 from idssp.sonk import config
+from idssp.sonk.model.data import DataWrapper
+
 
 class ModelBuilder:
     def __init__(self):
@@ -19,6 +23,7 @@ class ModelBuilder:
         self.model = None
         self.loss_fn = None
         self.optimizer = None
+        self.scheduler = None
         self.device = torch.device(config.DEVICE)
 
         # Post-processing & Metrics
@@ -185,6 +190,68 @@ class ModelBuilder:
         print(f"Model initialized on {self.device}")
         print(f"Optimizer: AdamW | LR: {config.LEARNING_RATE} | Weight Decay: 1e-5")
 
+        self.scheduler = ReduceLROnPlateau(
+            self.optimizer,
+            # Minimise the validation loss, not maximise the dice score
+            mode='min',
+            factor=0.5,
+            # Wait for at least 5 epochs without improvement before reducing LR
+            patience=5
+        )
+
+        print(f"Scheduler initialized: ReduceLROnPlateau (patience=5, factor=0.5)")
+
+    def train_epoch(self):
+        self.model.train()
+        train_loss = 0
+
+        for batch in self.train_dl:
+            images = batch["image"].to(self.device)
+            labels = batch["label"].to(self.device)
+
+            self.optimizer.zero_grad()
+            preds = self.model(images)
+            loss = self.loss_fn(preds, labels)
+            loss.backward()
+            self.optimizer.step()
+            train_loss += loss.item()
+
+        return train_loss / len(self.train_dl)
+
+    def validate_epoch(self):
+        self.model.eval()
+        val_loss = 0
+        dice_scores = []
+        self.dice_metric.reset()
+
+        with torch.no_grad():
+            for batch in self.val_dl:
+                images = batch["image"].to(self.device)
+                labels = batch["label"].to(self.device)
+
+                preds = self.model(images)
+                val_loss += self.loss_fn(preds, labels).item()
+
+                # MONAI best practice: decollate batch before applying per-sample transforms
+                val_preds = decollate_batch(preds)
+                val_labels = decollate_batch(labels)
+
+                # Use self. attributes defined in __init__
+                val_preds = [self.pred_trans(p) for p in val_preds]
+                val_labels = [self.label_trans(l) for l in val_labels]
+
+                dice = self.dice_metric(y_pred=val_preds, y=val_labels)
+                dice_scores.append(dice)
+
+        avg_val_loss = val_loss / len(self.val_dl)
+        epoch_dice = self.dice_metric.aggregate().item()
+
+        self.scheduler.step(avg_val_loss)
+
+        return avg_val_loss, epoch_dice
+
+
+
     def train(self, num_epochs=None):
         if num_epochs is None:
             num_epochs = config.NUM_EPOCHS
@@ -193,48 +260,12 @@ class ModelBuilder:
         best_ckpt_path = config.CHECKPOINT_DIR / "best_model.pth"
 
         for epoch in range(num_epochs):
-            print(f"\nEpoch {epoch+1}/{num_epochs}")
-            self.model.train()
-            train_loss = 0
-
-            for batch in self.train_dl:
-                images = batch["image"].to(self.device)
-                labels = batch["label"].to(self.device)
-
-                self.optimizer.zero_grad()
-                preds = self.model(images)
-                loss = self.loss_fn(preds, labels)
-                loss.backward()
-                self.optimizer.step()
-                train_loss += loss.item()
-
-            avg_train_loss = train_loss / len(self.train_dl)
+            current_lr = self.optimizer.param_groups[0]['lr']
+            print(f"\nEpoch {epoch+1}/{num_epochs}. Current LR: {current_lr:.6f}")
+            avg_train_loss = self.train_epoch()
             print(f"  Training loss: {avg_train_loss:.4f}")
 
-            # Validation
-            self.model.eval()
-            val_loss = 0
-            self.dice_metric.reset()
-            with torch.no_grad():
-                for batch in self.val_dl:
-                    images = batch["image"].to(self.device)
-                    labels = batch["label"].to(self.device)
-
-                    preds = self.model(images)
-                    val_loss += self.loss_fn(preds, labels).item()
-
-                    # MONAI best practice: decollate batch before applying per-sample transforms
-                    val_preds = decollate_batch(preds)
-                    val_labels = decollate_batch(labels)
-
-                    # Use self. attributes defined in __init__
-                    val_preds = [self.pred_trans(p) for p in val_preds]
-                    val_labels = [self.label_trans(l) for l in val_labels]
-
-                    self.dice_metric(y_pred=val_preds, y=val_labels)
-
-            avg_val_loss = val_loss / len(self.val_dl)
-            epoch_dice = self.dice_metric.aggregate().item()
+            avg_val_loss, epoch_dice = self.validate_epoch()
             print(f"  Validation loss: {avg_val_loss:.4f} | Dice: {epoch_dice:.4f}")
 
             # Track history for plotting
@@ -252,5 +283,6 @@ class ModelBuilder:
                     "best_dice": best_val_dice,
                 }, best_ckpt_path)
 
+        print(f"  Training loss: {avg_train_loss:.4f}")
         print(f"\nTraining complete. Best validation Dice: {best_val_dice:.4f}")
         print(f"Checkpoint saved to: {best_ckpt_path}")
