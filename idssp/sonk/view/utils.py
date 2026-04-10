@@ -4,12 +4,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import animation
 
+from idssp.sonk import config
+
 # For the animation to display the full slices range
 mpl.rcParams['animation.embed_limit'] = 50 * 1024 * 1024  # 50 MB
 
 
-def print_image_plot(img_data, slice_index, include_axis=False, ax=None):
-    ''' Prints a single slice of the CT image with appropriate windowing for abdominal CT scans.
+def print_image_plot(img_data, slice_index, include_axis=False, ax=None,
+                     use_training_window=True):
+    ''' Prints a single slice of the CT image with appropriate windowing.
+
     Params
     ------
     `img_data` : numpy.ndarray
@@ -19,20 +23,30 @@ def print_image_plot(img_data, slice_index, include_axis=False, ax=None):
     `include_axis` : bool, optional
         Whether to show axis ticks and labels (default: False)
     `ax` : matplotlib.axes.Axes, optional
-        Matplotlib axes to plot on. If None, uses current axes (default: None)
-        (Useful for plotting multiple subplots in the animation function)
+        Matplotlib axes to plot on. If None, uses current axes
+    `use_training_window` : bool, optional
+        If True, uses the training window (HU: -175 to 250).
+        If False, uses general abdominal window (default: True)
     '''
-    # abdominal CT presets
-    window = 400
-    level = 50
-    vmin = level - window/2
-    vmax = level + window/2
+    
+    if use_training_window:
+        # Window matching ScaleIntensityRanged preprocessing
+        vmin = config.HU_WINDOW_MIN
+        vmax = config.HU_WINDOW_MAX
+        title_suffix = "(Training Window)"
+    else:
+        # General abdominal CT presets
+        window = 400
+        level = 50
+        vmin = level - window/2  # -150
+        vmax = level + window/2  # 250
+        title_suffix = "(Abdominal Window)"
 
     if ax is None:
         ax = plt.gca()  # fallback to current axes
 
     img_obj = ax.imshow(img_data[:,:,slice_index], cmap='gray', vmin=vmin, vmax=vmax)
-    ax.set_title(f'CT Image - Slice {slice_index}')
+    ax.set_title(f'CT Image - Slice {slice_index} {title_suffix}')
     ax.axis('on' if include_axis else 'off')
     return img_obj
 
@@ -110,7 +124,7 @@ def plot_mixed_slice(img_data, mask_data, slice_index, include_axis=False):
         Whether to show axis ticks and labels (default: False)
     '''
     plt.figure(figsize=(6,6))
-    print_image_plot(img_data, slice_index, include_axis)
+    print_image_plot(img_data, slice_index, include_axis, use_training_window=False)
     print_mask_plot(mask_data, slice_index, include_axis, is_overlay=True)
     plt.title(f'Slice {slice_index} - combined')
     plt.axis('on' if include_axis else 'off')
