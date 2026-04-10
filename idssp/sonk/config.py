@@ -33,7 +33,7 @@ MASK_FILENAME_PATTERN: Final[str] = "segmentation-{0}.nii"
 # we just need liver and tumor, so we can clip the intensities to a smaller range
 HU_WINDOW_MIN: Final[int] = -175
 HU_WINDOW_MAX: Final[int] = 250
-LEARNING_RATE: Final[float] = 1e-3
+LEARNING_RATE: Final[float] = 1e-4
 
 NUM_CLASSES: Final[int] = 3
 '''How many classes to predict.

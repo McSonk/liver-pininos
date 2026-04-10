@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from monai.data import DataLoader, Dataset, CacheDataset, decollate_batch
-from monai.losses import DiceLoss
+from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from monai.networks.nets import UNet
 from monai.transforms import (Compose, EnsureTyped, LoadImaged, RandFlipd,
@@ -170,8 +170,20 @@ class ModelBuilder:
             num_res_units=2
         ).to(self.device)
 
-        self.loss_fn = DiceLoss(to_onehot_y=True, softmax=True)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=config.LEARNING_RATE)
+        self.loss_fn = DiceCELoss(
+            to_onehot_y=True,
+            softmax=True,
+            lambda_dice=1.0,
+            lambda_ce=1.0
+        )
+        self.optimizer = optim.AdamW(
+            self.model.parameters(),
+            lr=config.LEARNING_RATE,
+            weight_decay=1e-5
+        )
+
+        print(f"Model initialized on {self.device}")
+        print(f"Optimizer: AdamW | LR: {config.LEARNING_RATE} | Weight Decay: 1e-5")
 
     def train(self, num_epochs=None):
         if num_epochs is None:
