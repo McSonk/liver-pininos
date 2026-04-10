@@ -29,11 +29,21 @@ print(f"🚀 Loading configuration for environment: [{ENV.upper()}]")
 IMG_FILENAME_PATTERN: Final[str] = "volume-{0}.nii"
 MASK_FILENAME_PATTERN: Final[str] = "segmentation-{0}.nii"
 
+# CTs are in Hounsfield Units: -1000 (air), 0 (water), 40-60 (soft tissues), 100+ (bone)
+# we just need liver and tumor, so we can clip the intensities to a smaller range
 HU_WINDOW_MIN: Final[int] = -175
 HU_WINDOW_MAX: Final[int] = 250
 LEARNING_RATE: Final[float] = 1e-3
-NUM_CLASSES: Final[int] = 3  # 0: bg, 1: liver, 2: tumour. Change to 1 for binary later.
-VAL_BATCH_SIZE: Final[int] = 1  # Keep deterministic and memory-safe
+
+NUM_CLASSES: Final[int] = 3
+'''How many classes to predict.
+For binary segmentation, set to 1 (tumor vs non-tumor).
+For multi-class, set to 3 (background, liver, tumor).'''
+
+VAL_BATCH_SIZE: Final[int] = 1
+'''DataLoader's batch size for validation. Kept at 1 for deterministic evaluation
+and memory safety with large 3D volumes.'''
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # -----------------------------------------------------------------------------
@@ -43,11 +53,14 @@ NUM_WORKERS: int
 PIN_MEMORY: bool
 CT_ROOT: Path
 CHECKPOINT_DIR: Path
+
 BATCH_SIZE: int
+'''DataLoader's batch size. Set to 1 for memory safety, especially with large 3D volumes.'''
+
 NUM_EPOCHS: int
 
 if ENV == "local":
-    print("⚠️  Running in LOCAL environment.")
+    print("Running in LOCAL environment.")
 
     NUM_WORKERS = 0
     PIN_MEMORY = False
@@ -58,7 +71,7 @@ if ENV == "local":
     CHECKPOINT_DIR = Path("./checkpoints")
 
 elif ENV == "cloud":
-    print("✅ Running in CLOUD environment (Lightning AI). Using more computing power.")
+    print("Running in CLOUD environment (Lightning AI). Using more computing power.")
 
     NUM_WORKERS = 4
     PIN_MEMORY = True
@@ -79,3 +92,14 @@ print(f"   Val Batch Size: {VAL_BATCH_SIZE}")
 print(f"   Workers: {NUM_WORKERS}")
 print(f"   Data Root: {CT_ROOT}")
 print(f"   Checkpoint Dir: {CHECKPOINT_DIR}")
+
+# -----------------------------------------------------------------------------
+# 5. Helper Functions
+# -----------------------------------------------------------------------------
+
+def is_limited_env() -> bool:
+    '''
+    Returns True if the current environment is a limited resource
+    environment (e.g., local with no GPU).
+    '''
+    return ENV == "local" and DEVICE == "cpu"
