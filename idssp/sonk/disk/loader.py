@@ -1,16 +1,30 @@
+'''
+Module for all the disk loading and parsing logic.
+This module is responsible for reading the dataset from disk, discovering and
+pairing image and label files, and providing the necessary file paths for further
+processing in the pipeline.
+'''
+
 import os
 from pathlib import Path
 import glob
 
 class CustomDataset:
+    '''
+    Custom dataset class to handle different dataset sources and their specific file
+    naming conventions. This class is responsible for discovering and pairing image
+    and label files based on the dataset source, and providing the necessary file paths
+    for further processing in the pipeline.
+
+    Currently supports the following dataset sources:
+    - "LiTS": The Liver Tumor Segmentation Challenge dataset
+    '''
     SUPPORTED_SOURCES = ["LiTS"]
+
     def __init__(self, ds_source: str, files: list[str] = None):
         self.ds_source = ds_source
         self.files: list[str] = files
         '''The list of file paths for the dataset, sorted'''
-
-    def set_files(self, files: list[str]):
-        self.files = files
 
     def discover_and_pair(self) -> list[dict[str, str]]:
         '''
@@ -104,7 +118,12 @@ class CustomDataset:
         else:
             raise ValueError(f"Dataset source [{self.ds_source}] is not supported. Please choose from {CustomDataset.SUPPORTED_SOURCES}")
 
-class DataLoader:
+class DataCollector:
+    '''
+    DataCollector class responsible for the global loading of the dataset.
+    This class manages the overall process of reading the dataset from the
+    different specified directories.
+    '''
     def __init__(self):
         self.datasources = []
         self.d_sets = []
