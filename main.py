@@ -1,27 +1,22 @@
-# This script is to be run as an alternative to the jupyter notebook.
+from idssp.sonk import config
+from monai.utils import set_determinism
+
+from idssp.sonk.disk.loader import DataCollector
 from idssp.sonk.model.data import DataWrapper
 from idssp.sonk.model.training import ModelBuilder
 
+# For reproducibility
+set_determinism(seed=42)
+
 if __name__ == "__main__":
+    print("Reading directories...")
+    loader = DataCollector()
+    loader.read_dir(config.CT_ROOT, ds_source='LiTS')
+    loader.extract_images_and_labels()
+    print("splitting data into train and val sets...")
+    train_files, val_files = loader.get_reproducible_split()
     print("Initializing data wrapper and model builder...")
     wrapper = DataWrapper()
-    VOLUMES_TO_ANALYSE = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-    # VOLUMES_TO_ANALYSE = [1, 2, 3]
-    SPLIT = 2
-    SPLIT = 8
-
-    # Get the file paths
-    paths = []
-    train_files = []
-    val_files = []
-
-    for volume in VOLUMES_TO_ANALYSE:
-        path = wrapper.get_paths_of_volume(volume)
-        paths.append(path)
-
-
-    train_files.extend(paths[:SPLIT])
-    val_files.extend(paths[SPLIT:])
 
     print("Training files:")
     for file in train_files:
