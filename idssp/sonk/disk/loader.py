@@ -111,24 +111,6 @@ class CustomDataset:
                 print(f" - {file}")
         return paired_files
 
-    def get_images_and_labels(self):
-        '''
-        Parses the file paths to separate image and label files.
-
-        Returns
-        -------
-        images: list
-            List of file paths for the image volumes.
-        labels: list
-            List of file paths for the corresponding label volumes.
-        '''
-        if self.files is None:
-            raise ValueError("Files have not been set for this dataset.")
-        if self.ds_source == "LiTS":
-            return self.get_lits_paths()
-        else:
-            raise ValueError(f"Dataset source [{self.ds_source}] is not supported. Please choose from {CustomDataset.SUPPORTED_SOURCES}")
-
 class DataCollector:
     '''
     DataCollector class responsible for the global loading of the dataset.
@@ -136,9 +118,9 @@ class DataCollector:
     different specified directories.
     '''
     def __init__(self):
-        self.d_sets = []
+        self.d_sets: list[CustomDataset] = []
         '''The plain paths for the dataset'''
-        self.datasources = []
+        self.datasources: list[dict[str, str]] = []
         '''The paired image and label paths'''
 
     def read_dir(self, ds_dir: Path, ds_source: str):
@@ -197,7 +179,7 @@ class DataCollector:
             raise ValueError("No datasets have been loaded. Please call read_dir() first.")
 
         for ds in self.d_sets:
-            paired_files = ds.get_images_and_labels()
+            paired_files = ds.discover_and_pair()
             self.datasources.extend(paired_files)
 
         print(f"Extracted {len(self.datasources)} image-label pairs from the dataset.")
