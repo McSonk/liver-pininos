@@ -4,37 +4,87 @@ import glob
 
 class CustomDataset:
     SUPPORTED_SOURCES = ["LiTS"]
-    def __init__(self, ds_source: str, files: list = None):
+    def __init__(self, ds_source: str, files: list[str] = None):
         self.ds_source = ds_source
+        self.files: list[str] = files
+        '''The list of file paths for the dataset, sorted'''
+
+    def set_files(self, files: list[str]):
         self.files = files
 
-    def set_files(self, files: list):
-        self.files = files
-
-    def get_lits_paths(self):
+    def discover_and_pair(self) -> list[dict[str, str]]:
         '''
-        Parses the file paths for the LiTS dataset to separate image and label files.
+        Discovers and pairs image and label files based on the dataset source.
+
+        This method is responsible for identifying the image and label files in the dataset
+        and pairing them together based on their naming conventions. The specific logic for
+        pairing may vary depending on the dataset source.
 
         Returns
         -------
-        images: list
-            List of file paths for the image volumes.
-        labels: list
-            List of file paths for the corresponding label volumes.
+        paired_files: list of dict[str, str]
+            A list of dictionaries, each containing the paths for the image and label files.
+            Example:
+            [
+                {
+                    "image": "path/to/image_volume.nii",
+                    "label": "path/to/segmentation_volume.nii"
+                },
+                ...
+            ]
         '''
+
         if self.files is None:
             raise ValueError("Files have not been set for this dataset.")
 
-        images = []
-        labels = []
+        if self.ds_source == "LiTS":
+            return self.get_lits_paths()
 
+        raise ValueError(f"Dataset source [{self.ds_source}] is not supported. Please choose from {CustomDataset.SUPPORTED_SOURCES}")
+
+    def get_lits_paths(self) -> list[dict[str, str]]:
+        '''
+        Parses the file paths for the LiTS dataset to separate image and label files.
+
+        The LiTS dataset typically has a specific naming convention where image volumes
+        and their corresponding segmentation volumes can be identified and paired.
+
+        Returns
+        -------
+        paired_files: list of dict[str, str]
+            A list of dictionaries, each containing the paths for the image and label files.
+            Example:
+            [
+                {
+                    "image": "path/to/image_volume.nii",
+                    "label": "path/to/segmentation_volume.nii"
+                },
+                ...
+            ]
+        '''
+        paired_files = []
+        not_volumes = []
         for file in self.files:
             if "volume" in file:
-                images.append(file)
-            elif "segmentation" in file:
-                labels.append(file)
+                image_path = file
+                label_path = file.replace("volume", "segmentation")
+                if os.path.exists(label_path):
+                    paired_files.append({"image": image_path, "label": label_path})
+                else:
+                    print(f"Warning: Label file not found for image {image_path}. Expected label path: {label_path}")
+            else:
+                not_volumes.append(file)
 
-        return images, labels
+        # Check for any files that were not identified as volumes
+        for paired in paired_files:
+            if paired["label"] in not_volumes:
+                not_volumes.remove(paired["label"])
+
+        if not_volumes:
+            print("Warning: The following files were not identified as image volumes and may be unpaired:")
+            for file in not_volumes:
+                print(f" - {file}")
+        return paired_files
 
     def get_images_and_labels(self):
         '''
@@ -56,8 +106,7 @@ class CustomDataset:
 
 class DataLoader:
     def __init__(self):
-        self.images = []
-        self.labels = []
+        self.datasources = []
         self.d_sets = []
 
     def read_dir(self, ds_dir: Path, ds_source: str):
@@ -80,28 +129,43 @@ class DataLoader:
         print(f"Reading directory: {ds_dir}")
         if not ds_dir.exists():
             raise FileNotFoundError(f"Data root directory does not exist: {ds_dir}")
-        files = glob.glob(str(ds_dir / "*"))
+        files = sorted(glob.glob(str(ds_dir / "*")))
+
+        if len(files) == 0:
+            raise ValueError(f"No files found in the directory: {ds_dir}")
+
         print(f"Found {len(files)} files in the directory.")
+
+        if len(files) % 2 != 0:
+            print("Warning:")
+            print(f"Found an odd number of files ({len(files)}) in the directory.")
+            print("This may indicate that some image-label pairs are incomplete.")
+
 
         self.d_sets.append(CustomDataset(ds_source, files))
 
-    def extract_images_and_labels(self):
+    def extract_images_and_labels(self) -> list[dict[str, str]]:
         '''
         Extracts image and label file paths from the dataset.
 
         Returns
         -------
-        `images`: list
-            List of file paths for the image volumes.
-        `labels`: list
-            List of file paths for the corresponding label volumes.
+        paired_files: list of dict[str, str]
+            A list of dictionaries, each containing the paths for the image and label files.
+            Example:
+            [
+                {
+                    "image": "path/to/image_volume.nii",
+                    "label": "path/to/segmentation_volume.nii"
+                },
+                ...
+            ]
         '''
         if not self.d_sets:
             raise ValueError("No datasets have been loaded. Please call read_dir() first.")
 
         for ds in self.d_sets:
-            images, labels = ds.get_images_and_labels()
-            self.images.extend(images)
-            self.labels.extend(labels)
+            paired_files = ds.get_images_and_labels()
+            self.datasources.extend(paired_files)
 
-        print(f"Extracted {len(self.images)} image files and {len(self.labels)} label files from the dataset.")
+        print(f"Extracted {len(self.datasources)} image-label pairs from the dataset.")
