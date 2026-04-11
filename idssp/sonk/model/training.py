@@ -7,10 +7,10 @@ from monai.inferers import SlidingWindowInferer
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from monai.networks.nets import UNet
-from monai.transforms import (Activations, AsDiscrete, CenterSpatialCropd,
-                              Compose, EnsureTyped, LoadImaged,
-                              RandCropByPosNegLabeld, RandFlipd,
+from monai.transforms import (Activations, AsDiscrete, Compose, EnsureTyped,
+                              LoadImaged, RandCropByPosNegLabeld, RandFlipd,
                               ScaleIntensityRanged)
+from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from idssp.sonk import config
@@ -37,6 +37,9 @@ class ModelBuilder:
         # to avoid background dominating the metric.
         self.dice_metric = DiceMetric(include_background=False, reduction="mean")
         self.history = {"train_loss": [], "val_loss": [], "val_dice": []}
+
+        self.scaler = GradScaler(config.DEVICE) if self.device.type == 'cuda' else None
+        '''Mixed precision training scaler, enabled only on CUDA for potential speed up.'''
 
         print("ModelBuilder initialized. Device set to:", self.device)
 
@@ -187,7 +190,7 @@ class ModelBuilder:
             out_channels=config.NUM_CLASSES,
             channels=(16, 32, 64, 128),
             strides=(2, 2, 2),
-            # TODO: This is temporal for low-resource environments. 
+            # TODO: This is temporal for low-resource environments.
             num_res_units=1
         ).to(self.device)
 
@@ -218,6 +221,34 @@ class ModelBuilder:
 
         print("Scheduler initialized: ReduceLROnPlateau (patience=5, factor=0.5)")
 
+    def back_propagate(self, loss):
+        '''
+        Performs backpropagation with optional mixed precision scaling.
+
+        Params
+        ------
+        `loss`: torch.Tensor
+            The computed loss for the current batch, which will be back-propagated.
+        '''
+        if self.scaler is not None:
+            # backpropagation with mixed precision scaling if enabled
+            self.scaler.scale(loss).backward()
+
+            # Unscales gradients for clipping
+            self.scaler.unscale_(self.optimizer)
+
+            # Clip gradients to prevent exploding gradients
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
+            # Step the optimizer with scaled gradients
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+
+        else:
+            # Standard backpropagation for CPU or if mixed precision is not enabled
+            loss.backward()
+            self.optimizer.step()
+
     def train_epoch(self):
         self.model.train()
         train_loss = 0
@@ -227,10 +258,14 @@ class ModelBuilder:
             labels = batch["label"].to(self.device)
 
             self.optimizer.zero_grad()
-            preds = self.model(images)
-            loss = self.loss_fn(preds, labels)
-            loss.backward()
-            self.optimizer.step()
+
+            # Mixed precision training for potential speed up on CUDA
+            with autocast(config.DEVICE, enabled=config.DEVICE == "cuda"):
+                preds = self.model(images)
+                loss = self.loss_fn(preds, labels)
+
+            self.back_propagate(loss)
+
             train_loss += loss.item()
 
         return train_loss / len(self.train_dl)
@@ -258,12 +293,20 @@ class ModelBuilder:
                 images = batch["image"].to(self.device)
                 labels = batch["label"].to(self.device)
 
-                if inferer is not None:
-                    # GPU: Process full volume via sliding window
-                    preds = inferer(images, self.model)
-                else:
-                    # CPU: Images are already cropped to VAL_PATCH_SIZE, run directly
-                    preds = self.model(images)
+                with autocast(config.DEVICE, enabled=config.DEVICE == "cuda"):
+                    if inferer is not None:
+                        # GPU: Process full volume via sliding window
+                        preds = inferer(images, self.model)
+                    else:
+                        # CPU: Images are already cropped to VAL_PATCH_SIZE, run directly
+                        preds = self.model(images)
+
+                # Note: Loss calculation should ideally be in float32 for stability,
+                # but MONAI's DiceCELoss handles mixed precision inputs well.
+                # If NaNs in validation loss, cast preds/labels back to float32:
+                # preds = preds.float()
+                # labels = labels.float()
+
                 val_loss += self.loss_fn(preds, labels).item()
 
                 # MONAI best practice: decollate batch before applying per-sample transforms
