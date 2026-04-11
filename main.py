@@ -6,6 +6,9 @@ if __name__ == "__main__":
     print("Initializing data wrapper and model builder...")
     wrapper = DataWrapper()
     VOLUMES_TO_ANALYSE = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    # VOLUMES_TO_ANALYSE = [1, 2, 3]
+    SPLIT = 2
+    SPLIT = 8
 
     # Get the file paths
     paths = []
@@ -17,8 +20,8 @@ if __name__ == "__main__":
         paths.append(path)
 
 
-    train_files.extend(paths[:8])
-    val_files.extend(paths[8:])
+    train_files.extend(paths[:SPLIT])
+    val_files.extend(paths[SPLIT:])
 
     print("Training files:")
     for file in train_files:
