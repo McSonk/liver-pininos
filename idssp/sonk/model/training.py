@@ -92,11 +92,18 @@ class ModelBuilder:
         ]
 
         if config.is_limited_env():
-            print("Validation transforms: Using simple center crop for limited environment.")
+            print("Validation transforms: Using random crop for limited environment.")
             compose_list.extend([
-                CenterSpatialCropd(
+                # To make sure we have some positive examples in the validation set
+                RandCropByPosNegLabeld(
                     keys=["image", "label"],
-                    roi_size=config.VAL_PATCH_SIZE
+                    label_key="label",
+                    spatial_size=config.VAL_PATCH_SIZE,
+                    pos=1,
+                    neg=0,       # always sample from foreground for val
+                    num_samples=1,
+                    image_key="image",
+                    image_threshold=0,
                 )
             ])
         # In GPU we can afford to run inference on the full volume, so we skip the cropping.
@@ -178,10 +185,7 @@ class ModelBuilder:
             # Just 1 channel for the grayscale CT image. For RGB images, this would be 3.
             in_channels=1,
             out_channels=config.NUM_CLASSES,
-            # TODO: these are just example channel sizes. We can experiment with different configurations later.
-            #channels=(16, 32, 64, 128),
-            #channels=(8, 16, 32, 64),
-            channels=(4, 8, 16),
+            channels=(16, 32, 64, 128),
             strides=(2, 2, 2),
             # TODO: This is temporal for low-resource environments. 
             num_res_units=1
