@@ -190,6 +190,7 @@ class ModelBuilder:
         self.loss_fn = DiceCELoss(
             to_onehot_y=True,
             softmax=True,
+            include_background=False,
             lambda_dice=1.0,
             lambda_ce=1.0
         )
