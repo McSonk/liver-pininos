@@ -6,8 +6,7 @@ from idssp.sonk.view import utils
 
 
 class VolumeWrapper:
-    def __init__(self, id, img_path, label_path):
-        self.id = id
+    def __init__(self, img_path, label_path):
         self.img_path = img_path
         self.label_path = label_path
         self.image = None
@@ -21,7 +20,7 @@ class VolumeWrapper:
         '''
         Loads the image and label data for the volume.
         '''
-        print(f"Loading data for volume {self.id}...")
+        print("Loading data for volume...")
         self.image = nib.load(self.img_path)
         self.label = nib.load(self.label_path)
 
@@ -90,7 +89,7 @@ class VolumeWrapper:
             print("Label data is not loaded. Please load the label data before converting to long.")
 
     def print_slice_summary(self):
-        print(f"Volume {self.id} has {self.image_data.shape[2]} slices.")
+        print(f"Volume has {self.image_data.shape[2]} slices.")
         print(f"Liver slices range from {self.slice_thresholds['liver']['first']} to {self.slice_thresholds['liver']['last']}")
         print(f"Tumor slices range from {self.slice_thresholds['tumor']['first']} to {self.slice_thresholds['tumor']['last']}")
 
@@ -98,44 +97,19 @@ class DataWrapper:
     def __init__(self):
         self.volume = None
 
-    def set_volume(self, volume_id):
+    def set_volume(self, img_path: str, label_path: str):
         '''
         Sets the volume for the data wrapper.
         Params
         ------
-        `volume_id`: int
-            The ID of the volume to set.
+        `img_path`: str
+            The file path for the image volume.
+        `label_path`: str
+            The file path for the label volume.
         '''
-        paths = self.get_paths_of_volume(volume_id)
-        img_path, mask_path = paths['image'], paths['label']
-        self.volume = VolumeWrapper(volume_id, img_path, mask_path)
+        self.volume = VolumeWrapper(img_path, label_path)
         self.volume.load_data()
 
-    def get_paths_of_volume(self, volume_id):
-        '''
-        Returns the paths for the image and label files of a given volume ID
-        in the form of a dictionary with keys "image" and "label" (as expected by
-        the MONAI dataset).
-        Params
-        ------
-        `volume_id`: int
-            The ID of the volume to get the paths for.
-        Returns
-        -------
-        dict
-            A dictionary with keys "image" and "label", containing the paths to the
-            image and label files, respectively.
-            `{"image": <path_to_image>, "label": <path_to_label>}`
-        '''
-        img_filename = config.IMG_FILENAME_PATTERN.format(volume_id)
-        mask_filename = config.MASK_FILENAME_PATTERN.format(volume_id)
-
-        img_path = config.CT_ROOT / img_filename
-        mask_path = config.CT_ROOT / mask_filename
-        return {
-            "image":img_path, 
-            "label": mask_path
-        }
 
     def print_summary_of_volume(self):
         '''
@@ -149,7 +123,7 @@ class DataWrapper:
         if self.volume is None:
             raise ValueError("Volume is not set. Please set the volume using set_volume() before printing the summary.")
 
-        print(f"Volume {self.volume.id} summary:")
+        print(f"Volume summary:")
         print("--------------------File paths--------------------")
         print(f"Image path: {self.volume.img_path}")
         print(f"Label path: {self.volume.label_path}")
@@ -196,7 +170,7 @@ class DataWrapper:
         if self.volume is None:
             raise ValueError("Volume is not set. Please set the volume using set_volume()")
 
-        print(f"Plotting slice {slice_index} of volume {self.volume.id}...")
+        print(f"Plotting slice {slice_index} of volume...")
         utils.plot_slice(self.volume.image_data, self.volume.label_data, slice_index)
         utils.plot_mixed_slice(self.volume.image_data, self.volume.label_data, slice_index)
 
@@ -212,7 +186,7 @@ class DataWrapper:
         if self.volume is None:
             raise ValueError("Volume is not set. Please set the volume using set_volume() before creating an animation.")
 
-        print(f"Creating animation for volume {self.volume.id}...")
+        print("Creating animation for volume...")
         ani = utils.plot_animation(
             self.volume.image_data,
             self.volume.label_data,
