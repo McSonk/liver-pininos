@@ -1,8 +1,9 @@
 import nibabel as nib
 import numpy as np
 
-from idssp.sonk.view import utils
 from idssp.sonk import config
+from idssp.sonk.view import utils
+
 
 class VolumeWrapper:
     def __init__(self, id, img_path, label_path):
