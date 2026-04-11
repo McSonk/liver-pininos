@@ -79,13 +79,18 @@ class CustomDataset:
         paired_files = []
         not_volumes = []
         for file in self.files:
-            if "volume" in file:
-                image_path = file
-                label_path = file.replace("volume", "segmentation")
-                if os.path.exists(label_path):
-                    paired_files.append({"image": image_path, "label": label_path})
+            file_path = Path(file)
+            if "volume" in file_path.stem:
+                label_filename = file_path.name.replace("volume", "segmentation")
+                label_path = file_path.parent / label_filename
+
+                if label_path.exists():
+                    paired_files.append({
+                        "image": str(file_path),
+                        "label": str(label_path)
+                    })
                 else:
-                    print(f"Warning: Label file not found for image {image_path}. Expected label path: {label_path}")
+                    print(f"Warning: Label file not found for image {file_path.name}. Expected label path: {label_filename}")
             else:
                 not_volumes.append(file)
 
