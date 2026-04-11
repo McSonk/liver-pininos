@@ -23,6 +23,10 @@ print(f"🚀 Loading configuration for environment: [{ENV.upper()}]")
 # -----------------------------------------------------------------------------
 # 2. Shared Constants (Same across all environments)
 # -----------------------------------------------------------------------------
+
+# For reproducibility
+RANDOM_SEED: Final[int] = 42
+
 # Use Python format string syntax. {0} is the volume_id.
 # LiTS: volume-1.nii.gz  -> Pattern: "volume-{0}.nii.gz"
 # Padded: img_01.nii     -> Pattern: "img_{0:02d}.nii"
