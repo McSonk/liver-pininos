@@ -5,9 +5,15 @@ pairing image and label files, and providing the necessary file paths for furthe
 processing in the pipeline.
 '''
 
-import os
-from pathlib import Path
+import datetime
 import glob
+import json
+from pathlib import Path
+
+from monai.data import partition_dataset
+
+from idssp.sonk import config
+
 
 class CustomDataset:
     '''
@@ -130,8 +136,10 @@ class DataCollector:
     different specified directories.
     '''
     def __init__(self):
-        self.datasources = []
         self.d_sets = []
+        '''The plain paths for the dataset'''
+        self.datasources = []
+        '''The paired image and label paths'''
 
     def read_dir(self, ds_dir: Path, ds_source: str):
         '''
@@ -193,3 +201,41 @@ class DataCollector:
             self.datasources.extend(paired_files)
 
         print(f"Extracted {len(self.datasources)} image-label pairs from the dataset.")
+
+    def get_reproducible_split(self, train_ratio: float = 0.8) -> tuple[list, list]:
+        """
+        Splits the paired data into training and validation sets deterministically.
+        
+        Returns
+        -------
+        train_files: list[dict]
+        val_files: list[dict]
+        """
+        if not self.datasources:
+            raise ValueError("No data loaded. Call read_dir() first.")
+
+        train_files, val_files = partition_dataset(
+            data=self.datasources,
+            ratios=[train_ratio, 1.0 - train_ratio],
+            shuffle=True,
+            seed=config.RANDOM_SEED
+        )
+
+        print(f"Split dataset into {len(train_files)} training and {len(val_files)} validation samples.")
+
+        # Log split for thesis appendix
+        log_path = Path(f"{self.d_sets[0].ds_source}_split_seed{config.RANDOM_SEED}.json")
+        log_path.write_text(
+            json.dumps(
+                {
+                    "train": [Path(f["image"]).name for f in train_files],
+                    "val":   [Path(f["image"]).name for f in val_files],
+                    "creation_date": datetime.datetime.now().isoformat()
+                },
+                indent=2
+            ),
+            encoding="utf-8"
+        )
+        print(f"Split logged to {log_path}")
+
+        return train_files, val_files
