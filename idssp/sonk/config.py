@@ -68,7 +68,7 @@ if ENV == "local":
     PIN_MEMORY = False
     BATCH_SIZE = 1
     NUM_EPOCHS = 10
-    TRAIN_PATCH_SIZE = (32, 32, 32)
+    TRAIN_PATCH_SIZE = (64, 64, 64)
     VAL_PATCH_SIZE = (64, 64, 64)
 
     CT_ROOT = Path("/media/sonk/77E0938A53FF065D/ct-scans/media/nas/01_Datasets/CT/LITS/Training Batch 1/")
