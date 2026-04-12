@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # -----------------------------------------------------------------------------
-# 1. Environment Detection
+# 2. Environment detection and validation
 # -----------------------------------------------------------------------------
 ENV = os.getenv("ENV")
 
@@ -49,8 +49,18 @@ print(f"Loading configuration for environment: [{ENV.upper()}]")
 RANDOM_SEED: Final[int] = 42
 
 # File locations
-CT_ROOT = Path(os.getenv("LITS_CT_ROOT"))
-CHECKPOINT_DIR = Path(os.getenv("CHECKPOINT_DIR"))
+CT_ROOT_STR = os.getenv("LITS_CT_ROOT")
+CHECKPOINT_DIR_STR = os.getenv("CHECKPOINT_DIR")
+
+# Validations
+if not CT_ROOT_STR:
+    raise ValueError("Environment variable 'LITS_CT_ROOT' is not set!")
+if not CHECKPOINT_DIR_STR:
+    raise ValueError("Environment variable 'CHECKPOINT_DIR' is not set!")
+
+CT_ROOT = Path(CT_ROOT_STR)
+CHECKPOINT_DIR = Path(CHECKPOINT_DIR_STR)
+
 
 # CTs are in Hounsfield Units: -1000 (air), 0 (water), 40-60 (soft tissues), 100+ (bone)
 # we just need liver and tumor, so we can clip the intensities to a smaller range
@@ -100,12 +110,17 @@ elif ENV == "cloud":
     BATCH_SIZE = 1
     NUM_EPOCHS = 100
     TRAIN_PATCH_SIZE = (96, 96, 96)
-    VAL_PATCH_SIZE = (128, 128, 128) # Going to be ignored, just for consistency
+    VAL_PATCH_SIZE = (128, 128, 128)
+    # Note: If using SlidingWindowInferer, VAL_PATCH_SIZE determines the window stride/size.
+    # However, on full scans, VAL_PATCH_SIZE will be ignored
 
 # -----------------------------------------------------------------------------
 # 4. Final Safety Check & Directory Creation
 # -----------------------------------------------------------------------------
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+
+if not CT_ROOT.exists():
+    raise FileNotFoundError(f"CT root directory does not exist: {CT_ROOT}")
 
 print(f"   Device: {DEVICE}")
 print(f"   Batch Size: {BATCH_SIZE}")
