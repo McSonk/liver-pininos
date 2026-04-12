@@ -4,13 +4,34 @@ Adjust paths and hyperparameters as needed.
 import os
 from pathlib import Path
 from typing import Final
+
 print("Importing torch... (This may take a moment)")
 import torch
+from dotenv import load_dotenv
+
+# -----------------------------------------------------------------------------
+# 0. Load Environment Variables
+# -----------------------------------------------------------------------------
+
+load_dotenv()
 
 # -----------------------------------------------------------------------------
 # 1. Environment Detection
 # -----------------------------------------------------------------------------
-ENV = os.getenv("ENV", "local").lower()
+ENV = os.getenv("ENV")
+
+if ENV is None:
+    raise EnvironmentError(
+        "ERROR: Environment variable 'ENV' is not set!\n"
+        "Please do one of the following:\n"
+        "   1. Create a '.env' file in the project root with: ENV=local\n"
+        "   2. Or set it in your terminal: export ENV=local\n"
+        "   3. Or set it in Lightning AI Studio settings.\n\n"
+        "In any case, be sure to check .env.example for the expected format "
+        "of the .env file and required variables."
+    )
+
+ENV = ENV.lower()
 RECOGNISED_ENVS = {"local", "cloud"}
 
 if ENV not in RECOGNISED_ENVS:
@@ -18,7 +39,7 @@ if ENV not in RECOGNISED_ENVS:
         f"Environment [{ENV}] is not recognised. Please set ENV to one of {RECOGNISED_ENVS}"
     )
 
-print(f"🚀 Loading configuration for environment: [{ENV.upper()}]")
+print(f"Loading configuration for environment: [{ENV.upper()}]")
 
 # -----------------------------------------------------------------------------
 # 2. Shared Constants (Same across all environments)
@@ -27,11 +48,9 @@ print(f"🚀 Loading configuration for environment: [{ENV.upper()}]")
 # For reproducibility
 RANDOM_SEED: Final[int] = 42
 
-# Use Python format string syntax. {0} is the volume_id.
-# LiTS: volume-1.nii.gz  -> Pattern: "volume-{0}.nii.gz"
-# Padded: img_01.nii     -> Pattern: "img_{0:02d}.nii"
-IMG_FILENAME_PATTERN: Final[str] = "volume-{0}.nii"
-MASK_FILENAME_PATTERN: Final[str] = "segmentation-{0}.nii"
+# File locations
+CT_ROOT = Path(os.getenv("LITS_CT_ROOT"))
+CHECKPOINT_DIR = Path(os.getenv("CHECKPOINT_DIR"))
 
 # CTs are in Hounsfield Units: -1000 (air), 0 (water), 40-60 (soft tissues), 100+ (bone)
 # we just need liver and tumor, so we can clip the intensities to a smaller range
@@ -55,8 +74,6 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # -----------------------------------------------------------------------------
 NUM_WORKERS: int
 PIN_MEMORY: bool
-CT_ROOT: Path
-CHECKPOINT_DIR: Path
 
 BATCH_SIZE: int
 '''DataLoader's batch size. Set to 1 for memory safety, especially with large 3D volumes.'''
@@ -75,9 +92,6 @@ if ENV == "local":
     TRAIN_PATCH_SIZE = (64, 64, 64)
     VAL_PATCH_SIZE = (64, 64, 64)
 
-    CT_ROOT = Path("/media/sonk/77E0938A53FF065D/ct-scans/media/nas/01_Datasets/CT/LITS/Training Batch 1/")
-    CHECKPOINT_DIR = Path("./checkpoints")
-
 elif ENV == "cloud":
     print("Running in CLOUD environment (Lightning AI). Using more computing power.")
 
@@ -87,9 +101,6 @@ elif ENV == "cloud":
     NUM_EPOCHS = 100
     TRAIN_PATCH_SIZE = (96, 96, 96)
     VAL_PATCH_SIZE = (128, 128, 128) # Going to be ignored, just for consistency
-
-    CT_ROOT = Path("/teamspace/lightning_storage/lits/media/nas/01_Datasets/CT/LITS/Training Batch 1")
-    CHECKPOINT_DIR = Path("/teamspace/studios/this_studio/checkpoints")
 
 # -----------------------------------------------------------------------------
 # 4. Final Safety Check & Directory Creation
