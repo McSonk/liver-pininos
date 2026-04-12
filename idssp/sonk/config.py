@@ -52,7 +52,8 @@ RANDOM_SEED: Final[int] = 42
 CT_ROOT_STR = os.getenv("LITS_CT_ROOT")
 CHECKPOINT_DIR_STR = os.getenv("CHECKPOINT_DIR")
 LOG_DIR_STR = os.getenv("LOG_DIR")
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_LEVEL_CONSOLE = os.getenv("LOG_LEVEL_CONSOLE", "INFO").upper()
+LOG_LEVEL_FILE = os.getenv("LOG_LEVEL_FILE", "DEBUG").upper()
 
 # Validations
 if not CT_ROOT_STR:
@@ -61,9 +62,14 @@ if not CHECKPOINT_DIR_STR:
     raise ValueError("[Config] Environment variable 'CHECKPOINT_DIR' is not set!")
 if not LOG_DIR_STR:
     print("[Config] Warning: 'LOG_DIR' is not set. Logging to file will be disabled.")
-if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
-    print(f"[Config] Warning: LOG_LEVEL '{LOG_LEVEL}' is not valid. Defaulting to 'INFO'.")
-    LOG_LEVEL = "INFO"
+if LOG_LEVEL_CONSOLE not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+    print(f"[Config] Warning: LOG_LEVEL_CONSOLE '{LOG_LEVEL_CONSOLE}' is not "
+           "valid. Defaulting to 'INFO'.")
+    LOG_LEVEL_CONSOLE = "INFO"
+if LOG_LEVEL_FILE not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+    print(f"[Config] Warning: LOG_LEVEL_FILE '{LOG_LEVEL_FILE}' is not valid. "
+           "Defaulting to 'DEBUG'.")
+    LOG_LEVEL_FILE = "DEBUG"
 
 CT_ROOT = Path(CT_ROOT_STR)
 CHECKPOINT_DIR = Path(CHECKPOINT_DIR_STR)

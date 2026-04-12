@@ -28,7 +28,7 @@ def print_image_plot(img_data, slice_index, include_axis=False, ax=None,
         If True, uses the training window (HU: -175 to 250).
         If False, uses general abdominal window (default: True)
     '''
-    
+
     if use_training_window:
         # Window matching ScaleIntensityRanged preprocessing
         vmin = config.HU_WINDOW_MIN
