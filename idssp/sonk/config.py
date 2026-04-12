@@ -51,16 +51,23 @@ RANDOM_SEED: Final[int] = 42
 # File locations
 CT_ROOT_STR = os.getenv("LITS_CT_ROOT")
 CHECKPOINT_DIR_STR = os.getenv("CHECKPOINT_DIR")
+LOG_DIR_STR = os.getenv("LOG_DIR")
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
 # Validations
 if not CT_ROOT_STR:
     raise ValueError("Environment variable 'LITS_CT_ROOT' is not set!")
 if not CHECKPOINT_DIR_STR:
     raise ValueError("Environment variable 'CHECKPOINT_DIR' is not set!")
+if not LOG_DIR_STR:
+    print("Warning: 'LOG_DIR' is not set. Logging to file will be disabled.")
+if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+    print(f"Warning: LOG_LEVEL '{LOG_LEVEL}' is not valid. Defaulting to 'INFO'.")
+    LOG_LEVEL = "INFO"
 
 CT_ROOT = Path(CT_ROOT_STR)
 CHECKPOINT_DIR = Path(CHECKPOINT_DIR_STR)
-
+LOG_DIR = Path(LOG_DIR_STR) if LOG_DIR_STR else None
 
 # CTs are in Hounsfield Units: -1000 (air), 0 (water), 40-60 (soft tissues), 100+ (bone)
 # we just need liver and tumor, so we can clip the intensities to a smaller range
@@ -118,6 +125,8 @@ elif ENV == "cloud":
 # 4. Final Safety Check & Directory Creation
 # -----------------------------------------------------------------------------
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+if LOG_DIR:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 if not CT_ROOT.exists():
     raise FileNotFoundError(f"CT root directory does not exist: {CT_ROOT}")
@@ -128,7 +137,7 @@ print(f"   Val Batch Size: {VAL_BATCH_SIZE}")
 print(f"   Workers: {NUM_WORKERS}")
 print(f"   Data Root: {CT_ROOT}")
 print(f"   Checkpoint Dir: {CHECKPOINT_DIR}")
-
+print(f"   Log Dir: {LOG_DIR}")
 # -----------------------------------------------------------------------------
 # 5. Helper Functions
 # -----------------------------------------------------------------------------
