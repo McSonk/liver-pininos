@@ -4,6 +4,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+# -----------------------------------------------------------------------------
+# Module-level variable to ensure consistent timestamp across all loggers
+# -----------------------------------------------------------------------------
+_RUN_TIMESTAMP: Optional[str] = None
+
+def _get_run_timestamp() -> str:
+    """
+    Returns a consistent timestamp for the entire Python process run.
+    Generated once on first call, then cached.
+    """
+    global _RUN_TIMESTAMP
+    if _RUN_TIMESTAMP is None:
+        _RUN_TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return _RUN_TIMESTAMP
+
 
 def get_logger(
         name: str,
@@ -30,7 +45,7 @@ def get_logger(
     logging.Logger
         Configured logger instance.
     """
-    # Lazy import to avoid circular dependencies
+    # Lazy import to avoid circular dependencies (such as config.py importing this logger)
     from idssp.sonk import config
 
     # Use config defaults if not provided
@@ -45,6 +60,9 @@ def get_logger(
     # CRITICAL: Set the logger itself to the LOWEST level (DEBUG)
     # This ensures the logger accepts all messages, and the Handlers do the filtering.
     logger.setLevel(logging.DEBUG)
+    # To prevent duplicate in case other libraries also use logging (e.g., MONAI),
+    # we set propagate to False to avoid messages being passed to the root logger
+    logger.propagate = False
 
     # Prevent adding handlers multiple times if imported repeatedly
     if logger.handlers:
@@ -65,7 +83,7 @@ def get_logger(
     # 2. File Handler (if log_dir is provided)
     if log_dir:
         log_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d")
+        timestamp = _get_run_timestamp()
         log_file = log_dir / f"training_{timestamp}.log"
         
         file_handler = logging.FileHandler(log_file)
@@ -74,6 +92,6 @@ def get_logger(
 
         logger.addHandler(file_handler)
 
-        logger.info("Logging initialized. File: {%s}", log_file)
+        logger.info("Logging initialized. File: %s", log_file)
 
     return logger
