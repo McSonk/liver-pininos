@@ -1,7 +1,6 @@
 import nibabel as nib
 import numpy as np
 
-from idssp.sonk import config
 from idssp.sonk.view import utils
 
 

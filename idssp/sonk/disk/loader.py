@@ -13,6 +13,9 @@ from pathlib import Path
 from monai.data import partition_dataset
 
 from idssp.sonk import config
+from idssp.sonk.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class CustomDataset:
@@ -96,7 +99,9 @@ class CustomDataset:
                         "label": str(label_path)
                     })
                 else:
-                    print(f"Warning: Label file not found for image {file_path.name}. Expected label path: {label_filename}")
+                    logger.warning("Label file not found for image %s. "
+                                   "Expected label path: %s",
+                                   file_path.name, label_filename)
             else:
                 not_volumes.append(file)
 
@@ -106,9 +111,10 @@ class CustomDataset:
                 not_volumes.remove(paired["label"])
 
         if not_volumes:
-            print("Warning: The following files were not identified as image volumes and may be unpaired:")
+            logger.warning("Warning: The following files were not identified as"
+                           " image volumes and may be unpaired:")
             for file in not_volumes:
-                print(f" - {file}")
+                logger.warning(" - {%s}", file)
         return paired_files
 
 class DataCollector:
@@ -139,8 +145,9 @@ class DataCollector:
         '''
 
         if ds_source not in CustomDataset.SUPPORTED_SOURCES:
-            raise ValueError(f"Dataset source [{ds_source}] is not supported. Please choose from {CustomDataset.SUPPORTED_SOURCES}")
-        print(f"Reading directory: {ds_dir}")
+            raise ValueError(f"Dataset source [{ds_source}] is not supported. "
+                             "Please choose from {CustomDataset.SUPPORTED_SOURCES}")
+        logger.info("Reading directory: %s", ds_dir)
         if not ds_dir.exists():
             raise FileNotFoundError(f"Data root directory does not exist: {ds_dir}")
         files = sorted(glob.glob(str(ds_dir / "*")))
@@ -148,12 +155,12 @@ class DataCollector:
         if len(files) == 0:
             raise ValueError(f"No files found in the directory: {ds_dir}")
 
-        print(f"Found {len(files)} files in the directory.")
+        logger.info("Found %d files in the directory.", len(files))
 
         if len(files) % 2 != 0:
-            print("Warning:")
-            print(f"Found an odd number of files ({len(files)}) in the directory.")
-            print("This may indicate that some image-label pairs are incomplete.")
+            logger.warning("Warning:")
+            logger.warning("Found an odd number of files (%d) in the directory.", len(files))
+            logger.warning("This may indicate that some image-label pairs are incomplete.")
 
 
         self.d_sets.append(CustomDataset(ds_source, files))
@@ -182,7 +189,7 @@ class DataCollector:
             paired_files = ds.discover_and_pair()
             self.datasources.extend(paired_files)
 
-        print(f"Extracted {len(self.datasources)} image-label pairs from the dataset.")
+        logger.debug("Extracted %d image-label pairs from the dataset.", len(self.datasources))
 
     def get_reproducible_split(self, train_ratio: float = 0.8) -> tuple[list, list]:
         """
@@ -203,7 +210,8 @@ class DataCollector:
             seed=config.RANDOM_SEED
         )
 
-        print(f"Split dataset into {len(train_files)} training and {len(val_files)} validation samples.")
+        logger.info("Split dataset into %d training and %d validation samples.",
+                    len(train_files), len(val_files))
 
         # Log split for thesis appendix
         log_path = Path(f"{self.d_sets[0].ds_source}_split_seed{config.RANDOM_SEED}.json")
@@ -218,6 +226,6 @@ class DataCollector:
             ),
             encoding="utf-8"
         )
-        print(f"Split logged to {log_path}")
+        logger.info("Split logged to %s", log_path)
 
         return train_files, val_files

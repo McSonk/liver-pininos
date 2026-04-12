@@ -14,7 +14,9 @@ from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from idssp.sonk import config
+from idssp.sonk.utils.logger import get_logger
 
+logger = get_logger(__name__)
 
 class ModelBuilder:
     def __init__(self):
@@ -41,7 +43,7 @@ class ModelBuilder:
         self.scaler = GradScaler(config.DEVICE) if self.device.type == 'cuda' else None
         '''Mixed precision training scaler, enabled only on CUDA for potential speed up.'''
 
-        print("ModelBuilder initialized. Device set to:", self.device)
+        logger.info("ModelBuilder initialized. Device set to: %s", self.device)
 
     def get_train_transforms(self):
         '''Returns the transforms for the training data.'''
@@ -95,7 +97,7 @@ class ModelBuilder:
         ]
 
         if config.is_limited_env():
-            print("Validation transforms: Using random crop for limited environment.")
+            logger.debug("Validation transforms: Using random crop for limited environment.")
             compose_list.extend([
                 # To make sure we have some positive examples in the validation set
                 RandCropByPosNegLabeld(
@@ -134,19 +136,19 @@ class ModelBuilder:
             should be a dictionary with keys "image" and "label" pointing to the
             respective file paths.
         '''
-        print("Creating training transforms object...")
+        logger.info("Creating training transforms object...")
         train_transforms = self.get_train_transforms()
 
-        print("Creating validation transforms object...")
+        logger.info("Creating validation transforms object...")
         val_transforms = self.get_val_transforms()
 
-        print("Initializing training and validation datasets...")
+        logger.info("Initializing training and validation datasets...")
         if config.is_limited_env():
-            print("Limited environment detected. Using regular Dataset.")
+            logger.info("Limited environment detected. Using regular Dataset.")
             train_ds = Dataset(data=train_files, transform=train_transforms)
             val_ds = Dataset(data=val_files, transform=val_transforms)
         else:
-            print("Sufficient resources detected. Using CacheDataset.")
+            logger.info("Sufficient resources detected. Using CacheDataset.")
             train_ds = CacheDataset(
                 data=train_files,
                 transform=train_transforms,
@@ -160,7 +162,7 @@ class ModelBuilder:
                 num_workers=config.NUM_WORKERS
             )
 
-        print("Creating training dataloader...")
+        logger.info("Creating training dataloader...")
         self.train_dl = DataLoader(
             train_ds,
             batch_size=config.BATCH_SIZE,
@@ -169,7 +171,7 @@ class ModelBuilder:
             pin_memory=config.PIN_MEMORY
         )
 
-        print("Creating validation dataloader...")
+        logger.info("Creating validation dataloader...")
         self.val_dl = DataLoader(
             val_ds,
             batch_size=config.VAL_BATCH_SIZE,
@@ -178,11 +180,11 @@ class ModelBuilder:
             pin_memory=config.PIN_MEMORY
         )
 
-        print("Data loaders initialized successfully.")
+        logger.info("Data loaders initialized successfully.")
 
     def init_model(self):
         '''Initializes the model (uNet), loss function, and optimizer.'''
-        print("Initializing model...")
+        logger.debug("Initializing model...")
         self.model = UNet(
             spatial_dims=3,
             # Just 1 channel for the grayscale CT image. For RGB images, this would be 3.
@@ -207,8 +209,8 @@ class ModelBuilder:
             weight_decay=1e-5
         )
 
-        print(f"Model initialized on {self.device}")
-        print(f"Optimizer: AdamW | LR: {config.LEARNING_RATE} | Weight Decay: 1e-5")
+        logger.info("Model initialized on %s", self.device)
+        logger.info("Optimizer: AdamW | LR: %f | Weight Decay: 1e-5", config.LEARNING_RATE)
 
         self.scheduler = ReduceLROnPlateau(
             self.optimizer,
@@ -219,7 +221,7 @@ class ModelBuilder:
             patience=5
         )
 
-        print("Scheduler initialized: ReduceLROnPlateau (patience=5, factor=0.5)")
+        logger.info("Scheduler initialized: ReduceLROnPlateau (patience=5, factor=0.5)")
 
     def back_propagate(self, loss):
         '''
@@ -286,7 +288,7 @@ class ModelBuilder:
                 device=self.device,
                 progress=False
             )
-            print("Validation: Using SlidingWindowInferer for full-volume inference")
+            logger.debug("Validation: Using SlidingWindowInferer for full-volume inference")
 
         with torch.no_grad():
             for batch in self.val_dl:
@@ -336,14 +338,14 @@ class ModelBuilder:
 
         # --- START TOTAL TIMER ---
         total_start_time = time.time()
-        print(f"Starting training for {num_epochs} epochs...")
+        logger.info("Starting training for %d epochs...", num_epochs)
 
         for epoch in range(num_epochs):
             # --- START EPOCH TIMER ---
             epoch_start_time = time.time()
 
-            print(f"\nEpoch {epoch+1}/{num_epochs}")
-            
+            logger.info("Starting epoch %d/%d", epoch+1, num_epochs)
+
             avg_train_loss = self.train_epoch()
             avg_val_loss, epoch_dice = self.validate_epoch()
             
@@ -354,8 +356,8 @@ class ModelBuilder:
             epoch_end_time = time.time()
             epoch_duration = epoch_end_time - epoch_start_time
 
-            print(f"  Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | Dice: {epoch_dice:.4f} | LR: {current_lr:.6f}")
-            print(f"  Epoch Time: {epoch_duration:.2f} seconds")
+            logger.info("  Train Loss: %f | Val Loss: %f | Dice: %f | LR: %f", avg_train_loss, avg_val_loss, epoch_dice, current_lr)
+            logger.info("  Epoch Time: %f seconds", epoch_duration)
 
             # Track history
             self.history["train_loss"].append(avg_train_loss)
@@ -372,7 +374,7 @@ class ModelBuilder:
                     "optimizer_state_dict": self.optimizer.state_dict(),
                     "best_dice": best_val_dice,
                 }, best_ckpt_path)
-                print(f"  -> New Best Model Saved (Dice: {best_val_dice:.4f})")
+                logger.info("  -> New Best Model Saved (Dice: %f)", best_val_dice)
 
         # --- END TOTAL TIMER ---
         total_end_time = time.time()
@@ -382,9 +384,9 @@ class ModelBuilder:
         hours, rem = divmod(total_duration, 3600)
         minutes, seconds = divmod(rem, 60)
 
-        print(f"\n{'='*40}")
-        print(f"Training Complete!")
-        print(f"Best Validation Dice: {best_val_dice:.4f}")
-        print(f"Total Training Time: {int(hours)}h {int(minutes)}m {seconds:.2f}s")
-        print(f"Checkpoint saved to: {best_ckpt_path}")
-        print(f"{'='*40}")
+        logger.info("\n%s", "="*40)
+        logger.info("Training Complete!")
+        logger.info("Best Validation Dice: %f", best_val_dice)
+        logger.info("Total Training Time: %dh %dm %ds", int(hours), int(minutes), seconds)
+        logger.info("Checkpoint saved to: %s", best_ckpt_path)
+        logger.info("\n%s", "="*40)
