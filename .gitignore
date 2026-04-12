@@ -1,5 +1,6 @@
 *.pyc
 checkpoints/*
 .env
+logs/*
 # For the dataset split logs
 **seed**.json
