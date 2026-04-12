@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Final
 
-print("Importing torch... (This may take a moment)")
+print("[Config] Importing torch... (This may take a moment)")
 import torch
 from dotenv import load_dotenv
 
@@ -22,7 +22,7 @@ ENV = os.getenv("ENV")
 
 if ENV is None:
     raise EnvironmentError(
-        "ERROR: Environment variable 'ENV' is not set!\n"
+        "[Config] ERROR: Environment variable 'ENV' is not set!\n"
         "Please do one of the following:\n"
         "   1. Create a '.env' file in the project root with: ENV=local\n"
         "   2. Or set it in your terminal: export ENV=local\n"
@@ -36,10 +36,10 @@ RECOGNISED_ENVS = {"local", "cloud"}
 
 if ENV not in RECOGNISED_ENVS:
     raise ValueError(
-        f"Environment [{ENV}] is not recognised. Please set ENV to one of {RECOGNISED_ENVS}"
+        f"[Config] Environment [{ENV}] is not recognised. Please set ENV to one of {RECOGNISED_ENVS}"
     )
 
-print(f"Loading configuration for environment: [{ENV.upper()}]")
+print(f"[Config] Loading configuration for environment: [{ENV.upper()}]")
 
 # -----------------------------------------------------------------------------
 # 2. Shared Constants (Same across all environments)
@@ -56,13 +56,13 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
 # Validations
 if not CT_ROOT_STR:
-    raise ValueError("Environment variable 'LITS_CT_ROOT' is not set!")
+    raise ValueError("[Config] Environment variable 'LITS_CT_ROOT' is not set!")
 if not CHECKPOINT_DIR_STR:
-    raise ValueError("Environment variable 'CHECKPOINT_DIR' is not set!")
+    raise ValueError("[Config] Environment variable 'CHECKPOINT_DIR' is not set!")
 if not LOG_DIR_STR:
-    print("Warning: 'LOG_DIR' is not set. Logging to file will be disabled.")
+    print("[Config] Warning: 'LOG_DIR' is not set. Logging to file will be disabled.")
 if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
-    print(f"Warning: LOG_LEVEL '{LOG_LEVEL}' is not valid. Defaulting to 'INFO'.")
+    print(f"[Config] Warning: LOG_LEVEL '{LOG_LEVEL}' is not valid. Defaulting to 'INFO'.")
     LOG_LEVEL = "INFO"
 
 CT_ROOT = Path(CT_ROOT_STR)
@@ -100,7 +100,7 @@ TRAIN_PATCH_SIZE: tuple
 VAL_PATCH_SIZE: tuple
 
 if ENV == "local":
-    print("Running in LOCAL environment.")
+    print("[Config] Running in LOCAL environment.")
 
     NUM_WORKERS = 0
     PIN_MEMORY = False
@@ -110,7 +110,7 @@ if ENV == "local":
     VAL_PATCH_SIZE = (64, 64, 64)
 
 elif ENV == "cloud":
-    print("Running in CLOUD environment (Lightning AI). Using more computing power.")
+    print("[Config] Running in CLOUD environment (Lightning AI). Using more computing power.")
 
     NUM_WORKERS = 4
     PIN_MEMORY = True
@@ -129,15 +129,15 @@ if LOG_DIR:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 if not CT_ROOT.exists():
-    raise FileNotFoundError(f"CT root directory does not exist: {CT_ROOT}")
+    raise FileNotFoundError(f"[Config] CT root directory does not exist: {CT_ROOT}")
 
-print(f"   Device: {DEVICE}")
-print(f"   Batch Size: {BATCH_SIZE}")
-print(f"   Val Batch Size: {VAL_BATCH_SIZE}")
-print(f"   Workers: {NUM_WORKERS}")
-print(f"   Data Root: {CT_ROOT}")
-print(f"   Checkpoint Dir: {CHECKPOINT_DIR}")
-print(f"   Log Dir: {LOG_DIR}")
+print(f"[Config]   Device: {DEVICE}")
+print(f"[Config]   Batch Size: {BATCH_SIZE}")
+print(f"[Config]   Val Batch Size: {VAL_BATCH_SIZE}")
+print(f"[Config]   Workers: {NUM_WORKERS}")
+print(f"[Config]   Data Root: {CT_ROOT}")
+print(f"[Config]   Checkpoint Dir: {CHECKPOINT_DIR}")
+print(f"[Config]   Log Dir: {LOG_DIR}")
 # -----------------------------------------------------------------------------
 # 5. Helper Functions
 # -----------------------------------------------------------------------------
