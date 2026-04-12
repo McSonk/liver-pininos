@@ -88,8 +88,8 @@ elif ENV == "cloud":
     TRAIN_PATCH_SIZE = (96, 96, 96)
     VAL_PATCH_SIZE = (128, 128, 128) # Going to be ignored, just for consistency
 
-    CT_ROOT = Path("/workspace/data/CT")
-    CHECKPOINT_DIR = Path("/workspace/checkpoints")
+    CT_ROOT = Path("/teamspace/lightning_storage/lits/media/nas/01_Datasets/CT/LITS/Training Batch 1")
+    CHECKPOINT_DIR = Path("/teamspace/studios/this_studio/checkpoints")
 
 # -----------------------------------------------------------------------------
 # 4. Final Safety Check & Directory Creation
@@ -112,4 +112,4 @@ def is_limited_env() -> bool:
     Returns True if the current environment is a limited resource
     environment (e.g., local with no GPU).
     '''
-    return ENV == "local" and DEVICE == "cpu"
+    return ENV == "local" or DEVICE == "cpu"
