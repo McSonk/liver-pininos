@@ -4,10 +4,10 @@
 # 1. Install PyTorch FIRST (Choose one based on your machine):
 #
 #    FOR LOCAL CPU:
-#    pip install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+#    pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cpu
 #
 #    FOR LAB SERVER (A100 GPU):
-#    pip install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu118
+#    pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu118
 #    (Check server CUDA version with 'nvidia-smi' and use cu121 if needed)
 #
 # 2. Install the rest of the dependencies:
