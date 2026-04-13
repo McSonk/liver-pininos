@@ -36,7 +36,8 @@ RECOGNISED_ENVS = {"local", "cloud"}
 
 if ENV not in RECOGNISED_ENVS:
     raise ValueError(
-        f"[Config] Environment [{ENV}] is not recognised. Please set ENV to one of {RECOGNISED_ENVS}"
+        f"[Config] Environment [{ENV}] is not recognised. Please set ENV to"
+        f" one of {RECOGNISED_ENVS}"
     )
 
 print(f"[Config] Loading configuration for environment: [{ENV.upper()}]")
@@ -90,7 +91,17 @@ VAL_BATCH_SIZE: Final[int] = 1
 '''DataLoader's batch size for validation. Kept at 1 for deterministic evaluation
 and memory safety with large 3D volumes.'''
 
+# Check computing power
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+HC_GPU = False
+'''HC_GPU is a flag to indicate if we are on the High-Compute GPU.
+Note that this only means the GPU has more than 30GB of VRAM'''
+
+if DEVICE == "cuda":
+    if torch.cuda.is_available():
+        vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        HC_GPU = vram_gb >= 30
 
 # -----------------------------------------------------------------------------
 # 3. Environment-Specific Configuration
@@ -111,17 +122,17 @@ if ENV == "local":
     NUM_WORKERS = 0
     PIN_MEMORY = False
     BATCH_SIZE = 1
-    NUM_EPOCHS = 10
+    NUM_EPOCHS = 5
     TRAIN_PATCH_SIZE = (64, 64, 64)
     VAL_PATCH_SIZE = (64, 64, 64)
 
 elif ENV == "cloud":
     print("[Config] Running in CLOUD environment (Lightning AI). Using more computing power.")
 
-    NUM_WORKERS = 4
+    NUM_WORKERS = 4 if HC_GPU else 0
     PIN_MEMORY = True
     BATCH_SIZE = 1
-    NUM_EPOCHS = 100
+    NUM_EPOCHS = 90
     TRAIN_PATCH_SIZE = (96, 96, 96)
     VAL_PATCH_SIZE = (128, 128, 128)
     # Note: If using SlidingWindowInferer, VAL_PATCH_SIZE determines the window stride/size.
@@ -148,9 +159,17 @@ print(f"[Config]   Log Dir: {LOG_DIR}")
 # 5. Helper Functions
 # -----------------------------------------------------------------------------
 
-def is_limited_env() -> bool:
+def is_limited_env(include_vram=True) -> bool:
     '''
     Returns True if the current environment is a limited resource
     environment (e.g., local with no GPU).
+
+    if `include_vram=True` (default) it also takes into consideration
+    the amount of memory of GPU so a CUDA device with less than 30GB of VRAM
+    will be considered a limited environment.
     '''
-    return ENV == "local" or DEVICE == "cpu"
+    if ENV == "local" or DEVICE == "cpu":
+        return True
+
+    return include_vram and HC_GPU is False
+
