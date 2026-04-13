@@ -22,7 +22,7 @@ if __name__ == "__main__":
     logger.debug("Initializing data wrapper and model builder...")
     wrapper = DataWrapper()
 
-    if config.is_limited_env():
+    if config.is_limited_env(include_vram=False):
         logger.info("Limited environment detected. Using a subset of the data for quick testing.")
         train_files = train_files[:2]  # Use only 2 samples for training
         val_files = val_files[:2]      # Use only 2 samples for validation
