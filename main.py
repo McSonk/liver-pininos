@@ -4,7 +4,7 @@ from idssp.sonk import config
 from idssp.sonk.disk.loader import DataCollector
 from idssp.sonk.model.data import DataWrapper
 from idssp.sonk.model.training import ModelBuilder
-from idssp.sonk.utils.logger import get_logger
+from idssp.sonk.utils.logger import get_logger, log_memory_usage
 
 # For reproducibility
 set_determinism(seed=42)
@@ -13,6 +13,7 @@ set_determinism(seed=42)
 logger = get_logger(__name__)
 
 if __name__ == "__main__":
+    log_memory_usage(logger, prefix="At program start: ")
     logger.info("Reading directories...")
     loader = DataCollector()
     loader.read_dir(config.CT_ROOT, ds_source='LiTS')

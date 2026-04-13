@@ -4,6 +4,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import psutil
+import torch
+
 # -----------------------------------------------------------------------------
 # Module-level variable to ensure consistent timestamp across all loggers
 # -----------------------------------------------------------------------------
@@ -85,13 +88,42 @@ def get_logger(
         log_dir.mkdir(parents=True, exist_ok=True)
         timestamp = _get_run_timestamp()
         log_file = log_dir / f"training_{timestamp}.log"
-        
+
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(file_level) 
         file_handler.setFormatter(formatter)
 
         logger.addHandler(file_handler)
 
-        logger.info("Logging initialized. File: %s", log_file)
+        logger.debug("Logging initialized. File: %s", log_file)
 
     return logger
+
+def log_memory_usage(logger: logging.Logger, prefix: str = ""):
+    """
+    Logs the current GPU and CPU memory usage.
+
+    Params
+    ------
+    `logger`: logging.Logger
+        The logger instance to use for logging memory usage.
+    `prefix`: str
+        Optional prefix to add to the log message for context.
+    """
+
+    # GPU Memory Usage
+    if torch.cuda.is_available():
+        gpu_memory_allocated = torch.cuda.memory_allocated() / (1024 ** 3)  # GB
+        gpu_memory_reserved = torch.cuda.memory_reserved() / (1024 ** 3)  # GB
+        logger.info("%sGPU Memory - Allocated: %.2f GB, Reserved: %.2f GB",
+                    prefix, gpu_memory_allocated, gpu_memory_reserved)
+
+    # CPU Memory Usage (using psutil if available)
+    try:
+        cpu_memory = psutil.virtual_memory()
+        cpu_memory_used = cpu_memory.used / (1024 ** 3)  # GB
+        cpu_memory_total = cpu_memory.total / (1024 ** 3)  # GB
+        logger.info("%sCPU Memory - Used: %.2f GB, Total: %.2f GB",
+                    prefix, cpu_memory_used, cpu_memory_total)
+    except ImportError:
+        logger.info("%spsutil not installed. CPU memory usage not logged.", prefix)

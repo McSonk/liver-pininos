@@ -14,7 +14,7 @@ from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from idssp.sonk import config
-from idssp.sonk.utils.logger import get_logger
+from idssp.sonk.utils.logger import get_logger, log_memory_usage
 
 logger = get_logger(__name__)
 
@@ -196,6 +196,8 @@ class ModelBuilder:
             num_res_units=1
         ).to(self.device)
 
+        log_memory_usage(logger, prefix="After model initialization: ")
+
         self.loss_fn = DiceCELoss(
             to_onehot_y=True,
             softmax=True,
@@ -303,11 +305,13 @@ class ModelBuilder:
                         # CPU: Images are already cropped to VAL_PATCH_SIZE, run directly
                         preds = self.model(images)
 
-                # Note: Loss calculation should ideally be in float32 for stability,
-                # but MONAI's DiceCELoss handles mixed precision inputs well.
-                # If NaNs in validation loss, cast preds/labels back to float32:
-                # preds = preds.float()
-                # labels = labels.float()
+                # Cast predictions and labels to float32 before loss calculation.
+                # Mixed precision (float16) can cause numerical instability and NaNs
+                # during operations like Dice or cross-entropy. Using float32 ensures
+                # stable loss computation while still allowing mixed precision in the
+                # forward pass for performance.
+                preds = preds.float()
+                labels = labels.float()
 
                 val_loss += self.loss_fn(preds, labels).item()
 
@@ -345,10 +349,11 @@ class ModelBuilder:
             epoch_start_time = time.time()
 
             logger.info("Starting epoch %d/%d", epoch+1, num_epochs)
+            log_memory_usage(logger)
 
             avg_train_loss = self.train_epoch()
             avg_val_loss, epoch_dice = self.validate_epoch()
-            
+
             # Get current learning rate for logging
             current_lr = self.optimizer.param_groups[0]['lr']
 
