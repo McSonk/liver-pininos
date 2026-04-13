@@ -2,14 +2,14 @@ import time
 
 import torch
 import torch.optim as optim
-from monai.data import CacheDataset, DataLoader, Dataset, decollate_batch
+from monai.data import PersistentDataset, DataLoader, Dataset, decollate_batch
 from monai.inferers import SlidingWindowInferer
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from monai.networks.nets import UNet
 from monai.transforms import (Activations, AsDiscrete, Compose, EnsureTyped,
                               LoadImaged, RandCropByPosNegLabeld, RandFlipd,
-                              ScaleIntensityRanged)
+                              ScaleIntensityRanged, Spacingd)
 from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
@@ -34,7 +34,7 @@ class ModelBuilder:
             AsDiscrete(argmax=True, to_onehot=config.NUM_CLASSES)
         ])
         self.label_trans = AsDiscrete(to_onehot=config.NUM_CLASSES)
-        
+
         # include_background=False is standard for multi-class segmentation 
         # to avoid background dominating the metric.
         self.dice_metric = DiceMetric(include_background=False, reduction="mean")
@@ -49,6 +49,14 @@ class ModelBuilder:
         '''Returns the transforms for the training data.'''
         return Compose([
             LoadImaged(keys=['image', 'label'], ensure_channel_first=True),
+            # LiTS and other sources have varying resolutions.
+            # Resample to to isotropic spacing for better model performance and to
+            # ensure the model learns scale-invariant features.
+            Spacingd(
+                keys=["image", "label"],
+                pixdim=(1.5, 1.5, 1.5),
+                mode=("bilinear", "nearest")
+            ),
             ScaleIntensityRanged(
                 keys=["image"],
                 # We clip the HU values to the defined liver/tumour range
@@ -88,6 +96,11 @@ class ModelBuilder:
         '''Returns the transforms for the validation data.'''
         compose_list = [
             LoadImaged(keys=["image", "label"], ensure_channel_first=True),
+            Spacingd(
+                keys=["image", "label"],
+                pixdim=(1.5, 1.5, 1.5),
+                mode=("bilinear", "nearest")
+            ),
             ScaleIntensityRanged(
                 keys=["image"],
                 a_min=config.HU_WINDOW_MIN, a_max=config.HU_WINDOW_MAX,
@@ -148,18 +161,16 @@ class ModelBuilder:
             train_ds = Dataset(data=train_files, transform=train_transforms)
             val_ds = Dataset(data=val_files, transform=val_transforms)
         else:
-            logger.info("Sufficient resources detected. Using CacheDataset.")
-            train_ds = CacheDataset(
+            logger.info("Sufficient resources detected. Using PersistentDataset.")
+            train_ds = PersistentDataset(
                 data=train_files,
                 transform=train_transforms,
-                cache_rate=1.0,
-                num_workers=config.NUM_WORKERS
+                cache_dir=str(config.PERSISTENT_DATASET_DIR / "train_cache")
             )
-            val_ds = CacheDataset(
+            val_ds = PersistentDataset(
                 data=val_files,
                 transform=val_transforms,
-                cache_rate=1.0,
-                num_workers=config.NUM_WORKERS
+                cache_dir=str(config.PERSISTENT_DATASET_DIR / "val_cache")
             )
 
         logger.info("Creating training dataloader...")
@@ -192,8 +203,7 @@ class ModelBuilder:
             out_channels=config.NUM_CLASSES,
             channels=(16, 32, 64, 128),
             strides=(2, 2, 2),
-            # TODO: This is temporal for low-resource environments.
-            num_res_units=1
+            num_res_units=1 if config.is_limited_env() else 2
         ).to(self.device)
 
         log_memory_usage(logger, prefix="After model initialization: ")

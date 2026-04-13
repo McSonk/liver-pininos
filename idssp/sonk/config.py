@@ -52,6 +52,8 @@ RANDOM_SEED: Final[int] = 42
 # File locations
 CT_ROOT_STR = os.getenv("LITS_CT_ROOT")
 CHECKPOINT_DIR_STR = os.getenv("CHECKPOINT_DIR")
+PERSISTENT_DATASET_DIR_STR = os.getenv("PERSISTENT_DATASET_DIR")
+
 LOG_DIR_STR = os.getenv("LOG_DIR")
 LOG_LEVEL_CONSOLE = os.getenv("LOG_LEVEL_CONSOLE", "INFO").upper()
 LOG_LEVEL_FILE = os.getenv("LOG_LEVEL_FILE", "DEBUG").upper()
@@ -61,6 +63,10 @@ if not CT_ROOT_STR:
     raise ValueError("[Config] Environment variable 'LITS_CT_ROOT' is not set!")
 if not CHECKPOINT_DIR_STR:
     raise ValueError("[Config] Environment variable 'CHECKPOINT_DIR' is not set!")
+if not PERSISTENT_DATASET_DIR_STR:
+    print("[Config] Warning: 'PERSISTENT_DATASET_DIR' is not set. "
+          "PersistentDataset will be disabled.")
+
 if not LOG_DIR_STR:
     print("[Config] Warning: 'LOG_DIR' is not set. Logging to file will be disabled.")
 if LOG_LEVEL_CONSOLE not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
@@ -74,6 +80,7 @@ if LOG_LEVEL_FILE not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
 
 CT_ROOT = Path(CT_ROOT_STR)
 CHECKPOINT_DIR = Path(CHECKPOINT_DIR_STR)
+PERSISTENT_DATASET_DIR = Path(PERSISTENT_DATASET_DIR_STR) if PERSISTENT_DATASET_DIR_STR else None
 LOG_DIR = Path(LOG_DIR_STR) if LOG_DIR_STR else None
 
 # CTs are in Hounsfield Units: -1000 (air), 0 (water), 40-60 (soft tissues), 100+ (bone)
@@ -148,6 +155,11 @@ if LOG_DIR:
 if not CT_ROOT.exists():
     raise FileNotFoundError(f"[Config] CT root directory does not exist: {CT_ROOT}")
 
+if PERSISTENT_DATASET_DIR and not PERSISTENT_DATASET_DIR.exists():
+    print("[Config] Persistent dataset directory does not exist. "
+          f"Creating: {PERSISTENT_DATASET_DIR}")
+    PERSISTENT_DATASET_DIR.mkdir(parents=True, exist_ok=True)
+
 print(f"[Config]   Device: {DEVICE}")
 print(f"[Config]   Batch Size: {BATCH_SIZE}")
 print(f"[Config]   Val Batch Size: {VAL_BATCH_SIZE}")
@@ -155,6 +167,7 @@ print(f"[Config]   Workers: {NUM_WORKERS}")
 print(f"[Config]   Data Root: {CT_ROOT}")
 print(f"[Config]   Checkpoint Dir: {CHECKPOINT_DIR}")
 print(f"[Config]   Log Dir: {LOG_DIR}")
+print(f"[Config]   Persistent Dataset Dir: {PERSISTENT_DATASET_DIR}")
 # -----------------------------------------------------------------------------
 # 5. Helper Functions
 # -----------------------------------------------------------------------------
