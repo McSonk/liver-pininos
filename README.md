@@ -15,6 +15,13 @@ The aim of this thesis is to train a model to automatically segment HCC liver tu
 - Persistent dataset caching for improved performance
 - Comprehensive logging and memory usage tracking
 
+## Reproducibility
+
+- Fixed random seed across PyTorch, NumPy, and MONAI transforms
+- Deterministic training mode enabled (`torch.use_deterministic_algorithms(True)`)
+- All hyperparameters managed via `config.py` + `.env`; environment-specific presets documented
+- **Code availability**: This repository contains the complete, runnable codebase required for thesis submission and external validation
+
 ## Installation
 
 ### Prerequisites
@@ -97,6 +104,13 @@ The configuration automatically detects:
 - GPU VRAM amount to distinguish between high-compute (≥30GB) and low-compute (<30GB) GPUs
 - Adjusts settings accordingly (number of workers, pin memory usage)
 
+### Data Preprocessing
+
+- **CT Windowing**: Hounsfield Units clipped to [-175, 250] (soft-tissue liver window)
+- **Label Mapping (LiTS)**: Background=0, Liver=1, Tumour=1 (binary segmentation; LiTS label 2 → 1)
+- **Classes**: `NUM_CLASSES = 3` (background, liver, tumour) for multi-class output head
+- **Phase**: Portal venous phase CT scans only
+
 ## Usage
 
 To start training:
@@ -116,6 +130,14 @@ Monitor training progress with TensorBoard:
 ```bash
 tensorboard --logdir logs/tensorboard
 ```
+
+## Common Issues
+
+| Symptom | Likely Cause | Solution |
+|---------|-------------|----------|
+| `CUDA out of memory` | Patch size/batch too large for GPU | Reduce `TRAIN_PATCH_SIZE` or set `ENV=local` for smaller presets |
+| Dataset not found | `LITS_CT_ROOT` path incorrect | Verify path in `.env`; ensure dataset follows LiTS directory structure |
+| Slow data loading | `num_workers` too high for CPU | Lower `NUM_WORKERS` in `config.py` for local execution |
 
 ## Project Structure
 
@@ -157,6 +179,17 @@ As mentioned in the thesis objectives, future stages of this project will:
 2. Incorporate private data from the university hospital
 3. Experiment with different model architectures and loss functions
 4. Perform extensive validation and comparison with ground truth annotations
+
+
+## Dataset References
+
+| Dataset | Purpose | Citation |
+|---------|---------|----------|
+| LiTS | Baseline training & validation | [Bilic et al., 2023](https://competitions.codalab.org/competitions/17094) |
+| WAW-TACE | Domain adaptation (TACE-treated HCC) | [Internal, university hospital] |
+| HCC-TACE-Seg | Final fine-tuning & evaluation | [Internal, university hospital] |
+| 3Dircadb | External validation (cases 1–26 only) | [https://www.ircad.fr/research/3d-ircadb-01/](https://www.ircad.fr/research/3d-ircadb-01/) |
+| CHAOS CT | Cross-dataset generalisation test | [Aktas et al., 2021](https://chaos.grand-challenge.org/) |
 
 ## License
 
