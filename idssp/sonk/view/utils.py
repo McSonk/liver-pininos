@@ -2,9 +2,14 @@ import matplotlib as mpl
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 from matplotlib import animation
+from monai.visualize import blend_images
 
 from idssp.sonk import config
+from idssp.sonk.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 # For the animation to display the full slices range
 mpl.rcParams['animation.embed_limit'] = 50 * 1024 * 1024  # 50 MB
@@ -204,3 +209,66 @@ def slice_to_world_coordinates(image_object, slice_index):
     voxel_coord = np.array([0, 0, slice_index, 1])  # homogeneous coordinate
     world_coord = image_object.affine @ voxel_coord
     return world_coord[2]
+
+
+def log_segmentation_overlay(writer, epoch: int, image: torch.Tensor, 
+                                label: torch.Tensor, pred: torch.Tensor,
+                                slice_axis: int = 2, slice_idx: int = None):
+    """
+    Logs a blended CT slice + prediction overlay to TensorBoard.
+    
+    Args:
+        epoch: Current training epoch (used as global step).
+        image: Input CT volume tensor [B, C, D, H, W].
+        label: Ground truth segmentation [B, 1, D, H, W] or [B, C, D, H, W].
+        pred: Model prediction logits [B, NUM_CLASSES, D, H, W].
+        slice_axis: Axis to extract slice from (0=sagittal, 1=coronal, 2=axial).
+        slice_idx: Index along slice_axis. If None, uses middle slice.
+    """
+    # Ensure we're working with CPU tensors for visualisation
+    image = image.detach().cpu()
+    label = label.detach().cpu()
+    pred = pred.detach().cpu()
+
+    # Take first sample in batch for simplicity
+    img_vol = image[0]  # [C, D, H, W]
+    lbl_vol = label[0]  # [1 or C, D, H, W]
+    pred_vol = pred[0]  # [NUM_CLASSES, D, H, W]
+
+    # Determine slice index if not provided
+    if slice_idx is None:
+        slice_idx = img_vol.shape[slice_axis] // 2
+
+    # Extract 2D slice: [C, H, W] or [NUM_CLASSES, H, W]
+    img_slice = img_vol.select(slice_axis, slice_idx)  # [1, H, W]
+    pred_slice = torch.argmax(pred_vol, dim=0).select(slice_axis, slice_idx)  # [H, W]
+
+    # Normalise CT image to [0, 1] for blending (preserve contrast)
+    img_min, img_max = img_slice.min(), img_slice.max()
+    img_norm = (img_slice - img_min) / (img_max - img_min + 1e-8)  # [1, H, W]
+
+    # Convert prediction to one-hot for blending (if not already)
+    if pred_slice.dim() == 2:  # [H, W] with class indices
+        pred_onehot = torch.zeros(config.NUM_CLASSES, *pred_slice.shape)
+        for c in range(config.NUM_CLASSES):
+            pred_onehot[c] = (pred_slice == c).float()
+        pred_slice = pred_onehot  # [NUM_CLASSES, H, W]
+
+    # Blend: overlay tumour class (index 2) in red over CT grayscale
+    # MONAI's blend_images expects [B, C, H, W]
+    overlay = blend_images(
+        image=img_norm.unsqueeze(0),  # [1, 1, H, W]
+        label=pred_slice[2].unsqueeze(0).unsqueeze(0),  # [1, 1, H, W] (tumour channel)
+        alpha=0.4,  # Transparency of overlay
+        cmap="hot"  # Red-yellow colormap for tumour
+    )  # [1, 3, H, W] (RGB)
+
+    # Log to TensorBoard
+    writer.add_image(
+        tag="Visualisation/CT_Tumour_Overlay_Axial",
+        img_tensor=overlay[0],  # Remove batch dim: [3, H, W]
+        global_step=epoch,
+        dataformats="CHW"  # Channel-first format
+    )
+
+    logger.debug("Logged segmentation overlay for epoch %d (slice %d)", epoch, slice_idx)

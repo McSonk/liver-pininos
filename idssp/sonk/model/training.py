@@ -15,6 +15,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
 
 from idssp.sonk import config
+from idssp.sonk.view.utils import log_segmentation_overlay
 from idssp.sonk.utils.logger import get_logger, log_memory_usage
 
 logger = get_logger(__name__)
@@ -298,7 +299,7 @@ class ModelBuilder:
 
         return train_loss / len(self.train_dl)
 
-    def validate_epoch(self):
+    def validate_epoch(self, epoch: int):
         self.model.eval()
         val_loss = 0
         self.dice_metric.reset()
@@ -317,7 +318,7 @@ class ModelBuilder:
             logger.debug("Validation: Using SlidingWindowInferer for full-volume inference")
 
         with torch.no_grad():
-            for batch in self.val_dl:
+            for batch_idx, batch in enumerate(self.val_dl):
                 images = batch["image"].to(self.device)
                 labels = batch["label"].to(self.device)
 
@@ -349,6 +350,11 @@ class ModelBuilder:
                 # Accumulate metrics
                 self.dice_metric(y_pred=val_preds, y=val_labels)
 
+                # --- LOG OVERLAY ONCE PER EPOCH (first batch only) ---
+                if epoch % config.FIGURE_EPOCH_INTERVAL == 0 and batch_idx == 0:  # Log every 5 epochs
+                    log_segmentation_overlay(self.writer, epoch, images, labels, preds)
+                # -----------------------------------------------------
+
         avg_val_loss = val_loss / len(self.val_dl)
         epoch_dice = self.dice_metric.aggregate().item()
 
@@ -376,7 +382,7 @@ class ModelBuilder:
             log_memory_usage(logger)
 
             avg_train_loss = self.train_epoch()
-            avg_val_loss, epoch_dice = self.validate_epoch()
+            avg_val_loss, epoch_dice = self.validate_epoch(epoch)
 
             # Get current learning rate for logging
             current_lr = self.optimizer.param_groups[0]['lr']

@@ -98,6 +98,12 @@ VAL_BATCH_SIZE: Final[int] = 1
 '''DataLoader's batch size for validation. Kept at 1 for deterministic evaluation
 and memory safety with large 3D volumes.'''
 
+FIGURE_EPOCH_INTERVAL: Final[int] = 10
+'''Interval (in epochs) at which to log segmentation overlay figures to TensorBoard.
+Set to 1 to log every epoch, or higher to log less frequently.
+Recommended: 5 on final training, 10+ during testing/debugging to save resources.
+'''
+
 # Check computing power
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
