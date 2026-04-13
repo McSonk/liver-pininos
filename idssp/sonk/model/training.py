@@ -2,7 +2,7 @@ import time
 
 import torch
 import torch.optim as optim
-from monai.data import PersistentDataset, DataLoader, Dataset, decollate_batch
+from monai.data import DataLoader, Dataset, PersistentDataset, decollate_batch
 from monai.inferers import SlidingWindowInferer
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
@@ -12,6 +12,7 @@ from monai.transforms import (Activations, AsDiscrete, Compose, EnsureTyped,
                               ScaleIntensityRanged, Spacingd)
 from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.utils.tensorboard import SummaryWriter
 
 from idssp.sonk import config
 from idssp.sonk.utils.logger import get_logger, log_memory_usage
@@ -43,10 +44,20 @@ class ModelBuilder:
         self.scaler = GradScaler(config.DEVICE) if self.device.type == 'cuda' else None
         '''Mixed precision training scaler, enabled only on CUDA for potential speed up.'''
 
+        # tensorboard writer for logging training metrics
+        self.writer = SummaryWriter(
+            log_dir=str(config.LOG_DIR / "tensorboard"),
+            comment=f"_{config.ENV}_batch{config.BATCH_SIZE}"
+        )
+        logger.info("TensorBoard writer initialised at: %s", self.writer.log_dir)
+
         logger.info("ModelBuilder initialized. Device set to: %s", self.device)
 
     def get_train_transforms(self):
         '''Returns the transforms for the training data.'''
+        # WARNING: If you modify the transforms and you're on a GPU environment,
+        # make sure to clear (delete) the PersistentDataset folder
+        # to avoid issues with cached data that doesn't match the new transforms.
         return Compose([
             LoadImaged(keys=['image', 'label'], ensure_channel_first=True),
             # LiTS and other sources have varying resolutions.
@@ -94,6 +105,9 @@ class ModelBuilder:
 
     def get_val_transforms(self):
         '''Returns the transforms for the validation data.'''
+        # WARNING: If you modify the transforms and you're on a GPU environment,
+        # make sure to clear (delete) the PersistentDataset folder
+        # to avoid issues with cached data that doesn't match the new transforms.
         compose_list = [
             LoadImaged(keys=["image", "label"], ensure_channel_first=True),
             Spacingd(
@@ -370,8 +384,18 @@ class ModelBuilder:
             # --- CALCULATE EPOCH TIME ---
             epoch_end_time = time.time()
             epoch_duration = epoch_end_time - epoch_start_time
+            # --------------------------
 
-            logger.info("  Train Loss: %f | Val Loss: %f | Dice: %f | LR: %f", avg_train_loss, avg_val_loss, epoch_dice, current_lr)
+            # --- LOG TO TENSORBOARD ---
+            self.writer.add_scalar("Loss/Train", avg_train_loss, epoch)
+            self.writer.add_scalar("Loss/Val", avg_val_loss, epoch)
+            self.writer.add_scalar("Metrics/Dice", epoch_dice, epoch)
+            self.writer.add_scalar("Hyperparams/LR", current_lr, epoch)
+            self.writer.add_scalar("Time/Epoch_Duration", epoch_duration, epoch)
+            # --------------------------
+
+            logger.info("  Train Loss: %f | Val Loss: %f | Dice: %f | LR: %f",
+                        avg_train_loss, avg_val_loss, epoch_dice, current_lr)
             logger.info("  Epoch Time: %f seconds", epoch_duration)
 
             # Track history
@@ -398,6 +422,8 @@ class ModelBuilder:
         # Convert seconds to hours/minutes for readability
         hours, rem = divmod(total_duration, 3600)
         minutes, seconds = divmod(rem, 60)
+
+        self.writer.close()
 
         logger.info("\n%s", "="*40)
         logger.info("Training Complete!")

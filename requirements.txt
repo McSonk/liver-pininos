@@ -21,6 +21,7 @@ nibabel==5.4.2
 
 # Visualization
 matplotlib==3.10.8
+tensorboard==2.20.0
 
 # Environments
 python-dotenv==1.2.2
