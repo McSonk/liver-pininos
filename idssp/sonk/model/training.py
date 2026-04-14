@@ -2,7 +2,7 @@ import time
 
 import torch
 import torch.optim as optim
-from monai.data import DataLoader, Dataset, PersistentDataset, decollate_batch
+from monai.data import DataLoader, Dataset, PersistentDataset, CacheDataset, decollate_batch
 from monai.inferers import SlidingWindowInferer
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
@@ -20,7 +20,30 @@ from idssp.sonk.utils.logger import get_logger, log_memory_usage
 
 logger = get_logger(__name__)
 
+class AugmentedDataset(Dataset):
+    '''
+    A wrapper around a base dataset that applies additional random transforms on-the-fly.
+    This is used to apply random cropping and flipping during training when using PersistentDataset,
+    which applies the main transforms once and caches the results. By separating the random
+    transforms into a second Compose, we can ensure that we still get data augmentation
+    benefits without losing the caching advantages of PersistentDataset.
+    '''
+    def __init__(self, base_ds, transform):
+        self.base_ds = base_ds
+        self.aug = transform
+    def __len__(self):
+        return len(self.base_ds)
+    def __getitem__(self, i):
+        return self.aug(self.base_ds[i])
+
 class ModelBuilder:
+    '''
+    This class encapsulates the entire model training pipeline, including:
+    - Data loading and transformation
+    - Model initialization
+    - Training and validation loops
+    - Checkpointing and logging
+    '''
     def __init__(self):
         self.train_dl = None
         self.val_dl = None
@@ -54,12 +77,34 @@ class ModelBuilder:
 
         logger.info("ModelBuilder initialized. Device set to: %s", self.device)
 
-    def get_train_transforms(self):
-        '''Returns the transforms for the training data.'''
+    def get_train_transforms(self) -> tuple[Compose, Compose]:
+        '''
+        Returns the transforms for the training data. Note that the result will
+        differ based on the environment:
+        - In a limited environment (e.g. CPU) or when using CacheDataset
+          (`config.USE_CACHE_DATASET`), all transforms (including random cropping)
+          are included in the main deterministic pipeline
+        - In a GPU environment with PersistentDataset, the random cropping is separated into
+            a second Compose that is applied on-the-fly. This due to the fact that
+            PersistentDataset applies transforms once and caches the results, so
+            we can't include random cropping in the main pipeline without losing variability.
+
+        Returns
+        -------
+        `tuple[Compose, Compose]`
+            A tuple containing two Compose objects:
+            - The first Compose contains the deterministic transforms that are
+              applied to all training samples.
+            - The second Compose contains the random transforms that are applied
+              on-the-fly during training for
+              data augmentation. This may be empty if we're in a limited environment
+              or using CacheDataset, in which case the random transforms are included
+              in the deterministic pipeline.
+        '''
         # WARNING: If you modify the transforms and you're on a GPU environment,
         # make sure to clear (delete) the PersistentDataset folder
         # to avoid issues with cached data that doesn't match the new transforms.
-        return Compose([
+        deterministic_transforms = [
             LoadImaged(keys=['image', 'label'], ensure_channel_first=True),
             # LiTS and other sources have varying resolutions.
             # Resample to to isotropic spacing for better model performance and to
@@ -78,7 +123,9 @@ class ModelBuilder:
                 # Values outside liver/tumour range are clipped.
                 clip=True,
             ),
+        ]
 
+        random_transforms = [
             # Sample patches with a balanced ratio of positive (tumor) and
             # negative (background) examples.
             RandCropByPosNegLabeld(
@@ -102,9 +149,20 @@ class ModelBuilder:
             # Labels must be long for the loss function
             # this ensures that the dtype is consistent across all transforms
             EnsureTyped(keys=["label"], dtype=torch.long),
-        ])
+        ]
 
-    def get_val_transforms(self):
+        if config.is_limited_env() or config.USE_CACHE_DATASET:
+            logger.debug("Using random crop in main transform pipeline for limited "
+            "environment or cache dataset.")
+            # When we won't use PersistentDataset (which applies transforms once
+            # and caches the results), we can include the random cropping in the
+            # main transform pipeline.
+            deterministic_transforms.extend(random_transforms)
+            random_transforms = []  # No separate random transforms needed
+
+        return Compose(deterministic_transforms), Compose(random_transforms)
+
+    def get_val_transforms(self) -> Compose:
         '''Returns the transforms for the validation data.'''
         # WARNING: If you modify the transforms and you're on a GPU environment,
         # make sure to clear (delete) the PersistentDataset folder
@@ -165,7 +223,8 @@ class ModelBuilder:
             respective file paths.
         '''
         logger.info("Creating training transforms object...")
-        train_transforms = self.get_train_transforms()
+        # train_ran_trans will be empty if we're in a limited environment or using CacheDataset
+        train_det_trans, train_ran_trans = self.get_train_transforms()
 
         logger.info("Creating validation transforms object...")
         val_transforms = self.get_val_transforms()
@@ -173,20 +232,39 @@ class ModelBuilder:
         logger.info("Initializing training and validation datasets...")
         if config.is_limited_env():
             logger.info("Limited environment detected. Using regular Dataset.")
-            train_ds = Dataset(data=train_files, transform=train_transforms)
+            train_ds = Dataset(data=train_files, transform=train_det_trans)
             val_ds = Dataset(data=val_files, transform=val_transforms)
         else:
-            logger.info("Sufficient resources detected. Using PersistentDataset.")
-            train_ds = PersistentDataset(
-                data=train_files,
-                transform=train_transforms,
-                cache_dir=str(config.PERSISTENT_DATASET_DIR / "train_cache")
-            )
-            val_ds = PersistentDataset(
-                data=val_files,
-                transform=val_transforms,
-                cache_dir=str(config.PERSISTENT_DATASET_DIR / "val_cache")
-            )
+            if config.USE_CACHE_DATASET:
+                logger.info("Sufficient resources detected. Using CacheDataset.")
+                train_ds = CacheDataset(
+                    data=train_files,
+                    transform=train_det_trans,
+                    cache_rate=1.0,
+                    num_workers=config.NUM_WORKERS
+                )
+                val_ds = CacheDataset(
+                    data=val_files,
+                    transform=val_transforms,
+                    cache_rate=1.0,
+                    num_workers=config.NUM_WORKERS
+                )
+            else:
+                logger.info("Sufficient resources detected. Using PersistentDataset.")
+                # Here we need to make use of both the deterministic and random transforms
+                train_ds = AugmentedDataset(
+                    PersistentDataset(
+                        data=train_files,
+                        transform=train_det_trans,
+                        cache_dir=str(config.PERSISTENT_DATASET_DIR / "train_cache")
+                    ),
+                    train_ran_trans
+                )
+                val_ds = PersistentDataset(
+                    data=val_files,
+                    transform=val_transforms,
+                    cache_dir=str(config.PERSISTENT_DATASET_DIR / "val_cache")
+                )
 
         logger.info("Creating training dataloader...")
         self.train_dl = DataLoader(

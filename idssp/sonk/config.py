@@ -46,10 +46,25 @@ print(f"[Config] Loading configuration for environment: [{ENV.upper()}]")
 # 2. Shared Constants (Same across all environments)
 # -----------------------------------------------------------------------------
 
+#  Check computing power
+# ----------------------------------------------------------------
+
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+HC_GPU = False
+'''HC_GPU is a flag to indicate if we are on the High-Compute GPU.
+Note that this only means the GPU has more than 30GB of VRAM'''
+
+if DEVICE == "cuda":
+    if torch.cuda.is_available():
+        vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        HC_GPU = vram_gb >= 30
+
 # For reproducibility
 RANDOM_SEED: Final[int] = 42
 
-# File locations
+#  File locations 
+# ----------------------------------------------------------------
+
 CT_ROOT_STR = os.getenv("LITS_CT_ROOT")
 CHECKPOINT_DIR_STR = os.getenv("CHECKPOINT_DIR")
 PERSISTENT_DATASET_DIR_STR = os.getenv("PERSISTENT_DATASET_DIR")
@@ -58,7 +73,9 @@ LOG_DIR_STR = os.getenv("LOG_DIR")
 LOG_LEVEL_CONSOLE = os.getenv("LOG_LEVEL_CONSOLE", "INFO").upper()
 LOG_LEVEL_FILE = os.getenv("LOG_LEVEL_FILE", "DEBUG").upper()
 
-# Validations
+#  File validations
+# ----------------------------------------------------------------
+
 if not CT_ROOT_STR:
     raise ValueError("[Config] Environment variable 'LITS_CT_ROOT' is not set!")
 if not CHECKPOINT_DIR_STR:
@@ -83,6 +100,9 @@ CHECKPOINT_DIR = Path(CHECKPOINT_DIR_STR)
 PERSISTENT_DATASET_DIR = Path(PERSISTENT_DATASET_DIR_STR) if PERSISTENT_DATASET_DIR_STR else None
 LOG_DIR = Path(LOG_DIR_STR) if LOG_DIR_STR else None
 
+#  Hyperparameters and constants
+# ----------------------------------------------------------------
+
 # CTs are in Hounsfield Units: -1000 (air), 0 (water), 40-60 (soft tissues), 100+ (bone)
 # we just need liver and tumor, so we can clip the intensities to a smaller range
 HU_WINDOW_MIN: Final[int] = -175
@@ -104,17 +124,11 @@ Set to 1 to log every epoch, or higher to log less frequently.
 Recommended: 5 on final training, 10+ during testing/debugging to save resources.
 '''
 
-# Check computing power
-
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-HC_GPU = False
-'''HC_GPU is a flag to indicate if we are on the High-Compute GPU.
-Note that this only means the GPU has more than 30GB of VRAM'''
-
-if DEVICE == "cuda":
-    if torch.cuda.is_available():
-        vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-        HC_GPU = vram_gb >= 30
+USE_CACHE_DATASET: Final[bool] = False
+'''Whether to use a caching dataset that keeps preprocessed volumes in memory.
+This can speed up training but requires more RAM.
+If False, PersistentDataset will be used instead
+'''
 
 # -----------------------------------------------------------------------------
 # 3. Environment-Specific Configuration
@@ -151,6 +165,9 @@ elif ENV == "cloud":
     # Note: If using SlidingWindowInferer, VAL_PATCH_SIZE determines the window stride/size.
     # However, on full scans, VAL_PATCH_SIZE will be ignored
 
+    # On clouds with high compute GPUS we can afford CacheDataset
+    USE_CACHE_DATASET = True
+
 # -----------------------------------------------------------------------------
 # 4. Final Safety Check & Directory Creation
 # -----------------------------------------------------------------------------
@@ -161,10 +178,15 @@ if LOG_DIR:
 if not CT_ROOT.exists():
     raise FileNotFoundError(f"[Config] CT root directory does not exist: {CT_ROOT}")
 
+if DEVICE == "cuda" and not USE_CACHE_DATASET:
+    if PERSISTENT_DATASET_DIR is None:
+        raise ValueError("[Config] Persistent dataset directory must be set when using CUDA without cache dataset.")
+
 if PERSISTENT_DATASET_DIR and not PERSISTENT_DATASET_DIR.exists():
     print("[Config] Persistent dataset directory does not exist. "
           f"Creating: {PERSISTENT_DATASET_DIR}")
     PERSISTENT_DATASET_DIR.mkdir(parents=True, exist_ok=True)
+
 
 print(f"[Config]   Device: {DEVICE}")
 print(f"[Config]   Batch Size: {BATCH_SIZE}")
