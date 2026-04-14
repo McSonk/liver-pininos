@@ -62,7 +62,7 @@ if DEVICE == "cuda":
 # For reproducibility
 RANDOM_SEED: Final[int] = 42
 
-#  File locations 
+#  File locations
 # ----------------------------------------------------------------
 
 CT_ROOT_STR = os.getenv("LITS_CT_ROOT")
@@ -128,6 +128,21 @@ USE_CACHE_DATASET: Final[bool] = False
 '''Whether to use a caching dataset that keeps preprocessed volumes in memory.
 This can speed up training but requires more RAM.
 If False, PersistentDataset will be used instead
+'''
+
+# Early stopping configuration
+EARLY_STOPPING_PATIENCE = 12
+'''Number of epochs with no improvement after which training will be stopped.'''
+
+EARLY_STOPPING_MIN_DELTA = 0.005
+'''Minimum change in the monitored metric to qualify as an improvement.'''
+
+EARLY_STOPPING_RESTORE_BEST = True
+'''Whether to restore model weights from the epoch with the best monitored metric
+at the end of training.
+If True, the model will be rolled back to the state it was in when the best
+validation Dice was achieved. If False, the model will remain in the state it
+was at the end of the last epoch, even if that is not the best one.
 '''
 
 # -----------------------------------------------------------------------------

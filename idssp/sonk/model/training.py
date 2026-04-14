@@ -1,8 +1,10 @@
+import datetime
 import time
 
 import torch
 import torch.optim as optim
-from monai.data import DataLoader, Dataset, PersistentDataset, CacheDataset, decollate_batch
+from monai.data import (CacheDataset, DataLoader, Dataset, PersistentDataset,
+                        decollate_batch)
 from monai.inferers import SlidingWindowInferer
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
@@ -15,8 +17,8 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
 
 from idssp.sonk import config
-from idssp.sonk.view.utils import log_segmentation_overlay
 from idssp.sonk.utils.logger import get_logger, log_memory_usage
+from idssp.sonk.view.utils import log_segmentation_overlay
 
 logger = get_logger(__name__)
 
@@ -429,7 +431,8 @@ class ModelBuilder:
                 self.dice_metric(y_pred=val_preds, y=val_labels)
 
                 # --- LOG OVERLAY ONCE PER EPOCH (first batch only) ---
-                if epoch % config.FIGURE_EPOCH_INTERVAL == 0 and batch_idx == 0:  # Log every 5 epochs
+                # Log every 5 epochs
+                if epoch % config.FIGURE_EPOCH_INTERVAL == 0 and batch_idx == 0:
                     log_segmentation_overlay(self.writer, epoch, images, labels, preds)
                 # -----------------------------------------------------
 
@@ -442,11 +445,22 @@ class ModelBuilder:
         return avg_val_loss, epoch_dice
 
     def train(self, num_epochs=None):
+        '''
+        Main training loop that iterates over epochs, performs training and validation,
+        logs metrics, and handles checkpointing and early stopping.
+
+        Params
+        ------
+        `num_epochs`: int
+            The maximum number of epochs to train for. If None, uses the value from config.
+        '''
         if num_epochs is None:
             num_epochs = config.NUM_EPOCHS
 
         best_val_dice = -1.0
-        best_ckpt_path = config.CHECKPOINT_DIR / "best_model.pth"
+        epochs_no_improve = 0
+        today = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        best_ckpt_path = config.CHECKPOINT_DIR / (today + "_best_model.pth")
 
         # --- START TOTAL TIMER ---
         total_start_time = time.time()
@@ -487,9 +501,10 @@ class ModelBuilder:
             self.history["val_loss"].append(avg_val_loss)
             self.history["val_dice"].append(epoch_dice)
 
-            # Checkpoint saving
-            if epoch_dice > best_val_dice:
+            # --- EARLY STOPPING CHECK AND CHECKPOINT SAVING ---
+            if epoch_dice > best_val_dice + config.EARLY_STOPPING_MIN_DELTA:
                 best_val_dice = epoch_dice
+                epochs_no_improve = 0
                 # TODO: add load_checkpoint method
                 torch.save({
                     "epoch": epoch,
@@ -497,7 +512,16 @@ class ModelBuilder:
                     "optimizer_state_dict": self.optimizer.state_dict(),
                     "best_dice": best_val_dice,
                 }, best_ckpt_path)
-                logger.info("  -> New Best Model Saved (Dice: %f)", best_val_dice)
+                logger.info("  -> New Best Model Saved (Dice: %.4f)", best_val_dice)
+            else:
+                epochs_no_improve += 1
+                logger.debug("  -> No improvement (%d/%d epochs)",
+                            epochs_no_improve, config.EARLY_STOPPING_PATIENCE)
+
+                if epochs_no_improve >= config.EARLY_STOPPING_PATIENCE:
+                    logger.info("  -> Early stopping triggered at epoch %d", epoch + 1)
+                    break
+            # --------------------------
 
         # --- END TOTAL TIMER ---
         total_end_time = time.time()
@@ -506,6 +530,13 @@ class ModelBuilder:
         # Convert seconds to hours/minutes for readability
         hours, rem = divmod(total_duration, 3600)
         minutes, seconds = divmod(rem, 60)
+
+        if config.EARLY_STOPPING_RESTORE_BEST and best_ckpt_path.exists():
+            logger.info("Restoring best model weights from: %s", best_ckpt_path)
+            checkpoint = torch.load(best_ckpt_path, map_location=self.device, weights_only=True)
+            self.model.load_state_dict(checkpoint["model_state_dict"])
+            logger.info("  -> Best validation Dice: %.4f at epoch %d", 
+                        checkpoint["best_dice"], checkpoint["epoch"] + 1)
 
         self.writer.close()
 
