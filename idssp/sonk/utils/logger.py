@@ -115,8 +115,23 @@ def log_memory_usage(logger: logging.Logger, prefix: str = ""):
     if torch.cuda.is_available():
         gpu_memory_allocated = torch.cuda.memory_allocated() / (1024 ** 3)  # GB
         gpu_memory_reserved = torch.cuda.memory_reserved() / (1024 ** 3)  # GB
-        logger.info("%sGPU Memory - Allocated: %.2f GB, Reserved: %.2f GB",
-                    prefix, gpu_memory_allocated, gpu_memory_reserved)
+
+        # get_device_properties returns a named tuple with 'total_memory' in bytes
+        device_props = torch.cuda.get_device_properties(0)
+        total_gb = device_props.total_memory / (1024 ** 3)
+
+        # Calculate Free & Utilization
+        free_gb = total_gb - gpu_memory_reserved
+        utilization_pct = (gpu_memory_reserved / total_gb) * 100
+
+        logger.info("%sGPU Memory - Alloc: %.2f GB | Reserv: %.2f GB | Total: %.2f GB "
+                    "| Free: %.2f GB (%.1f%% used)",
+                    prefix,
+                    gpu_memory_allocated,
+                    gpu_memory_reserved,
+                    total_gb,
+                    free_gb,
+                    utilization_pct)
 
     # CPU Memory Usage (using psutil if available)
     try:
