@@ -3,6 +3,7 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn.functional as F
 from matplotlib import animation
 from monai.visualize import blend_images
 
@@ -225,50 +226,70 @@ def log_segmentation_overlay(writer, epoch: int, image: torch.Tensor,
         slice_axis: Axis to extract slice from (0=sagittal, 1=coronal, 2=axial).
         slice_idx: Index along slice_axis. If None, uses middle slice.
     """
-    # Ensure we're working with CPU tensors for visualisation
+    # Ensure CPU tensors for visualisation
     image = image.detach().cpu()
     label = label.detach().cpu()
     pred = pred.detach().cpu()
 
-    # Take first sample in batch for simplicity
-    img_vol = image[0]  # [C, D, H, W]
-    lbl_vol = label[0]  # [1 or C, D, H, W]
-    pred_vol = pred[0]  # [NUM_CLASSES, D, H, W]
+    # Take first sample in batch
+    img_vol = image[0]          # [C, D, H, W]
+    pred_vol = pred[0]          # [NUM_CLASSES, D, H, W]
 
     # Determine slice index if not provided
+    # Spatial dims in [C, D, H, W] are at indices 1,2,3
     if slice_idx is None:
-        slice_idx = img_vol.shape[slice_axis] // 2
+        slice_idx = img_vol.shape[slice_axis + 1] // 2
 
-    # Extract 2D slice: [C, H, W] or [NUM_CLASSES, H, W]
-    img_slice = img_vol.select(slice_axis, slice_idx)  # [1, H, W]
-    pred_slice = torch.argmax(pred_vol, dim=0).select(slice_axis, slice_idx)  # [H, W]
+    # Extract 2D slice using correct tensor axis mapping
+    img_slice = img_vol.select(slice_axis + 1, slice_idx)      # [C, H, W]
 
-    # Normalise CT image to [0, 1] for blending (preserve contrast)
+    # Get predicted class map and extract matching slice
+    pred_class_map = torch.argmax(pred_vol, dim=0)              # [D, H, W]
+    pred_slice = pred_class_map.select(slice_axis, slice_idx)   # [H, W]
+
+    # Normalise CT image to [0, 1]
     img_min, img_max = img_slice.min(), img_slice.max()
     img_norm = (img_slice - img_min) / (img_max - img_min + 1e-8)  # [1, H, W]
 
-    # Convert prediction to one-hot for blending (if not already)
-    if pred_slice.dim() == 2:  # [H, W] with class indices
-        pred_onehot = torch.zeros(config.NUM_CLASSES, *pred_slice.shape)
+    # Convert prediction to one-hot if needed
+    if pred_slice.dim() == 2:
+        pred_onehot = torch.zeros(config.NUM_CLASSES, *pred_slice.shape, dtype=torch.float32)
         for c in range(config.NUM_CLASSES):
             pred_onehot[c] = (pred_slice == c).float()
         pred_slice = pred_onehot  # [NUM_CLASSES, H, W]
 
-    # Blend: overlay tumour class (index 2) in red over CT grayscale
-    # MONAI's blend_images expects [B, C, H, W]
-    overlay = blend_images(
-        image=img_norm.unsqueeze(0),  # [1, 1, H, W]
-        label=pred_slice[2].unsqueeze(0).unsqueeze(0),  # [1, 1, H, W] (tumour channel)
-        alpha=0.4,  # Transparency of overlay
-        cmap="hot"  # Red-yellow colormap for tumour
-    )  # [1, 3, H, W] (RGB)
+    tumour_mask = pred_slice[config.TUMOUR_CLASS_INDEX]  # [H, W] - tumour channel
 
-    # Log to TensorBoard
+    # CRITICAL: Verify spatial dimensions match before blending
+    img_spatial = img_norm.shape[1:]  # (H, W)
+    mask_spatial = tumour_mask.shape   # (H, W)
+
+    if img_spatial != mask_spatial:
+        logger.warning(
+            "Spatial mismatch in overlay logging: "
+            "image=%s, mask=%s. "
+            "Resizing mask to match image dimensions.",
+            img_spatial, mask_spatial
+        )
+        # Resize mask to match image using nearest-neighbor (preserves class labels)
+        tumour_mask = F.interpolate(
+            tumour_mask.unsqueeze(0).unsqueeze(0),  # [1, 1, H, W]
+            size=img_spatial,
+            mode='nearest'
+        ).squeeze(0).squeeze(0)  # [H, W]
+
+    # Blend: MONAI expects [B, C, H, W]
+    overlay = blend_images(
+        image=img_norm.unsqueeze(0),                    # [1, 1, H, W]
+        label=tumour_mask.unsqueeze(0).unsqueeze(0),    # [1, 1, H, W]
+        alpha=0.4,
+        cmap="hot"
+    )  # [1, 3, H, W] RGB
+
     writer.add_image(
         tag="Visualisation/CT_Tumour_Overlay_Axial",
-        img_tensor=overlay[0],  # Remove batch dim: [3, H, W]
+        img_tensor=overlay[0],  # [3, H, W]
         global_step=epoch,
-        dataformats="CHW"  # Channel-first format
+        dataformats="CHW"
     )
-
     logger.debug("Logged segmentation overlay for epoch %d (slice %d)", epoch, slice_idx)

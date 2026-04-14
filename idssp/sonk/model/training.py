@@ -431,7 +431,7 @@ class ModelBuilder:
                 self.dice_metric(y_pred=val_preds, y=val_labels)
 
                 # --- LOG OVERLAY ONCE PER EPOCH (first batch only) ---
-                # Log every 5 epochs
+                # Log every config.FIGURE_EPOCH_INTERVAL epochs
                 if epoch % config.FIGURE_EPOCH_INTERVAL == 0 and batch_idx == 0:
                     log_segmentation_overlay(self.writer, epoch, images, labels, preds)
                 # -----------------------------------------------------

@@ -114,6 +114,13 @@ NUM_CLASSES: Final[int] = 3
 For binary segmentation, set to 1 (tumor vs non-tumor).
 For multi-class, set to 3 (background, liver, tumor).'''
 
+TUMOUR_CLASS_INDEX: Final[int] = 2
+'''The index of the tumor class in the model's output channels.
+For binary segmentation (NUM_CLASSES=1), this should be 0.
+For recommended binary segmentation (NUM_CLASSES=2), this should be 1 if the
+classes are ordered as [background, tumor]. For multi-class segmentation (NUM_CLASSES=3),
+this should be 2 if the classes are ordered as [background, liver, tumor].'''
+
 VAL_BATCH_SIZE: Final[int] = 1
 '''DataLoader's batch size for validation. Kept at 1 for deterministic evaluation
 and memory safety with large 3D volumes.'''
