@@ -31,6 +31,16 @@ class AugmentedDataset(Dataset):
     benefits without losing the caching advantages of PersistentDataset.
     '''
     def __init__(self, base_ds, transform):
+        '''
+        Params
+        ------
+        `base_ds`: Dataset
+            The base dataset (e.g. PersistentDataset) that applies the main
+            deterministic transforms.
+        `transform`: Compose
+            A Compose object containing the random transforms to apply on-the-fly during training.
+        '''
+        super().__init__(base_ds)
         self.base_ds = base_ds
         self.aug = transform
     def __len__(self):
