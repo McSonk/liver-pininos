@@ -64,7 +64,7 @@ class ModelBuilder:
         self.optimizer = None
         self.scheduler = None
         self.device = torch.device(config.DEVICE)
-        self.today = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # Post-processing & Metrics
         self.pred_trans = Compose([
@@ -83,7 +83,7 @@ class ModelBuilder:
 
         # tensorboard writer for logging training metrics
         self.writer = SummaryWriter(
-            log_dir=str(config.LOG_DIR / "tensorboard" / self.today),
+            log_dir=str(config.LOG_DIR / "tensorboard" / self.run_id),
             comment=f"_{config.ENV}_batch{config.BATCH_SIZE}"
         )
         logger.info("TensorBoard writer initialised at: %s", self.writer.log_dir)
