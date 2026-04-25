@@ -85,7 +85,11 @@ if not PERSISTENT_DATASET_DIR_STR:
           "PersistentDataset will be disabled.")
 
 if not LOG_DIR_STR:
-    print("[Config] Warning: 'LOG_DIR' is not set. Logging to file will be disabled.")
+    raise ValueError(
+        "[Config] Environment variable 'LOG_DIR' is not set!\n"
+        "Please set it in your '.env' file (see .env.example), for example:\n"
+        "   LOG_DIR=/path/where/to/save/logs"
+    )
 if LOG_LEVEL_CONSOLE not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
     print(f"[Config] Warning: LOG_LEVEL_CONSOLE '{LOG_LEVEL_CONSOLE}' is not "
            "valid. Defaulting to 'INFO'.")
@@ -98,7 +102,7 @@ if LOG_LEVEL_FILE not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
 CT_ROOT = Path(CT_ROOT_STR)
 CHECKPOINT_DIR = Path(CHECKPOINT_DIR_STR)
 PERSISTENT_DATASET_DIR = Path(PERSISTENT_DATASET_DIR_STR) if PERSISTENT_DATASET_DIR_STR else None
-LOG_DIR = Path(LOG_DIR_STR) if LOG_DIR_STR else None
+LOG_DIR = Path(LOG_DIR_STR)
 
 #  Hyperparameters and constants
 # ----------------------------------------------------------------
@@ -194,8 +198,7 @@ elif ENV == "cloud":
 # 4. Final Safety Check & Directory Creation
 # -----------------------------------------------------------------------------
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-if LOG_DIR:
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 if not CT_ROOT.exists():
     raise FileNotFoundError(f"[Config] CT root directory does not exist: {CT_ROOT}")
@@ -235,4 +238,3 @@ def is_limited_env(include_vram=True) -> bool:
         return True
 
     return include_vram and HC_GPU is False
-

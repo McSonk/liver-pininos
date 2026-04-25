@@ -31,6 +31,16 @@ class AugmentedDataset(Dataset):
     benefits without losing the caching advantages of PersistentDataset.
     '''
     def __init__(self, base_ds, transform):
+        '''
+        Params
+        ------
+        `base_ds`: Dataset
+            The base dataset (e.g. PersistentDataset) that applies the main
+            deterministic transforms.
+        `transform`: Compose
+            A Compose object containing the random transforms to apply on-the-fly during training.
+        '''
+        super().__init__(base_ds)
         self.base_ds = base_ds
         self.aug = transform
     def __len__(self):
@@ -54,6 +64,7 @@ class ModelBuilder:
         self.optimizer = None
         self.scheduler = None
         self.device = torch.device(config.DEVICE)
+        self.run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # Post-processing & Metrics
         self.pred_trans = Compose([
@@ -72,7 +83,7 @@ class ModelBuilder:
 
         # tensorboard writer for logging training metrics
         self.writer = SummaryWriter(
-            log_dir=str(config.LOG_DIR / "tensorboard"),
+            log_dir=str(config.LOG_DIR / "tensorboard" / self.run_id),
             comment=f"_{config.ENV}_batch{config.BATCH_SIZE}"
         )
         logger.info("TensorBoard writer initialised at: %s", self.writer.log_dir)
@@ -293,7 +304,7 @@ class ModelBuilder:
         logger.debug("Initializing model...")
         self.model = UNet(
             spatial_dims=3,
-            # Just 1 channel for the grayscale CT image. For RGB images, this would be 3.
+            # Just 1 channel for the grayscale CT image.
             in_channels=1,
             out_channels=config.NUM_CLASSES,
             channels=(16, 32, 64, 128),

@@ -76,7 +76,7 @@ Copy `.env.example` to `.env` and modify the following variables:
 | `LITS_CT_ROOT` | Path to LiTS dataset containing CT scans | `/data/lits` |
 | `CHECKPOINT_DIR` | Directory to save model checkpoints | `/data/checkpoints` |
 | `PERSISTENT_DATASET_DIR` | (Optional) Directory for MONAI persistent dataset cache | `/data/persistent_cache` |
-| `LOG_DIR` | (Optional) Directory to save log files | `/data/logs` |
+| `LOG_DIR` | Directory to save log files | `/data/logs` |
 | `LOG_LEVEL_CONSOLE` | Console log level | `INFO` |
 | `LOG_LEVEL_FILE` | File log level | `DEBUG` |
 
