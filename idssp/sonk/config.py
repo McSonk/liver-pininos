@@ -18,14 +18,14 @@ load_dotenv()
 # -----------------------------------------------------------------------------
 # 2. Environment detection and validation
 # -----------------------------------------------------------------------------
-ENV = os.getenv("ENV")
+ENV = os.getenv("PIN_ENV")
 
 if ENV is None:
     raise EnvironmentError(
-        "[Config] ERROR: Environment variable 'ENV' is not set!\n"
+        "[Config] ERROR: Environment variable 'PIN_ENV' is not set!\n"
         "Please do one of the following:\n"
-        "   1. Create a '.env' file in the project root with: ENV=local\n"
-        "   2. Or set it in your terminal: export ENV=local\n"
+        "   1. Create a '.env' file in the project root with: PIN_ENV=local\n"
+        "   2. Or set it in your terminal: export PIN_ENV=local\n"
         "   3. Or set it in Lightning AI Studio settings.\n\n"
         "In any case, be sure to check .env.example for the expected format "
         "of the .env file and required variables."
@@ -36,7 +36,7 @@ RECOGNISED_ENVS = {"local", "cloud"}
 
 if ENV not in RECOGNISED_ENVS:
     raise ValueError(
-        f"[Config] Environment [{ENV}] is not recognised. Please set ENV to"
+        f"[Config] Environment [{ENV}] is not recognised. Please set PIN_ENV to"
         f" one of {RECOGNISED_ENVS}"
     )
 
