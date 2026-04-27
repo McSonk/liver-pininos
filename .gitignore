@@ -4,3 +4,4 @@ checkpoints/*
 logs/*
 # For the dataset split logs
 **seed**.json
+.vscode/
