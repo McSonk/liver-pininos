@@ -11,7 +11,7 @@ from monai.metrics import DiceMetric
 from monai.networks.nets import UNet
 from monai.transforms import (Activations, AsDiscrete, Compose, EnsureTyped,
                               LoadImaged, RandCropByPosNegLabeld, RandFlipd,
-                              ScaleIntensityRanged, Spacingd)
+                              ScaleIntensityRanged, Spacingd, Orientationd)
 from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
@@ -119,6 +119,10 @@ class ModelBuilder:
         # to avoid issues with cached data that doesn't match the new transforms.
         deterministic_transforms = [
             LoadImaged(keys=['image', 'label'], ensure_channel_first=True),
+
+            # Ensure consistent orientation (LAS)
+            Orientationd(keys=["image", "label"], axcodes="LAS"),
+
             # LiTS and other sources have varying resolutions.
             # Resample to to isotropic spacing for better model performance and to
             # ensure the model learns scale-invariant features.
@@ -182,6 +186,10 @@ class ModelBuilder:
         # to avoid issues with cached data that doesn't match the new transforms.
         compose_list = [
             LoadImaged(keys=["image", "label"], ensure_channel_first=True),
+
+            # Ensure consistent orientation (LAS)
+            Orientationd(keys=["image", "label"], axcodes="LAS"),
+
             Spacingd(
                 keys=["image", "label"],
                 pixdim=(1.5, 1.5, 1.5),
@@ -196,9 +204,10 @@ class ModelBuilder:
         ]
 
         if config.is_limited_env():
-            logger.debug("Validation transforms: Using random crop for limited environment.")
+            logger.warning("Validation transforms: Using random crop for limited environment.")
             compose_list.extend([
-                # To make sure we have some positive examples in the validation set
+                # On limited GPU or CPU we apply cropping so we don't overload memory.
+                # ByPosNeg to make sure we have some positive examples in the validation set
                 RandCropByPosNegLabeld(
                     keys=["image", "label"],
                     label_key="label",
@@ -210,7 +219,6 @@ class ModelBuilder:
                     image_threshold=0,
                 )
             ])
-        # In GPU we can afford to run inference on the full volume, so we skip the cropping.
 
         compose_list.extend([
             EnsureTyped(keys=["image"]),
@@ -330,6 +338,7 @@ class ModelBuilder:
         logger.info("Model initialized on %s", self.device)
         logger.info("Optimizer: AdamW | LR: %f | Weight Decay: 1e-5", config.LEARNING_RATE)
 
+        # Change to cosine annealing scheduler with warm restarts on ResUNETR
         self.scheduler = ReduceLROnPlateau(
             self.optimizer,
             # Minimise the validation loss, not maximise the dice score
