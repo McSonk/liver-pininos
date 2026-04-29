@@ -11,7 +11,7 @@ from monai.metrics import DiceMetric
 from monai.networks.nets import UNet
 from monai.transforms import (Activations, AsDiscrete, Compose, EnsureTyped,
                               LoadImaged, RandCropByPosNegLabeld, RandFlipd,
-                              ScaleIntensityRanged, Spacingd, Orientationd)
+                              ScaleIntensityRanged, Spacingd, Orientationd, Transform)
 from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
@@ -449,6 +449,26 @@ class ModelBuilder:
 
         avg_val_loss = val_loss / len(self.val_dl)
         epoch_dice = self.dice_metric.aggregate().item()
+
+        # === PER-CLASS DICE REPORTING ===
+        # Retrieve un-reduced per-sample scores: shape (num_samples, num_foreground_classes)
+        per_sample_dice = self.dice_metric.aggregate(reduction="none")
+        per_class_dice = per_sample_dice.mean(dim=0).tolist()
+
+         # With include_background=False, indices map to: 
+         # 0 -> Liver (label 1), 1 -> Tumour (label 2)
+        liver_dice = per_class_dice[0]
+        tumour_dice = per_class_dice[1]
+
+        # Console & TensorBoard logging
+        logger.debug(
+            "Epoch %s | Val Loss: %f | Dice Mean: %f | "
+            "Liver: %f | Tumour: %f",
+            epoch, avg_val_loss, epoch_dice, liver_dice, tumour_dice
+        )
+        self.writer.add_scalar("val/dice_liver", liver_dice, epoch)
+        self.writer.add_scalar("val/dice_tumour", tumour_dice, epoch)
+        # ================================
 
         # Step scheduler based on validation loss
         self.scheduler.step(avg_val_loss)
