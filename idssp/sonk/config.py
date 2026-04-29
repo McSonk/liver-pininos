@@ -113,6 +113,7 @@ HU_WINDOW_MIN: Final[int] = -175
 HU_WINDOW_MAX: Final[int] = 250
 LEARNING_RATE: Final[float] = 1e-4
 
+#TODO: change to 1
 NUM_CLASSES: Final[int] = 3
 '''How many classes to predict.
 For binary segmentation, set to 1 (tumor vs non-tumor).
@@ -162,8 +163,10 @@ was at the end of the last epoch, even if that is not the best one.
 NUM_WORKERS: int
 PIN_MEMORY: bool
 
+# This is a parameter that can be tuned based on the GPU VRAM and CPU RAM available.
 BATCH_SIZE: int
-'''DataLoader's batch size. Set to 1 for memory safety, especially with large 3D volumes.'''
+'''DataLoader's batch size. Set to 1 for memory safety, especially with large 3D volumes.
+(Usually between 1 and 4 depending on GPU VRAM)'''
 
 NUM_EPOCHS: int
 TRAIN_PATCH_SIZE: tuple
@@ -184,7 +187,7 @@ elif ENV == "cloud":
 
     NUM_WORKERS = 4 if HC_GPU else 0
     PIN_MEMORY = True
-    BATCH_SIZE = 1
+    BATCH_SIZE = 4 if HC_GPU else 2
     NUM_EPOCHS = 90
     TRAIN_PATCH_SIZE = (96, 96, 96)
     VAL_PATCH_SIZE = (128, 128, 128)
@@ -205,7 +208,8 @@ if not CT_ROOT.exists():
 
 if DEVICE == "cuda" and not USE_CACHE_DATASET:
     if PERSISTENT_DATASET_DIR is None:
-        raise ValueError("[Config] Persistent dataset directory must be set when using CUDA without cache dataset.")
+        raise ValueError("[Config] Persistent dataset directory must be set when"
+                          " using CUDA without cache dataset.")
 
 if PERSISTENT_DATASET_DIR and not PERSISTENT_DATASET_DIR.exists():
     print("[Config] Persistent dataset directory does not exist. "
