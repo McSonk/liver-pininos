@@ -113,10 +113,9 @@ HU_WINDOW_MIN: Final[int] = -175
 HU_WINDOW_MAX: Final[int] = 250
 LEARNING_RATE: Final[float] = 1e-4
 
-#TODO: change to 1
 NUM_CLASSES: Final[int] = 3
 '''How many classes to predict.
-For binary segmentation, set to 1 (tumor vs non-tumor).
+For binary segmentation, set to 2(tumor vs background).
 For multi-class, set to 3 (background, liver, tumor).'''
 
 TUMOUR_CLASS_INDEX: Final[int] = 2

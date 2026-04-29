@@ -81,7 +81,8 @@ class ModelBuilder:
         self.dice_metric = DiceMetric(include_background=False, reduction="mean")
         self.history = {"train_loss": [], "val_loss": [], "val_dice": []}
 
-        self.scaler = GradScaler(config.DEVICE) if self.device.type == 'cuda' else None
+        # So we can use float16 mixed precision on CUDA
+        self.scaler = GradScaler('cuda') if config.DEVICE == 'cuda' else None
         '''Mixed precision training scaler, enabled only on CUDA for potential speed up.'''
 
         # tensorboard writer for logging training metrics
@@ -549,6 +550,7 @@ class ModelBuilder:
                     "model_state_dict": self.model.state_dict(),
                     "optimizer_state_dict": self.optimizer.state_dict(),
                     "best_dice": best_val_dice,
+                    "scaler": self.scaler.state_dict() if self.scaler is not None else None
                 }, best_ckpt_path)
                 logger.info("  -> New Best Model Saved (Dice: %.4f)", best_val_dice)
             else:
