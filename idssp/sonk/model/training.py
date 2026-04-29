@@ -450,25 +450,32 @@ class ModelBuilder:
         avg_val_loss = val_loss / len(self.val_dl)
         epoch_dice = self.dice_metric.aggregate().item()
 
-        # === PER-CLASS DICE REPORTING ===
+        # === DYNAMIC PER-CLASS DICE REPORTING ===
         # Retrieve un-reduced per-sample scores: shape (num_samples, num_foreground_classes)
         per_sample_dice = self.dice_metric.aggregate(reduction="none")
-        per_class_dice = per_sample_dice.mean(dim=0).tolist()
+        # We move the tensor to CPU, as it is no longer needed for GPU computation
+        per_class_dice = per_sample_dice.mean(dim=0).cpu().tolist()
 
-         # With include_background=False, indices map to: 
-         # 0 -> Liver (label 1), 1 -> Tumour (label 2)
-        liver_dice = per_class_dice[0]
-        tumour_dice = per_class_dice[1]
+        # Map foreground indices to names based on current config
+        if config.NUM_CLASSES == 3:
+            class_map = {0: "liver", 1: "tumour"}
+        else:  # config.NUM_CLASSES == 2
+            class_map = {0: "tumour"}
 
-        # Console & TensorBoard logging
+        log_parts = []
+        for idx, name in class_map.items():
+            dice_val = per_class_dice[idx]
+            log_parts.append("%s: %.4f" % (name.capitalize(), dice_val))
+            self.writer.add_scalar(f"val/dice_{name}", dice_val, epoch)
+
+        # Console logging using %-style formatting
+        # Passing arguments after the string lets Python's logging module 
+        # defer %-evaluation until the message is actually emitted.
         logger.debug(
-            "Epoch %s | Val Loss: %f | Dice Mean: %f | "
-            "Liver: %f | Tumour: %f",
-            epoch, avg_val_loss, epoch_dice, liver_dice, tumour_dice
+            "Epoch %d | Val Loss: %.4f | Dice Mean: %.4f | %s",
+            epoch, avg_val_loss, epoch_dice, " | ".join(log_parts)
         )
-        self.writer.add_scalar("val/dice_liver", liver_dice, epoch)
-        self.writer.add_scalar("val/dice_tumour", tumour_dice, epoch)
-        # ================================
+        # ========================================
 
         # Step scheduler based on validation loss
         self.scheduler.step(avg_val_loss)
