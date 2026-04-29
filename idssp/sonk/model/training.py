@@ -82,14 +82,20 @@ class ModelBuilder:
         self.history = {"train_loss": [], "val_loss": [], "val_dice": []}
 
         # So we can use float16 mixed precision on CUDA
+        # (Multiplies loss by a scale factor to prevent underflow, and unscales
+        # gradients before the optimizer step)
         self.scaler = GradScaler('cuda') if config.DEVICE == 'cuda' else None
         '''Mixed precision training scaler, enabled only on CUDA for potential speed up.'''
 
         # tensorboard writer for logging training metrics
-        self.writer = SummaryWriter(
-            log_dir=str(config.LOG_DIR / "tensorboard" / self.run_id),
-            comment=f"_{config.ENV}_batch{config.BATCH_SIZE}"
-        )
+        self.writer = SummaryWriter(log_dir=
+                                    str(config.LOG_DIR / "tensorboard" / self.run_id))
+        self.writer.add_hparams({
+            "environment": config.ENV,
+            "batch_size": config.BATCH_SIZE,
+            "num_classes": config.NUM_CLASSES,
+            "precision": "float16" if self.scaler is not None else "float32",
+        }, {})
         logger.info("TensorBoard writer initialised at: %s", self.writer.log_dir)
 
         logger.info("ModelBuilder initialized. Device set to: %s", self.device)
