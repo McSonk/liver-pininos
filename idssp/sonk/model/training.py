@@ -68,12 +68,15 @@ class ModelBuilder:
 
         # Post-processing & Metrics
         self.pred_trans = Compose([
+            # Apply softmax Transform to get class probabilities for each voxel
             Activations(softmax=True),
+            # Select the class with the highest probability for each voxel
+            # and convert to one-hot encoding
             AsDiscrete(argmax=True, to_onehot=config.NUM_CLASSES)
         ])
         self.label_trans = AsDiscrete(to_onehot=config.NUM_CLASSES)
 
-        # include_background=False is standard for multi-class segmentation 
+        # include_background=False is standard for multi-class segmentation
         # to avoid background dominating the metric.
         self.dice_metric = DiceMetric(include_background=False, reduction="mean")
         self.history = {"train_loss": [], "val_loss": [], "val_dice": []}
@@ -89,6 +92,40 @@ class ModelBuilder:
         logger.info("TensorBoard writer initialised at: %s", self.writer.log_dir)
 
         logger.info("ModelBuilder initialized. Device set to: %s", self.device)
+
+    def _get_deterministic_transforms(self) -> list[Transform]:
+        '''
+        Returns the deterministic transforms that are applied to all training samples.
+        This includes loading, orientation, resampling, and intensity scaling.
+        These transforms are applied once and can be cached when using PersistentDataset.
+        '''
+        # WARNING: If you modify the transforms and you're on a GPU environment,
+        # make sure to clear (delete) the PersistentDataset folder
+        # to avoid issues with cached data that doesn't match the new transforms.
+        return [
+            LoadImaged(keys=['image', 'label'], ensure_channel_first=True),
+
+            # Ensure consistent orientation (LAS)
+            Orientationd(keys=["image", "label"], axcodes="LAS"),
+
+            # LiTS and other sources have varying resolutions.
+            # Resample to to isotropic spacing for better model performance and to
+            # ensure the model learns scale-invariant features.
+            Spacingd(
+                keys=["image", "label"],
+                pixdim=(1.5, 1.5, 1.5),
+                mode=("bilinear", "nearest")
+            ),
+            ScaleIntensityRanged(
+                keys=["image"],
+                # We clip the HU values to the defined liver/tumour range
+                a_min=config.HU_WINDOW_MIN, a_max=config.HU_WINDOW_MAX,
+                # We then scale that range to [0, 1] for better training stability.
+                b_min=0.0,  b_max=1.0,
+                # Values outside liver/tumour range are clipped.
+                clip=True,
+            ),
+        ]
 
     def get_train_transforms(self) -> tuple[Compose, Compose]:
         '''
@@ -114,33 +151,7 @@ class ModelBuilder:
               or using CacheDataset, in which case the random transforms are included
               in the deterministic pipeline.
         '''
-        # WARNING: If you modify the transforms and you're on a GPU environment,
-        # make sure to clear (delete) the PersistentDataset folder
-        # to avoid issues with cached data that doesn't match the new transforms.
-        deterministic_transforms = [
-            LoadImaged(keys=['image', 'label'], ensure_channel_first=True),
-
-            # Ensure consistent orientation (LAS)
-            Orientationd(keys=["image", "label"], axcodes="LAS"),
-
-            # LiTS and other sources have varying resolutions.
-            # Resample to to isotropic spacing for better model performance and to
-            # ensure the model learns scale-invariant features.
-            Spacingd(
-                keys=["image", "label"],
-                pixdim=(1.5, 1.5, 1.5),
-                mode=("bilinear", "nearest")
-            ),
-            ScaleIntensityRanged(
-                keys=["image"],
-                # We clip the HU values to the defined liver/tumour range
-                a_min=config.HU_WINDOW_MIN, a_max=config.HU_WINDOW_MAX,
-                # We then scale that range to [0, 1] for better training stability.
-                b_min=0.0,  b_max=1.0,
-                # Values outside liver/tumour range are clipped.
-                clip=True,
-            ),
-        ]
+        deterministic_transforms = self._get_deterministic_transforms()
 
         random_transforms = [
             # Sample patches with a balanced ratio of positive (tumor) and
@@ -181,27 +192,7 @@ class ModelBuilder:
 
     def get_val_transforms(self) -> Compose:
         '''Returns the transforms for the validation data.'''
-        # WARNING: If you modify the transforms and you're on a GPU environment,
-        # make sure to clear (delete) the PersistentDataset folder
-        # to avoid issues with cached data that doesn't match the new transforms.
-        compose_list = [
-            LoadImaged(keys=["image", "label"], ensure_channel_first=True),
-
-            # Ensure consistent orientation (LAS)
-            Orientationd(keys=["image", "label"], axcodes="LAS"),
-
-            Spacingd(
-                keys=["image", "label"],
-                pixdim=(1.5, 1.5, 1.5),
-                mode=("bilinear", "nearest")
-            ),
-            ScaleIntensityRanged(
-                keys=["image"],
-                a_min=config.HU_WINDOW_MIN, a_max=config.HU_WINDOW_MAX,
-                b_min=0.0,  b_max=1.0,
-                clip=True,
-            ),
-        ]
+        compose_list = self._get_deterministic_transforms()
 
         if config.is_limited_env():
             logger.warning("Validation transforms: Using random crop for limited environment.")
