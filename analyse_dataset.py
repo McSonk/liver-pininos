@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Standalone script to run LiTS dataset-wide analysis.
 
@@ -31,6 +30,14 @@ from idssp.sonk.model.data import analyze_lits_dataset
 
 
 def main():
+    '''
+    Main function to execute dataset analysis.
+     - Parses command-line arguments
+     - Loads and pairs LiTS data
+     - Runs analysis and outputs results
+     - Exports CSV files for further use
+     - Provides terminal output unless --no-verbose is set
+    '''
     parser = argparse.ArgumentParser(
         description="Analyze LiTS dataset and produce summary statistics"
     )
@@ -51,24 +58,24 @@ def main():
         action="store_true",
         help="Suppress terminal output (useful for batch processing)"
     )
-    
+
     args = parser.parse_args()
-    
+
     print("=" * 80)
     print("LiTS Dataset-Wide Analysis")
     print("=" * 80)
     print(f"Data root: {config.CT_ROOT}")
     print()
-    
+
     # Load and pair data
     print("Discovering and pairing image-label volumes...")
     collector = DataCollector()
     collector.read_dir(config.CT_ROOT, ds_source='LiTS')
     collector.extract_images_and_labels()
-    
+
     print(f"Found {len(collector.datasources)} paired volumes.")
     print()
-    
+
     # Run analysis
     analyze_lits_dataset(
         datasources=collector.datasources,
@@ -76,7 +83,7 @@ def main():
         output_agg_csv=args.output_agg_csv,
         verbose=not args.no_verbose
     )
-    
+
     print()
     print("Analysis complete!")
 

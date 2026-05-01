@@ -30,13 +30,13 @@ The project includes a dataset-wide analysis utility that produces comprehensive
 
 ```bash
 # Basic usage (outputs table + CSV files)
-python analyze_lits_dataset.py
+python analyse_dataset.py
 
 # Custom output paths
-python analyze_lits_dataset.py --output-csv my_per_case.csv --output-agg-csv my_stats.csv
+python analyse_dataset.py --output-csv my_per_case.csv --output-agg-csv my_stats.csv
 
 # Quiet mode (CSV only, no terminal output)
-python analyze_lits_dataset.py --no-verbose --output-csv data.csv
+python analyse_dataset.py --no-verbose --output-csv data.csv
 ```
 
 ### What It Produces
@@ -57,39 +57,6 @@ python analyze_lits_dataset.py --no-verbose --output-csv data.csv
    - Foreground imbalance metrics (voxel ratios)
    - CT intensity ranges
 
-### Programmatic Usage
-
-```python
-from idssp.sonk.disk.loader import DataCollector
-from idssp.sonk.model.data import DatasetSummary, analyze_lits_dataset
-
-# Load data
-collector = DataCollector()
-collector.read_dir(config.CT_ROOT, ds_source='LiTS')
-collector.extract_images_and_labels()
-
-# Option 1: Use convenience function
-summary = analyze_lits_dataset(
-    collector.datasources,
-    output_csv='per_case.csv',
-    output_agg_csv='aggregate.csv'
-)
-
-# Option 2: Manual control
-summary = DatasetSummary(collector.datasources)
-summary.analyze_all(verbose=True)
-stats = summary.get_aggregate_stats()
-summary.print_table()
-summary.export_csv('per_case.csv')
-```
-
-### Why This Matters
-
-These statistics support key preprocessing decisions in the thesis:
-- **Orientation normalization**: The orientation distribution shows whether all volumes share the same axis codes
-- **Spacing normalization**: Spacing mean/std justifies resampling to isotropic voxels
-- **Class imbalance handling**: Liver/tumor voxel ratios quantify the foreground imbalance problem
-- **CT windowing**: Intensity ranges validate the chosen HU window [-175, 250]
 
 ## Installation
 
