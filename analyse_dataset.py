@@ -26,7 +26,10 @@ import argparse
 
 from idssp.sonk import config
 from idssp.sonk.disk.loader import DataCollector
-from idssp.sonk.model.data import analyze_lits_dataset
+from idssp.sonk.model.data import analyse_dataset
+from idssp.sonk.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def main():
@@ -38,20 +41,17 @@ def main():
      - Exports CSV files for further use
      - Provides terminal output unless --no-verbose is set
     '''
+
+    if config.STATS_DIR is None:
+        logger.error("STATS_DIR is not configured. Please set the 'STATS_DIR' "
+                     "environment variable to enable statistics export.")
+        return
+    
+    per_case_csv_path = config.STATS_DIR / "per_case_summary.csv"
+    aggregate_csv_path = config.STATS_DIR / "aggregate_stats.csv"
+
     parser = argparse.ArgumentParser(
-        description="Analyze LiTS dataset and produce summary statistics"
-    )
-    parser.add_argument(
-        "--output-csv",
-        type=str,
-        default="lits_per_case_summary.csv",
-        help="Path for per-case CSV export (default: lits_per_case_summary.csv)"
-    )
-    parser.add_argument(
-        "--output-agg-csv",
-        type=str,
-        default="lits_aggregate_stats.csv",
-        help="Path for aggregate stats CSV export (default: lits_aggregate_stats.csv)"
+        description="Analyse LiTS dataset and produce summary statistics"
     )
     parser.add_argument(
         "--no-verbose",
@@ -61,31 +61,28 @@ def main():
 
     args = parser.parse_args()
 
-    print("=" * 80)
-    print("LiTS Dataset-Wide Analysis")
-    print("=" * 80)
-    print(f"Data root: {config.CT_ROOT}")
-    print()
+    logger.debug("=" * 80)
+    logger.info("LiTS Dataset-Wide Analysis")
+    logger.debug("=" * 80)
+    logger.info("Data root: %s\n", config.CT_ROOT)
 
     # Load and pair data
-    print("Discovering and pairing image-label volumes...")
+    logger.info("Discovering and pairing image-label volumes...")
     collector = DataCollector()
     collector.read_dir(config.CT_ROOT, ds_source='LiTS')
     collector.extract_images_and_labels()
 
-    print(f"Found {len(collector.datasources)} paired volumes.")
-    print()
+    logger.info("Found %d paired volumes.\n", len(collector.datasources))
 
     # Run analysis
-    analyze_lits_dataset(
+    analyse_dataset(
         datasources=collector.datasources,
-        output_csv=args.output_csv,
-        output_agg_csv=args.output_agg_csv,
+        output_csv=per_case_csv_path,
+        output_agg_csv=aggregate_csv_path,
         verbose=not args.no_verbose
     )
 
-    print()
-    print("Analysis complete!")
+    logger.info("Analysis complete!")
 
 
 if __name__ == "__main__":
