@@ -115,7 +115,7 @@ LEARNING_RATE: Final[float] = 1e-4
 
 NUM_CLASSES: Final[int] = 3
 '''How many classes to predict.
-For binary segmentation, set to 2(tumour vs background).
+For binary segmentation, set to 2 (tumour vs background).
 For multi-class, set to 3 (background, liver, tumour).'''
 
 TUMOUR_CLASS_INDEX: Final[int] = 2 if NUM_CLASSES == 3 else 1
