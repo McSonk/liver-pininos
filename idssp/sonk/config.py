@@ -115,15 +115,14 @@ LEARNING_RATE: Final[float] = 1e-4
 
 NUM_CLASSES: Final[int] = 3
 '''How many classes to predict.
-For binary segmentation, set to 1 (tumor vs non-tumor).
-For multi-class, set to 3 (background, liver, tumor).'''
+For binary segmentation, set to 2 (tumour vs background).
+For multi-class, set to 3 (background, liver, tumour).'''
 
-TUMOUR_CLASS_INDEX: Final[int] = 2
-'''The index of the tumor class in the model's output channels.
-For binary segmentation (NUM_CLASSES=1), this should be 0.
-For recommended binary segmentation (NUM_CLASSES=2), this should be 1 if the
-classes are ordered as [background, tumor]. For multi-class segmentation (NUM_CLASSES=3),
-this should be 2 if the classes are ordered as [background, liver, tumor].'''
+TUMOUR_CLASS_INDEX: Final[int] = 2 if NUM_CLASSES == 3 else 1
+'''The index of the tumour class in the model's output channels.
+For binary segmentation (NUM_CLASSES=2), this should be 1 if the
+classes are ordered as [background, tumour]. For multi-class segmentation (NUM_CLASSES=3),
+this should be 2 if the classes are ordered as [background, liver, tumour].'''
 
 VAL_BATCH_SIZE: Final[int] = 1
 '''DataLoader's batch size for validation. Kept at 1 for deterministic evaluation
@@ -162,8 +161,10 @@ was at the end of the last epoch, even if that is not the best one.
 NUM_WORKERS: int
 PIN_MEMORY: bool
 
+# This is a parameter that can be tuned based on the GPU VRAM and CPU RAM available.
 BATCH_SIZE: int
-'''DataLoader's batch size. Set to 1 for memory safety, especially with large 3D volumes.'''
+'''DataLoader's batch size. Set to 1 for memory safety, especially with large 3D volumes.
+(Usually between 1 and 4 depending on GPU VRAM)'''
 
 NUM_EPOCHS: int
 TRAIN_PATCH_SIZE: tuple
@@ -184,7 +185,7 @@ elif ENV == "cloud":
 
     NUM_WORKERS = 4 if HC_GPU else 0
     PIN_MEMORY = True
-    BATCH_SIZE = 1
+    BATCH_SIZE = 4 if HC_GPU else 2
     NUM_EPOCHS = 90
     TRAIN_PATCH_SIZE = (96, 96, 96)
     VAL_PATCH_SIZE = (128, 128, 128)
@@ -200,12 +201,17 @@ elif ENV == "cloud":
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+if NUM_CLASSES != 2 and NUM_CLASSES != 3:
+    raise ValueError("[Config] NUM_CLASSES must be either 2 (for binary segmentation) "
+                     "or 3 (for multi-class segmentation).")
+
 if not CT_ROOT.exists():
     raise FileNotFoundError(f"[Config] CT root directory does not exist: {CT_ROOT}")
 
 if DEVICE == "cuda" and not USE_CACHE_DATASET:
     if PERSISTENT_DATASET_DIR is None:
-        raise ValueError("[Config] Persistent dataset directory must be set when using CUDA without cache dataset.")
+        raise ValueError("[Config] Persistent dataset directory must be set when"
+                          " using CUDA without cache dataset.")
 
 if PERSISTENT_DATASET_DIR and not PERSISTENT_DATASET_DIR.exists():
     print("[Config] Persistent dataset directory does not exist. "

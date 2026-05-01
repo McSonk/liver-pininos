@@ -25,3 +25,7 @@ tensorboard==2.20.0
 
 # Environments
 python-dotenv==1.2.2
+
+# For logging stats
+psutil==6.0.0
+tqdm==4.66.5

@@ -11,7 +11,7 @@ from monai.metrics import DiceMetric
 from monai.networks.nets import UNet
 from monai.transforms import (Activations, AsDiscrete, Compose, EnsureTyped,
                               LoadImaged, RandCropByPosNegLabeld, RandFlipd,
-                              ScaleIntensityRanged, Spacingd)
+                              ScaleIntensityRanged, Spacingd, Orientationd, Transform)
 from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
@@ -68,27 +68,71 @@ class ModelBuilder:
 
         # Post-processing & Metrics
         self.pred_trans = Compose([
+            # Apply softmax Transform to get class probabilities for each voxel
             Activations(softmax=True),
+            # Select the class with the highest probability for each voxel
+            # and convert to one-hot encoding
             AsDiscrete(argmax=True, to_onehot=config.NUM_CLASSES)
         ])
         self.label_trans = AsDiscrete(to_onehot=config.NUM_CLASSES)
 
-        # include_background=False is standard for multi-class segmentation 
+        # include_background=False is standard for multi-class segmentation
         # to avoid background dominating the metric.
         self.dice_metric = DiceMetric(include_background=False, reduction="mean")
         self.history = {"train_loss": [], "val_loss": [], "val_dice": []}
 
-        self.scaler = GradScaler(config.DEVICE) if self.device.type == 'cuda' else None
+        # So we can use float16 mixed precision on CUDA
+        # (Multiplies loss by a scale factor to prevent underflow, and unscales
+        # gradients before the optimizer step)
+        self.scaler = GradScaler('cuda') if config.DEVICE == 'cuda' else None
         '''Mixed precision training scaler, enabled only on CUDA for potential speed up.'''
 
         # tensorboard writer for logging training metrics
-        self.writer = SummaryWriter(
-            log_dir=str(config.LOG_DIR / "tensorboard" / self.run_id),
-            comment=f"_{config.ENV}_batch{config.BATCH_SIZE}"
-        )
+        self.writer = SummaryWriter(log_dir=
+                                    str(config.LOG_DIR / "tensorboard" / self.run_id))
+        self.writer.add_hparams({
+            "environment": config.ENV,
+            "batch_size": config.BATCH_SIZE,
+            "num_classes": config.NUM_CLASSES,
+            "precision": "float16" if self.scaler is not None else "float32",
+        }, {})
         logger.info("TensorBoard writer initialised at: %s", self.writer.log_dir)
 
         logger.info("ModelBuilder initialized. Device set to: %s", self.device)
+
+    def _get_deterministic_transforms(self) -> list[Transform]:
+        '''
+        Returns the deterministic transforms that are applied to all training samples.
+        This includes loading, orientation, resampling, and intensity scaling.
+        These transforms are applied once and can be cached when using PersistentDataset.
+        '''
+        # WARNING: If you modify the transforms and you're on a GPU environment,
+        # make sure to clear (delete) the PersistentDataset folder
+        # to avoid issues with cached data that doesn't match the new transforms.
+        return [
+            LoadImaged(keys=['image', 'label'], ensure_channel_first=True),
+
+            # Ensure consistent orientation (LAS)
+            Orientationd(keys=["image", "label"], axcodes="LAS"),
+
+            # LiTS and other sources have varying resolutions.
+            # Resample to to isotropic spacing for better model performance and to
+            # ensure the model learns scale-invariant features.
+            Spacingd(
+                keys=["image", "label"],
+                pixdim=(1.5, 1.5, 1.5),
+                mode=("bilinear", "nearest")
+            ),
+            ScaleIntensityRanged(
+                keys=["image"],
+                # We clip the HU values to the defined liver/tumour range
+                a_min=config.HU_WINDOW_MIN, a_max=config.HU_WINDOW_MAX,
+                # We then scale that range to [0, 1] for better training stability.
+                b_min=0.0,  b_max=1.0,
+                # Values outside liver/tumour range are clipped.
+                clip=True,
+            ),
+        ]
 
     def get_train_transforms(self) -> tuple[Compose, Compose]:
         '''
@@ -114,29 +158,7 @@ class ModelBuilder:
               or using CacheDataset, in which case the random transforms are included
               in the deterministic pipeline.
         '''
-        # WARNING: If you modify the transforms and you're on a GPU environment,
-        # make sure to clear (delete) the PersistentDataset folder
-        # to avoid issues with cached data that doesn't match the new transforms.
-        deterministic_transforms = [
-            LoadImaged(keys=['image', 'label'], ensure_channel_first=True),
-            # LiTS and other sources have varying resolutions.
-            # Resample to to isotropic spacing for better model performance and to
-            # ensure the model learns scale-invariant features.
-            Spacingd(
-                keys=["image", "label"],
-                pixdim=(1.5, 1.5, 1.5),
-                mode=("bilinear", "nearest")
-            ),
-            ScaleIntensityRanged(
-                keys=["image"],
-                # We clip the HU values to the defined liver/tumour range
-                a_min=config.HU_WINDOW_MIN, a_max=config.HU_WINDOW_MAX,
-                # We then scale that range to [0, 1] for better training stability.
-                b_min=0.0,  b_max=1.0,
-                # Values outside liver/tumour range are clipped.
-                clip=True,
-            ),
-        ]
+        deterministic_transforms = self._get_deterministic_transforms()
 
         random_transforms = [
             # Sample patches with a balanced ratio of positive (tumor) and
@@ -177,28 +199,13 @@ class ModelBuilder:
 
     def get_val_transforms(self) -> Compose:
         '''Returns the transforms for the validation data.'''
-        # WARNING: If you modify the transforms and you're on a GPU environment,
-        # make sure to clear (delete) the PersistentDataset folder
-        # to avoid issues with cached data that doesn't match the new transforms.
-        compose_list = [
-            LoadImaged(keys=["image", "label"], ensure_channel_first=True),
-            Spacingd(
-                keys=["image", "label"],
-                pixdim=(1.5, 1.5, 1.5),
-                mode=("bilinear", "nearest")
-            ),
-            ScaleIntensityRanged(
-                keys=["image"],
-                a_min=config.HU_WINDOW_MIN, a_max=config.HU_WINDOW_MAX,
-                b_min=0.0,  b_max=1.0,
-                clip=True,
-            ),
-        ]
+        compose_list = self._get_deterministic_transforms()
 
         if config.is_limited_env():
-            logger.debug("Validation transforms: Using random crop for limited environment.")
+            logger.warning("Validation transforms: Using random crop for limited environment.")
             compose_list.extend([
-                # To make sure we have some positive examples in the validation set
+                # On limited GPU or CPU we apply cropping so we don't overload memory.
+                # ByPosNeg to make sure we have some positive examples in the validation set
                 RandCropByPosNegLabeld(
                     keys=["image", "label"],
                     label_key="label",
@@ -210,7 +217,6 @@ class ModelBuilder:
                     image_threshold=0,
                 )
             ])
-        # In GPU we can afford to run inference on the full volume, so we skip the cropping.
 
         compose_list.extend([
             EnsureTyped(keys=["image"]),
@@ -330,6 +336,7 @@ class ModelBuilder:
         logger.info("Model initialized on %s", self.device)
         logger.info("Optimizer: AdamW | LR: %f | Weight Decay: 1e-5", config.LEARNING_RATE)
 
+        # Change to cosine annealing scheduler with warm restarts on ResUNETR
         self.scheduler = ReduceLROnPlateau(
             self.optimizer,
             # Minimise the validation loss, not maximise the dice score
@@ -450,6 +457,33 @@ class ModelBuilder:
         avg_val_loss = val_loss / len(self.val_dl)
         epoch_dice = self.dice_metric.aggregate().item()
 
+        # === DYNAMIC PER-CLASS DICE REPORTING ===
+        # Retrieve un-reduced per-sample scores: shape (num_samples, num_foreground_classes)
+        per_sample_dice = self.dice_metric.aggregate(reduction="none")
+        # We move the tensor to CPU, as it is no longer needed for GPU computation
+        per_class_dice = per_sample_dice.mean(dim=0).cpu().tolist()
+
+        # Map foreground indices to names based on current config
+        if config.NUM_CLASSES == 3:
+            class_map = {0: "liver", 1: "tumour"}
+        else:  # config.NUM_CLASSES == 2
+            class_map = {0: "tumour"}
+
+        log_parts = []
+        for idx, name in class_map.items():
+            dice_val = per_class_dice[idx]
+            log_parts.append("%s: %.4f" % (name.capitalize(), dice_val))
+            self.writer.add_scalar(f"val/dice_{name}", dice_val, epoch)
+
+        # Console logging using %-style formatting
+        # Passing arguments after the string lets Python's logging module 
+        # defer %-evaluation until the message is actually emitted.
+        logger.debug(
+            "Epoch %d | Val Loss: %.4f | Dice Mean: %.4f | %s",
+            epoch, avg_val_loss, epoch_dice, " | ".join(log_parts)
+        )
+        # ========================================
+
         # Step scheduler based on validation loss
         self.scheduler.step(avg_val_loss)
 
@@ -522,6 +556,7 @@ class ModelBuilder:
                     "model_state_dict": self.model.state_dict(),
                     "optimizer_state_dict": self.optimizer.state_dict(),
                     "best_dice": best_val_dice,
+                    "scaler": self.scaler.state_dict() if self.scaler is not None else None
                 }, best_ckpt_path)
                 logger.info("  -> New Best Model Saved (Dice: %.4f)", best_val_dice)
             else:

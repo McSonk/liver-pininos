@@ -119,10 +119,12 @@ class DataWrapper:
         `volume_id`: int
             The ID of the volume to print the summary for.
         '''
+        # TODO: add a global summary function that prints the summary for all volumes
         if self.volume is None:
-            raise ValueError("Volume is not set. Please set the volume using set_volume() before printing the summary.")
+            raise ValueError("Volume is not set. Please set the volume using "
+                             "set_volume() before printing the summary.")
 
-        print(f"Volume summary:")
+        print("Volume summary:")
         print("--------------------File paths--------------------")
         print(f"Image path: {self.volume.img_path}")
         print(f"Label path: {self.volume.label_path}")
@@ -139,7 +141,7 @@ class DataWrapper:
         print('Image data shape: %s' % str(self.volume.image_data.shape))
         print('Mask data shape: %s' % str(self.volume.label_data.shape))
 
-        # TODO: use this information to decide on the necessary preprocessing steps (e.g., resampling, normalization, etc.)
+        # TODO: use this information to decide on the necessary preprocessing steps
         print("--------------------- value ranges--------------------")
         print("CT intensity range:", self.volume.image_data.min(), "to", self.volume.image_data.max())
         print("Mask intensity range:", self.volume.label_data.min(), "to", self.volume.label_data.max())
