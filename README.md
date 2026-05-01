@@ -22,6 +22,42 @@ The aim of this thesis is to train a model to automatically segment HCC liver tu
 - All hyperparameters managed via `config.py` + `.env`; environment-specific presets documented
 - **Code availability**: This repository contains the complete, runnable codebase required for thesis submission and external validation
 
+## Dataset Summary Analysis
+
+The project includes a dataset-wide analysis utility that produces comprehensive statistics for thesis documentation and preprocessing justification.
+
+### Running the Analysis
+
+```bash
+# Basic usage (outputs table + CSV files)
+python analyse_dataset.py
+
+# Custom output paths
+python analyse_dataset.py --output-csv my_per_case.csv --output-agg-csv my_stats.csv
+
+# Reduced terminal output (suppresses the main analysis table; CSV files are still written)
+python analyse_dataset.py --no-verbose --output-csv data.csv
+```
+
+### What It Produces
+
+1. **Terminal Table**: Per-case overview showing shape, spacing, orientation, CT range, and tumor presence
+2. **Per-Case CSV** (`lits_per_case_summary.csv`): Full metadata for every volume including:
+   - Image/label dimensions
+   - Voxel spacing (mm)
+   - Affine axis codes (orientation)
+   - CT intensity min/max
+   - Liver/tumor slice ranges
+   - Voxel counts and ratios for liver and tumor
+3. **Aggregate Stats CSV** (`lits_aggregate_stats.csv`): Dataset-level statistics including:
+   - Number of volumes and tumor prevalence
+   - Mean/median/std of shapes and spacing
+   - Orientation distribution
+   - Slice span statistics (liver/tumor extent)
+   - Foreground imbalance metrics (voxel ratios)
+   - CT intensity ranges
+
+
 ## Installation
 
 ### Prerequisites

@@ -68,6 +68,7 @@ RANDOM_SEED: Final[int] = 42
 CT_ROOT_STR = os.getenv("LITS_CT_ROOT")
 CHECKPOINT_DIR_STR = os.getenv("CHECKPOINT_DIR")
 PERSISTENT_DATASET_DIR_STR = os.getenv("PERSISTENT_DATASET_DIR")
+STATS_DIR_STR = os.getenv("STATS_DIR")
 
 LOG_DIR_STR = os.getenv("LOG_DIR")
 LOG_LEVEL_CONSOLE = os.getenv("LOG_LEVEL_CONSOLE", "INFO").upper()
@@ -83,6 +84,10 @@ if not CHECKPOINT_DIR_STR:
 if not PERSISTENT_DATASET_DIR_STR:
     print("[Config] Warning: 'PERSISTENT_DATASET_DIR' is not set. "
           "PersistentDataset will be disabled.")
+
+if not STATS_DIR_STR:
+    print("[Config] Warning: 'STATS_DIR' is not set. "
+          "Statistics cannot be performed.")
 
 if not LOG_DIR_STR:
     raise ValueError(
@@ -101,6 +106,7 @@ if LOG_LEVEL_FILE not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
 
 CT_ROOT = Path(CT_ROOT_STR)
 CHECKPOINT_DIR = Path(CHECKPOINT_DIR_STR)
+STATS_DIR = Path(STATS_DIR_STR) if STATS_DIR_STR else None
 PERSISTENT_DATASET_DIR = Path(PERSISTENT_DATASET_DIR_STR) if PERSISTENT_DATASET_DIR_STR else None
 LOG_DIR = Path(LOG_DIR_STR)
 
@@ -217,6 +223,11 @@ if PERSISTENT_DATASET_DIR and not PERSISTENT_DATASET_DIR.exists():
     print("[Config] Persistent dataset directory does not exist. "
           f"Creating: {PERSISTENT_DATASET_DIR}")
     PERSISTENT_DATASET_DIR.mkdir(parents=True, exist_ok=True)
+
+if STATS_DIR and not STATS_DIR.exists():
+    print("[Config] Stats directory does not exist. "
+          f"Creating: {STATS_DIR}")
+    STATS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 print(f"[Config]   Device: {DEVICE}")
