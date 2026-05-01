@@ -22,6 +22,75 @@ The aim of this thesis is to train a model to automatically segment HCC liver tu
 - All hyperparameters managed via `config.py` + `.env`; environment-specific presets documented
 - **Code availability**: This repository contains the complete, runnable codebase required for thesis submission and external validation
 
+## Dataset Summary Analysis
+
+The project includes a dataset-wide analysis utility that produces comprehensive statistics for thesis documentation and preprocessing justification.
+
+### Running the Analysis
+
+```bash
+# Basic usage (outputs table + CSV files)
+python analyze_lits_dataset.py
+
+# Custom output paths
+python analyze_lits_dataset.py --output-csv my_per_case.csv --output-agg-csv my_stats.csv
+
+# Quiet mode (CSV only, no terminal output)
+python analyze_lits_dataset.py --no-verbose --output-csv data.csv
+```
+
+### What It Produces
+
+1. **Terminal Table**: Per-case overview showing shape, spacing, orientation, CT range, and tumor presence
+2. **Per-Case CSV** (`lits_per_case_summary.csv`): Full metadata for every volume including:
+   - Image/label dimensions
+   - Voxel spacing (mm)
+   - Affine axis codes (orientation)
+   - CT intensity min/max
+   - Liver/tumor slice ranges
+   - Voxel counts and ratios for liver and tumor
+3. **Aggregate Stats CSV** (`lits_aggregate_stats.csv`): Dataset-level statistics including:
+   - Number of volumes and tumor prevalence
+   - Mean/median/std of shapes and spacing
+   - Orientation distribution
+   - Slice span statistics (liver/tumor extent)
+   - Foreground imbalance metrics (voxel ratios)
+   - CT intensity ranges
+
+### Programmatic Usage
+
+```python
+from idssp.sonk.disk.loader import DataCollector
+from idssp.sonk.model.data import DatasetSummary, analyze_lits_dataset
+
+# Load data
+collector = DataCollector()
+collector.read_dir(config.CT_ROOT, ds_source='LiTS')
+collector.extract_images_and_labels()
+
+# Option 1: Use convenience function
+summary = analyze_lits_dataset(
+    collector.datasources,
+    output_csv='per_case.csv',
+    output_agg_csv='aggregate.csv'
+)
+
+# Option 2: Manual control
+summary = DatasetSummary(collector.datasources)
+summary.analyze_all(verbose=True)
+stats = summary.get_aggregate_stats()
+summary.print_table()
+summary.export_csv('per_case.csv')
+```
+
+### Why This Matters
+
+These statistics support key preprocessing decisions in the thesis:
+- **Orientation normalization**: The orientation distribution shows whether all volumes share the same axis codes
+- **Spacing normalization**: Spacing mean/std justifies resampling to isotropic voxels
+- **Class imbalance handling**: Liver/tumor voxel ratios quantify the foreground imbalance problem
+- **CT windowing**: Intensity ranges validate the chosen HU window [-175, 250]
+
 ## Installation
 
 ### Prerequisites
