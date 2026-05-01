@@ -477,7 +477,7 @@ class DatasetSummary:
             display_count = min(len(self.per_case_rows), max_rows)
             for i in range(display_count):
                 r = self.per_case_rows[i]
-                shape_str = f"{r['image_shape'][0]}x{r['image_shape'][1]}x{r['image_shape'][2]}"
+                shape_str = f"{r['image_shape'][2]}x{r['image_shape'][0]}x{r['image_shape'][1]}"
                 spacing_str = f"{r['spacing_x']:.2f}x{r['spacing_y']:.2f}x{r['spacing_z']:.2f}"
                 orient_str = ''.join(r['affine_codes'])
                 ct_str = f"{r['ct_min']:.0f} to {r['ct_max']:.0f}"
