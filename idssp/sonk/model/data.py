@@ -156,8 +156,9 @@ class VolumeWrapper:
         tumor_voxels = int(np.sum(self.label_data == 2))
 
         # Ratios
-        liver_ratio = liver_voxels / total_voxels if total_voxels > 0 else 0.0
-        tumor_ratio = tumor_voxels / total_voxels if total_voxels > 0 else 0.0
+        liver_to_total_ratio = liver_voxels / total_voxels if total_voxels > 0 else 0.0
+        tumor_to_total_ratio = tumor_voxels / total_voxels if total_voxels > 0 else 0.0
+        tumor_to_liver_ratio = tumor_voxels / liver_voxels if liver_voxels > 0 else 0.0
 
         return {
             'image_path': self.img_path,
@@ -177,8 +178,9 @@ class VolumeWrapper:
             'tumor_last': tumor_last,
             'liver_voxels': liver_voxels,
             'tumor_voxels': tumor_voxels,
-            'liver_ratio': liver_ratio,
-            'tumor_ratio': tumor_ratio,
+            'liver_to_total_ratio': liver_to_total_ratio,
+            'tumor_to_total_ratio': tumor_to_total_ratio,
+            'tumor_to_liver_ratio': tumor_to_liver_ratio,
             'has_tumor': tumor_voxels > 0
         }
 class DataWrapper:
@@ -318,7 +320,7 @@ class DatasetSummary:
         self.per_case_rows: List[Dict[str, Any]] = []
         self.aggregate_stats: Optional[Dict[str, Any]] = None
 
-    def analyze_all(self, verbose: bool = False) -> List[Dict[str, Any]]:
+    def analyse_all(self, verbose: bool = False) -> List[Dict[str, Any]]:
         '''
         Iterate over all paired volumes and extract per-case summaries.
         
@@ -357,7 +359,7 @@ class DatasetSummary:
     def get_aggregate_stats(self) -> Dict[str, Any]:
         '''
         Compute dataset-level aggregate statistics from analyzed per-case rows.
-        Must call analyze_all() first.
+        Must call analyse_all() first.
         
         Returns
         -------
@@ -373,7 +375,7 @@ class DatasetSummary:
             - ct_intensity_mean (mean min/max across volumes)
         '''
         if not self.per_case_rows:
-            raise ValueError("No data analyzed. Call analyze_all() first.")
+            raise ValueError("No data analysed. Call analyse_all() first.")
         
         rows = self.per_case_rows
         n = len(rows)
@@ -410,20 +412,20 @@ class DatasetSummary:
                 liver_spans.append(r['liver_last'] - r['liver_first'] + 1)
             if r['tumor_first'] is not None and r['tumor_last'] is not None:
                 tumor_spans.append(r['tumor_last'] - r['tumor_first'] + 1)
-        
+
         liver_span_mean = np.mean(liver_spans) if liver_spans else 0.0
         liver_span_std = np.std(liver_spans) if liver_spans else 0.0
         tumor_span_mean = np.mean(tumor_spans) if tumor_spans else 0.0
         tumor_span_std = np.std(tumor_spans) if tumor_spans else 0.0
-        
+
         # Foreground imbalance metrics
-        liver_ratios = [r['liver_ratio'] for r in rows]
-        tumor_ratios = [r['tumor_ratio'] for r in rows]
+        liver_ratios = [r['liver_to_total_ratio'] for r in rows]
+        tumor_ratios = [r['tumor_to_liver_ratio'] for r in rows]
         liver_ratio_mean = np.mean(liver_ratios)
         liver_ratio_std = np.std(liver_ratios)
         tumor_ratio_mean = np.mean(tumor_ratios)
         tumor_ratio_std = np.std(tumor_ratios)
-        
+
         # CT intensity statistics
         ct_mins = [r['ct_min'] for r in rows]
         ct_maxs = [r['ct_max'] for r in rows]
@@ -459,7 +461,7 @@ class DatasetSummary:
         Print a terminal table-like summary of the dataset analysis.
         '''
         if not self.per_case_rows:
-            logger.warning("No data analyzed. Call analyze_all() first.")
+            logger.warning("No data analyzed. Call analyse_all() first.")
             return
 
         logger.info("")
@@ -509,7 +511,7 @@ class DatasetSummary:
             Path to the output CSV file.
         '''
         if not self.per_case_rows:
-            raise ValueError("No data analyzed. Call analyze_all() first.")
+            raise ValueError("No data analysed. Call analyse_all() first.")
 
         # Flatten some fields for CSV
         csv_rows = []
@@ -540,8 +542,9 @@ class DatasetSummary:
                 'tumor_last': r['tumor_last'] if r['tumor_last'] is not None else '',
                 'liver_voxels': r['liver_voxels'],
                 'tumor_voxels': r['tumor_voxels'],
-                'liver_ratio': r['liver_ratio'],
-                'tumor_ratio': r['tumor_ratio'],
+                'liver_to_total_ratio': r['liver_to_total_ratio'],
+                'tumor_to_total_ratio': r['tumor_to_total_ratio'],
+                'tumor_to_liver_ratio': r['tumor_to_liver_ratio'],
                 'has_tumor': r['has_tumor']
             }
             csv_rows.append(csv_row)
@@ -634,7 +637,7 @@ def analyse_dataset(datasources: List[Dict[str, str]],
         The summary object with per_case_rows and aggregate_stats populated
     '''
     summary = DatasetSummary(datasources)
-    summary.analyze_all(verbose=verbose)
+    summary.analyse_all(verbose=verbose)
     summary.get_aggregate_stats()
 
     if verbose:
