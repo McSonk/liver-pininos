@@ -475,9 +475,9 @@ class DatasetSummary:
         logger.info("Volumes with tumor:          %d (%.1f%%)", agg['num_with_tumor'],
                     agg['tumor_proportion']*100)
         logger.info("")
-        logger.info("Mean shape (D,H,W):          %s", agg['shape_mean'])
-        logger.info("Median shape (D,H,W):        %s", agg['shape_median'])
-        logger.info("Shape std (D,H,W):           %s", agg['shape_std'])
+        logger.info("Mean shape (X,Y,Z):          %s", agg['shape_mean'])
+        logger.info("Median shape (X,Y,Z):        %s", agg['shape_median'])
+        logger.info("Shape std (X,Y,Z):           %s", agg['shape_std'])
         logger.info("")
         logger.info("Mean spacing (mm) (X,Y,Z):   %s", agg['spacing_mean'])
         logger.info("Spacing std (mm) (X,Y,Z):    %s", agg['spacing_std'])
@@ -519,12 +519,12 @@ class DatasetSummary:
                 'case_name': r['case_name'],
                 'image_path': r['image_path'],
                 'label_path': r['label_path'],
-                'image_depth': r['image_shape'][0],
-                'image_height': r['image_shape'][1],
-                'image_width': r['image_shape'][2],
-                'label_depth': r['label_shape'][0],
-                'label_height': r['label_shape'][1],
-                'label_width': r['label_shape'][2],
+                'image_x': r['image_shape'][0],
+                'image_y': r['image_shape'][1],
+                'image_z': r['image_shape'][2],
+                'label_x': r['label_shape'][0],
+                'label_y': r['label_shape'][1],
+                'label_z': r['label_shape'][2],
                 'ct_min': r['ct_min'],
                 'ct_max': r['ct_max'],
                 'spacing_x': r['spacing_x'],

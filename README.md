@@ -35,7 +35,7 @@ python analyse_dataset.py
 # Custom output paths
 python analyse_dataset.py --output-csv my_per_case.csv --output-agg-csv my_stats.csv
 
-# Quiet mode (CSV only, no terminal output)
+# Reduced terminal output (suppresses the main analysis table; CSV files are still written)
 python analyse_dataset.py --no-verbose --output-csv data.csv
 ```
 
