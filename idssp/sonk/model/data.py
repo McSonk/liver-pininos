@@ -509,9 +509,9 @@ class DatasetSummary:
         print(f"Number of volumes:           {agg['num_volumes']}")
         print(f"Volumes with tumor:          {agg['num_with_tumor']} ({agg['tumor_proportion']*100:.1f}%)")
         print()
-        print(f"Mean shape (D,H,W):          {agg['shape_mean']}")
-        print(f"Median shape (D,H,W):        {agg['shape_median']}")
-        print(f"Shape std (D,H,W):           {agg['shape_std']}")
+        print(f"Mean shape (X,Y,Z):          {agg['shape_mean']}")
+        print(f"Median shape (X,Y,Z):        {agg['shape_median']}")
+        print(f"Shape std (X,Y,Z):           {agg['shape_std']}")
         print()
         print(f"Mean spacing (mm) (X,Y,Z):   {agg['spacing_mean']}")
         print(f"Spacing std (mm) (X,Y,Z):    {agg['spacing_std']}")
@@ -549,12 +549,12 @@ class DatasetSummary:
                 'case_name': r['case_name'],
                 'image_path': r['image_path'],
                 'label_path': r['label_path'],
-                'image_depth': r['image_shape'][0],
-                'image_height': r['image_shape'][1],
-                'image_width': r['image_shape'][2],
-                'label_depth': r['label_shape'][0],
-                'label_height': r['label_shape'][1],
-                'label_width': r['label_shape'][2],
+                'image_x': r['image_shape'][0],
+                'image_y': r['image_shape'][1],
+                'image_z': r['image_shape'][2],
+                'label_x': r['label_shape'][0],
+                'label_y': r['label_shape'][1],
+                'label_z': r['label_shape'][2],
                 'ct_min': r['ct_min'],
                 'ct_max': r['ct_max'],
                 'spacing_x': r['spacing_x'],
