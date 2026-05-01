@@ -1,15 +1,7 @@
-```
-# Python
-__pycache__/
 *.pyc
-*.pyo
-*.pyd
-
-# Environment
+checkpoints/*
 .env
-
-# Dependencies
-.venv/
-venv/
-.envrc
-```
+logs/*
+# For the dataset split logs
+**seed**.json
+.vscode/
