@@ -24,7 +24,6 @@ python analyze_lits_dataset.py --no-verbose --output-csv data.csv
 """
 
 import argparse
-from pathlib import Path
 
 from idssp.sonk import config
 from idssp.sonk.disk.loader import DataCollector
