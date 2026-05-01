@@ -115,15 +115,14 @@ LEARNING_RATE: Final[float] = 1e-4
 
 NUM_CLASSES: Final[int] = 3
 '''How many classes to predict.
-For binary segmentation, set to 2(tumor vs background).
-For multi-class, set to 3 (background, liver, tumor).'''
+For binary segmentation, set to 2(tumour vs background).
+For multi-class, set to 3 (background, liver, tumour).'''
 
-TUMOUR_CLASS_INDEX: Final[int] = 2
-'''The index of the tumor class in the model's output channels.
-For binary segmentation (NUM_CLASSES=1), this should be 0.
-For recommended binary segmentation (NUM_CLASSES=2), this should be 1 if the
-classes are ordered as [background, tumor]. For multi-class segmentation (NUM_CLASSES=3),
-this should be 2 if the classes are ordered as [background, liver, tumor].'''
+TUMOUR_CLASS_INDEX: Final[int] = 2 if NUM_CLASSES == 3 else 1
+'''The index of the tumour class in the model's output channels.
+For binary segmentation (NUM_CLASSES=2), this should be 1 if the
+classes are ordered as [background, tumour]. For multi-class segmentation (NUM_CLASSES=3),
+this should be 2 if the classes are ordered as [background, liver, tumour].'''
 
 VAL_BATCH_SIZE: Final[int] = 1
 '''DataLoader's batch size for validation. Kept at 1 for deterministic evaluation
@@ -201,6 +200,10 @@ elif ENV == "cloud":
 # -----------------------------------------------------------------------------
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+if NUM_CLASSES != 2 and NUM_CLASSES != 3:
+    raise ValueError("[Config] NUM_CLASSES must be either 2 (for binary segmentation) "
+                     "or 3 (for multi-class segmentation).")
 
 if not CT_ROOT.exists():
     raise FileNotFoundError(f"[Config] CT root directory does not exist: {CT_ROOT}")
