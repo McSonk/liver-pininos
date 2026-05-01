@@ -469,7 +469,7 @@ class DatasetSummary:
         
         if max_rows > 0:
             # Header
-            header = f"{'Idx':<4} {'Name':<20} {'Shape (DxHxW)':<16} {'Spacing (mm)':<16} {'Orient':<12} {'CT Range':<16} {'Liver Span':<12} {'Tumor Span':<12} {'Has Tmr'}"
+            header = f"{'Idx':<4} {'Name':<20} {'Shape (XxYxZ)':<16} {'Spacing (mm)':<16} {'Orient':<12} {'CT Range':<16} {'Liver Span':<12} {'Tumor Span':<12} {'Has Tmr'}"
             print(header)
             print("-" * 140)
             
