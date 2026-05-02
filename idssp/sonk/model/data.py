@@ -160,6 +160,22 @@ class VolumeWrapper:
         tumor_to_total_ratio = tumor_voxels / total_voxels if total_voxels > 0 else 0.0
         tumor_to_liver_ratio = tumor_voxels / liver_voxels if liver_voxels > 0 else 0.0
 
+        # Compute robust HU bounds within liver mask (label == 1)
+        liver_mask = self.label_data == 1
+        if np.any(liver_mask):
+            liver_hu = self.image_data[liver_mask]
+            liver_hu_mean = liver_hu.mean()
+            liver_hu_std = liver_hu.std()
+            hu_p01 = float(np.percentile(liver_hu, 0.5))
+            hu_p99 = float(np.percentile(liver_hu, 99.5))
+            liver_hu_min = liver_hu.min()
+            liver_hu_max = liver_hu.max()
+        else:
+            hu_p01, hu_p99 = None, None
+            liver_hu_mean, liver_hu_std = None, None
+            liver_hu_min, liver_hu_max = None, None
+            logger.warning("No liver voxels found in volume. Cannot compute liver HU statistics.")
+
         return {
             'image_path': self.img_path,
             'label_path': self.label_path,
@@ -181,7 +197,13 @@ class VolumeWrapper:
             'liver_to_total_ratio': liver_to_total_ratio,
             'tumor_to_total_ratio': tumor_to_total_ratio,
             'tumor_to_liver_ratio': tumor_to_liver_ratio,
-            'has_tumor': tumor_voxels > 0
+            'has_tumor': tumor_voxels > 0,
+            'liver_hu_mean': liver_hu_mean,
+            'liver_hu_std': liver_hu_std,
+            'liver_hu_p01': hu_p01,
+            'liver_hu_p99': hu_p99,
+            'liver_hu_min': liver_hu_min,
+            'liver_hu_max': liver_hu_max
         }
 class DataWrapper:
     def __init__(self):
@@ -545,6 +567,12 @@ class DatasetSummary:
                 'liver_to_total_ratio': r['liver_to_total_ratio'],
                 'tumor_to_total_ratio': r['tumor_to_total_ratio'],
                 'tumor_to_liver_ratio': r['tumor_to_liver_ratio'],
+                'liver_hu_mean': r['liver_hu_mean'],
+                'liver_hu_std': r['liver_hu_std'],
+                'liver_hu_p01': r['liver_hu_p01'],
+                'liver_hu_p99': r['liver_hu_p99'],
+                'liver_hu_min': r['liver_hu_min'],
+                'liver_hu_max': r['liver_hu_max'],
                 'has_tumor': r['has_tumor']
             }
             csv_rows.append(csv_row)
