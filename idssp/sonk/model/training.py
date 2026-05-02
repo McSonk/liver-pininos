@@ -11,7 +11,8 @@ from monai.metrics import DiceMetric
 from monai.networks.nets import UNet
 from monai.transforms import (Activations, AsDiscrete, Compose, EnsureTyped,
                               LoadImaged, RandCropByPosNegLabeld, RandFlipd,
-                              ScaleIntensityRanged, Spacingd, Orientationd, Transform)
+                              ScaleIntensityRanged, Spacingd, Orientationd,
+                              Transform, CropForegroundd)
 from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
@@ -115,14 +116,17 @@ class ModelBuilder:
             # Ensure consistent orientation (LAS)
             Orientationd(keys=["image", "label"], axcodes="LAS"),
 
-            # LiTS and other sources have varying resolutions.
-            # Resample to to isotropic spacing for better model performance and to
-            # ensure the model learns scale-invariant features.
+            # We standardise (resample) spacing across all volumes so a tumour of a given
+            # voxel size appears at the same scale regardless of the original scan resolution.
             Spacingd(
                 keys=["image", "label"],
-                pixdim=(1.5, 1.5, 1.5),
+                pixdim=config.ISO_SPACING,
+                # bilinear (average) interpolation for CT
+                # nearest for labels to avoid creating non-integer class values
                 mode=("bilinear", "nearest")
             ),
+
+            # Changes CT intensity scale to something more meaningful for the model
             ScaleIntensityRanged(
                 keys=["image"],
                 # We clip the HU values to the defined liver/tumour range
@@ -131,6 +135,20 @@ class ModelBuilder:
                 b_min=0.0,  b_max=1.0,
                 # Values outside liver/tumour range are clipped.
                 clip=True,
+            ),
+
+            # Remove excess background to reduce memory usage and speed up training.
+            # (It effectively crops the image to a bounding box around the
+            # liver + tumour region, with a margin of 10 voxels.)
+            # THIS WILL CHANGE THE SHAPE OF THE INPUT DATA
+            # Remove on inference if fixed-size validation is needed
+            CropForegroundd(
+                keys=["image", "label"],
+                source_key="image",
+                # Background is 0
+                select_fn=lambda x: x > 0,
+                margin=10,
+                allow_smaller=True
             ),
         ]
 
