@@ -115,6 +115,7 @@ LOG_DIR = Path(LOG_DIR_STR)
 
 # CTs are in Hounsfield Units: -1000 (air), 0 (water), 40-60 (soft tissues), 100+ (bone)
 # we just need liver and tumor, so we can clip the intensities to a smaller range
+# -175 includes liver and fat. -75 would include only liver but it might be too aggressive.
 HU_WINDOW_MIN: Final[int] = -175
 HU_WINDOW_MAX: Final[int] = 250
 LEARNING_RATE: Final[float] = 1e-4
@@ -166,15 +167,22 @@ was at the end of the last epoch, even if that is not the best one.
 # -----------------------------------------------------------------------------
 NUM_WORKERS: int
 PIN_MEMORY: bool
+NUM_EPOCHS: int
+TRAIN_PATCH_SIZE: tuple
+VAL_PATCH_SIZE: tuple
 
 # This is a parameter that can be tuned based on the GPU VRAM and CPU RAM available.
 BATCH_SIZE: int
 '''DataLoader's batch size. Set to 1 for memory safety, especially with large 3D volumes.
 (Usually between 1 and 4 depending on GPU VRAM)'''
 
-NUM_EPOCHS: int
-TRAIN_PATCH_SIZE: tuple
-VAL_PATCH_SIZE: tuple
+ISO_SPACING: tuple
+'''The isotropic spacing to which all CT volumes will be resampled.
+A good choice is (1.5, 1.5, 1.5). It is memory efficient but it might introduce
+some blurring. (1.0, 1.0, 1.0) is an optimal choice.
+Please note that in LiTS most of the volumes have a z spacing of around 0.7-1.0mm, 
+so resampling to 1.0mm will not introduce much blurring while ensuring. However,
+there are 2 volumes with a z spacing of .5mm, so here we should be more careful.'''
 
 if ENV == "local":
     print("[Config] Running in LOCAL environment.")
@@ -185,6 +193,7 @@ if ENV == "local":
     NUM_EPOCHS = 5
     TRAIN_PATCH_SIZE = (64, 64, 64)
     VAL_PATCH_SIZE = (64, 64, 64)
+    ISO_SPACING = (2.0, 2.0, 2.0)
 
 elif ENV == "cloud":
     print("[Config] Running in CLOUD environment (Lightning AI). Using more computing power.")
@@ -195,6 +204,8 @@ elif ENV == "cloud":
     NUM_EPOCHS = 90
     TRAIN_PATCH_SIZE = (96, 96, 96)
     VAL_PATCH_SIZE = (128, 128, 128)
+    # TODO: Tune. Both options sound valid, so decide which is better based on experiments.
+    ISO_SPACING = (1.0, 1.0, 1.0) if HC_GPU else (1.5, 1.5, 1.5)
     # Note: If using SlidingWindowInferer, VAL_PATCH_SIZE determines the window stride/size.
     # However, on full scans, VAL_PATCH_SIZE will be ignored
 
