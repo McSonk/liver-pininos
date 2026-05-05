@@ -26,24 +26,25 @@ logger = get_logger(__name__)
 class AugmentedDataset(Dataset):
     '''
     A wrapper around a base dataset that applies additional random transforms on-the-fly.
-    This is used to apply random cropping and flipping during training when using PersistentDataset,
+    This is used to apply random cropping and flipping during training when using
+    Persistent or Cached Dataset,
     which applies the main transforms once and caches the results. By separating the random
     transforms into a second Compose, we can ensure that we still get data augmentation
-    benefits without losing the caching advantages of PersistentDataset.
+    benefits without losing the caching advantages.
     '''
-    def __init__(self, base_ds, transform):
+    def __init__(self, base_ds, random_transform):
         '''
         Params
         ------
         `base_ds`: Dataset
             The base dataset (e.g. PersistentDataset) that applies the main
             deterministic transforms.
-        `transform`: Compose
+        `random_transform`: Compose
             A Compose object containing the random transforms to apply on-the-fly during training.
         '''
         super().__init__(base_ds)
         self.base_ds = base_ds
-        self.aug = transform
+        self.aug = random_transform
     def __len__(self):
         return len(self.base_ds)
     def __getitem__(self, i):
@@ -91,12 +92,19 @@ class ModelBuilder:
         # tensorboard writer for logging training metrics
         self.writer = SummaryWriter(log_dir=
                                     str(config.LOG_DIR / "tensorboard" / self.run_id))
-        self.writer.add_hparams({
-            "environment": config.ENV,
-            "batch_size": config.BATCH_SIZE,
-            "num_classes": config.NUM_CLASSES,
-            "precision": "float16" if self.scaler is not None else "float32",
-        }, {})
+        self.writer.add_hparams(
+            { # h param dict
+                "environment": config.ENV,
+                "batch_size": config.BATCH_SIZE,
+                "num_classes": config.NUM_CLASSES,
+                "precision": "float16" if self.scaler is not None else "float32",
+            }, { # metric dict
+                "val/dice_mean": 0.0,
+                "val/dice_liver": 0.0,
+                "val/dice_tumour": 0.0,
+                "train/loss": 0.0,
+            }
+        )
         logger.info("TensorBoard writer initialised at: %s", self.writer.log_dir)
 
         logger.info("ModelBuilder initialized. Device set to: %s", self.device)
@@ -179,35 +187,39 @@ class ModelBuilder:
         deterministic_transforms = self._get_deterministic_transforms()
 
         random_transforms = [
-            # Sample patches with a balanced ratio of positive (tumor) and
+            # Sample patches with a balanced ratio of positive (tumor/liver) and
             # negative (background) examples.
             RandCropByPosNegLabeld(
                 keys=["image", "label"],
                 label_key="label",
                 spatial_size=config.TRAIN_PATCH_SIZE,
-                pos=1,   # sample from foreground (tumor) regions
-                neg=1,   # sample from background regions
-                num_samples=2,  # number of samples to generate per volume
+                pos=1,
+                neg=1,
+                # number of samples to generate per volume
+                num_samples=2,
                 image_key="image",
-                image_threshold=0,  # consider non-zero pixels as foreground for sampling
+                # Negative samples are taken on tissue ( HU > 0). Used with image_key
+                image_threshold=0,
             ),
 
             # Randomly flip the image and label horizontally, vertically and
             # depth-wise with a 50% chance each to augment the data and improve generalization.
-            RandFlipd(keys=["image", "label"], spatial_axis=0, prob=0.5),
+            # NOTE: Liver sits always on the left side of the image. 
+            # Flipping along x-axis would create unrealistic samples.
+            # RandFlipd(keys=["image", "label"], spatial_axis=0, prob=0.5),
             RandFlipd(keys=["image", "label"], spatial_axis=1, prob=0.5),
             RandFlipd(keys=["image", "label"], spatial_axis=2, prob=0.5),
-            # Ensure the data is in the correct tensor format
+            # Converts data to PyTorch tensors
             EnsureTyped(keys=["image"]),
             # Labels must be long for the loss function
-            # this ensures that the dtype is consistent across all transforms
+            # (Sometimes it is loaded as float)
             EnsureTyped(keys=["label"], dtype=torch.long),
         ]
 
-        if config.is_limited_env() or config.USE_CACHE_DATASET:
+        if config.is_limited_env():
             logger.debug("Using random crop in main transform pipeline for limited "
-            "environment or cache dataset.")
-            # When we won't use PersistentDataset (which applies transforms once
+            "environment")
+            # When we won't use Persistent or CacheDataset (which applies transforms once
             # and caches the results), we can include the random cropping in the
             # main transform pipeline.
             deterministic_transforms.extend(random_transforms)
@@ -229,7 +241,7 @@ class ModelBuilder:
                     label_key="label",
                     spatial_size=config.VAL_PATCH_SIZE,
                     pos=1,
-                    neg=0,       # always sample from foreground for val
+                    neg=0,
                     num_samples=1,
                     image_key="image",
                     image_threshold=0,
@@ -259,26 +271,40 @@ class ModelBuilder:
             should be a dictionary with keys "image" and "label" pointing to the
             respective file paths.
         '''
-        logger.info("Creating training transforms object...")
+        logger.debug("Creating training transforms object...")
         # train_ran_trans will be empty if we're in a limited environment or using CacheDataset
         train_det_trans, train_ran_trans = self.get_train_transforms()
 
-        logger.info("Creating validation transforms object...")
+        logger.debug("Deterministic transforms for training:")
+        logger.debug(train_det_trans)
+
+        logger.debug("Random transforms for training:")
+        logger.debug(train_ran_trans)
+
+        logger.debug("Creating validation transforms object...")
         val_transforms = self.get_val_transforms()
+
+        logger.debug("Validation transforms:")
+        logger.debug(val_transforms)
 
         logger.info("Initializing training and validation datasets...")
         if config.is_limited_env():
-            logger.info("Limited environment detected. Using regular Dataset.")
+            logger.debug("Limited environment detected. Using plain MONAI Dataset.")
+            # With a Dataset the transformations are executed every iteration
+            # so the process will be slow (but less memory intensive)
             train_ds = Dataset(data=train_files, transform=train_det_trans)
             val_ds = Dataset(data=val_files, transform=val_transforms)
         else:
             if config.USE_CACHE_DATASET:
-                logger.info("Sufficient resources detected. Using CacheDataset.")
-                train_ds = CacheDataset(
-                    data=train_files,
-                    transform=train_det_trans,
-                    cache_rate=1.0,
-                    num_workers=config.NUM_WORKERS
+                logger.debug("Sufficient resources detected. Using MONAI CacheDataset.")
+                train_ds = AugmentedDataset(
+                    CacheDataset(
+                        data=train_files,
+                        transform=train_det_trans,
+                        cache_rate=1.0,
+                        num_workers=config.NUM_WORKERS
+                    ),
+                    train_ran_trans
                 )
                 val_ds = CacheDataset(
                     data=val_files,
@@ -288,19 +314,22 @@ class ModelBuilder:
                 )
             else:
                 logger.info("Sufficient resources detected. Using PersistentDataset.")
-                # Here we need to make use of both the deterministic and random transforms
                 train_ds = AugmentedDataset(
                     PersistentDataset(
                         data=train_files,
                         transform=train_det_trans,
-                        cache_dir=str(config.PERSISTENT_DATASET_DIR / "train_cache")
+                        cache_dir=str(config.PERSISTENT_DATASET_DIR /
+                                      f"hmin_{config.HU_WINDOW_MIN}"
+                                       "_hmax_{config.HU_WINDOW_MAX}_train_cache")
                     ),
                     train_ran_trans
                 )
                 val_ds = PersistentDataset(
                     data=val_files,
                     transform=val_transforms,
-                    cache_dir=str(config.PERSISTENT_DATASET_DIR / "val_cache")
+                    cache_dir=str(config.PERSISTENT_DATASET_DIR /
+                                  f"hmin_{config.HU_WINDOW_MIN}"
+                                   "_hmax_{config.HU_WINDOW_MAX}_val_cache")
                 )
 
         logger.info("Creating training dataloader...")
@@ -331,8 +360,9 @@ class ModelBuilder:
             # Just 1 channel for the grayscale CT image.
             in_channels=1,
             out_channels=config.NUM_CLASSES,
-            channels=(16, 32, 64, 128),
-            strides=(2, 2, 2),
+            channels=(32, 64, 128, 256),
+            # Between channels
+            strides=(2, 2, 2, 2),
             num_res_units=1 if config.is_limited_env() else 2
         ).to(self.device)
 

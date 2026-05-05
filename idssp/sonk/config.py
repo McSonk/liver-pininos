@@ -133,7 +133,7 @@ this should be 2 if the classes are ordered as [background, liver, tumour].'''
 
 VAL_BATCH_SIZE: Final[int] = 1
 '''DataLoader's batch size for validation. Kept at 1 for deterministic evaluation
-and memory safety with large 3D volumes.'''
+and memory safety with large 3D volumes. NOT TO BE CONFUSED WITH `VAL_PATCH_SIZE`'''
 
 FIGURE_EPOCH_INTERVAL: Final[int] = 10
 '''Interval (in epochs) at which to log segmentation overlay figures to TensorBoard.
@@ -165,11 +165,15 @@ was at the end of the last epoch, even if that is not the best one.
 # -----------------------------------------------------------------------------
 # 3. Environment-Specific Configuration
 # -----------------------------------------------------------------------------
+# Run `nproc` or `lscpu` for number of CPU cores. NUM_WORKERS < number of cores.
 NUM_WORKERS: int
+'''Number of parallel processes for data loading (CacheDataset or DataLoader)'''
 PIN_MEMORY: bool
 NUM_EPOCHS: int
 TRAIN_PATCH_SIZE: tuple
 VAL_PATCH_SIZE: tuple
+'''The size of the 3D patches to be extracted from the volumes for training and validation.
+(Only used in local env). NOT TO BE CONFUSED WITH `VAL_BATCH_SIZE`'''
 
 # This is a parameter that can be tuned based on the GPU VRAM and CPU RAM available.
 BATCH_SIZE: int
@@ -198,17 +202,13 @@ if ENV == "local":
 elif ENV == "cloud":
     print("[Config] Running in CLOUD environment (Lightning AI). Using more computing power.")
 
-    NUM_WORKERS = 4 if HC_GPU else 0
+    NUM_WORKERS = 4 if HC_GPU else 2
     PIN_MEMORY = True
     BATCH_SIZE = 4 if HC_GPU else 2
     NUM_EPOCHS = 90
     TRAIN_PATCH_SIZE = (96, 96, 96)
-    VAL_PATCH_SIZE = (128, 128, 128)
     # TODO: Tune. Both options sound valid, so decide which is better based on experiments.
     ISO_SPACING = (1.0, 1.0, 1.0) if HC_GPU else (1.5, 1.5, 1.5)
-    # Note: If using SlidingWindowInferer, VAL_PATCH_SIZE determines the window stride/size.
-    # However, on full scans, VAL_PATCH_SIZE will be ignored
-
     # On clouds with high compute GPUS we can afford CacheDataset
     USE_CACHE_DATASET = True
 
