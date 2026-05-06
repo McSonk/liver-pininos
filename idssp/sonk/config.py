@@ -5,14 +5,26 @@ import os
 from pathlib import Path
 from typing import Final
 
-print("[Config] Importing torch... (This may take a moment)")
 import torch
+
 from dotenv import load_dotenv
 
 # -----------------------------------------------------------------------------
 # 0. Load Environment Variables
 # -----------------------------------------------------------------------------
 
+print("=" * 80)
+print("This is a configuration file.")
+print("The configuration is loaded at the start of the program and defines important constants, ")
+print("paths, and hyperparameters.")
+print("Please review the settings below and adjust them as needed before running the program.")
+print("If you are running this for the first time, make sure to create a .env")
+print("file based on the .env.example template and fill in the required paths and settings.")
+print("")
+print("NOTE: The logs of this file won't be stored in the logs directory,")
+print("so please pay attention to any warnings or errors printed here.")
+print("=" * 80)
+print("[Config] Loading environment variables from .env file...")
 load_dotenv()
 
 # -----------------------------------------------------------------------------
@@ -266,3 +278,5 @@ def is_limited_env(include_vram=True) -> bool:
         return True
 
     return include_vram and HC_GPU is False
+
+print("=" * 80)

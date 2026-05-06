@@ -1,3 +1,5 @@
+print("[main.py] Importing torch... (This may take a moment)")
+import torch
 from monai.utils import set_determinism
 
 from idssp.sonk import config
