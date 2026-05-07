@@ -137,6 +137,11 @@ NUM_CLASSES: Final[int] = 3
 For binary segmentation, set to 2 (tumour vs background).
 For multi-class, set to 3 (background, liver, tumour).'''
 
+RAND_CROP_NUM_SAMPLES: Final[int] = 2
+'''Number of random crops to extract from each volume during training.
+Note that the final batch size will be `BATCH_SIZE` * `RAND_CROP_NUM_SAMPLES`
+'''
+
 TUMOUR_CLASS_INDEX: Final[int] = 2 if NUM_CLASSES == 3 else 1
 '''The index of the tumour class in the model's output channels.
 For binary segmentation (NUM_CLASSES=2), this should be 1 if the
@@ -190,7 +195,8 @@ VAL_PATCH_SIZE: tuple
 # This is a parameter that can be tuned based on the GPU VRAM and CPU RAM available.
 BATCH_SIZE: int
 '''DataLoader's batch size. Set to 1 for memory safety, especially with large 3D volumes.
-(Usually between 1 and 4 depending on GPU VRAM)'''
+(Usually between 1 and 4 depending on GPU VRAM)
+Note that the final batch size will be `BATCH_SIZE` * `RAND_CROP_NUM_SAMPLES`'''
 
 ISO_SPACING: tuple
 '''The isotropic spacing to which all CT volumes will be resampled.
@@ -255,6 +261,7 @@ if STATS_DIR and not STATS_DIR.exists():
 
 print(f"[Config]   Device: {DEVICE}")
 print(f"[Config]   Batch Size: {BATCH_SIZE}")
+print(f"[Config]   RAND_CROP_NUM_SAMPLES: {RAND_CROP_NUM_SAMPLES} (Effective Batch Size: {BATCH_SIZE * RAND_CROP_NUM_SAMPLES})")
 print(f"[Config]   Val Batch Size: {VAL_BATCH_SIZE}")
 print(f"[Config]   Workers: {NUM_WORKERS}")
 print(f"[Config]   Data Root: {CT_ROOT}")
