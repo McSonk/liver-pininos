@@ -67,6 +67,7 @@ class ModelBuilder:
         self.loss_fn = None
         self.optimizer = None
         self.scheduler = None
+        self.inferer: SlidingWindowInferer = None
         self.device = torch.device(config.DEVICE)
         self.run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -101,9 +102,10 @@ class ModelBuilder:
 
         # include_background=False is standard for multi-class segmentation
         # to avoid background dominating the metric.
-        self.dice_metric = DiceMetric(include_background=False, reduction="mean_channel")
+        # reduction="mean" because we handle intra-class statistics inside the epoch
+        self.dice_metric = DiceMetric(include_background=False, reduction="none")
         '''Stores DiceMetric score. When `.aggregate()` is called, it calculates
-           the average DICE score of each class (background excluded) between
+           the global mean DICE score across classes (background excluded) between
            predicted and true segmentation masks.
 
            To be used in validation step.'''
@@ -418,6 +420,29 @@ class ModelBuilder:
             weight_decay=1e-5
         )
 
+        if not config.is_limited_env():
+            # Initialize sliding window inferer (run validation on full volumes
+            # via sliding window patches)
+            self.inferer = SlidingWindowInferer(
+                # MUST be the same as the training patch size
+                roi_size=config.TRAIN_PATCH_SIZE,
+                # Process 4 patches in parallel
+                sw_batch_size=4,
+                # Generate overlapping patches (reduces the step size)
+                # to smooth out predictions at patch borders
+                # (25% is a common choice, but 50% can further reduce border
+                # artifacts at the cost of more computation)
+                overlap=0.5,
+                # Use a Gaussian weighting function to give more importance to
+                # the centre of the patch in the predictions while ensuring overlapping
+                # regions blend smoothly
+                mode="gaussian",
+                device=self.device,
+                # The process will be run via jobs, so progress bar won't be watched anyway
+                progress=False
+            )
+            logger.debug("Using SlidingWindowInferer for full-volume inference")
+
         logger.info("Model initialized on %s", self.device)
         logger.info("Optimizer: AdamW | LR: %f | Weight Decay: 1e-5", config.LEARNING_RATE)
 
@@ -522,30 +547,6 @@ class ModelBuilder:
 
     def _run_val_epoch(self, epoch: int):
         val_loss = 0
-        inferer: SlidingWindowInferer = None
-
-        if not config.is_limited_env():
-            # Initialize sliding window inferer (run validation on full volumes
-            # via sliding window patches)
-            inferer = SlidingWindowInferer(
-                # MUST be the same as the training patch size
-                roi_size=config.TRAIN_PATCH_SIZE,
-                # Process 4 patches in parallel
-                sw_batch_size=4,
-                # Generate overlapping patches (reduces the step size)
-                # to smooth out predictions at patch borders
-                # (25% is a common choice, but 50% can further reduce border
-                # artifacts at the cost of more computation)
-                overlap=0.5,
-                # Use a Gaussian weighting function to give more importance to
-                # the centre of the patch in the predictions while ensuring overlapping
-                # regions blend smoothly
-                mode="gaussian",
-                device=self.device,
-                # The process will be run via jobs, so progress bar won't be watched anyway
-                progress=False
-            )
-            logger.debug("Validation: Using SlidingWindowInferer for full-volume inference")
 
         for batch_idx, batch in enumerate(self.val_dl):
             images = batch["image"].to(self.device)
@@ -556,9 +557,9 @@ class ModelBuilder:
                         batch["image"].shape)
 
             with autocast(device_type="cuda", enabled=config.DEVICE == "cuda"):
-                if inferer is not None:
+                if self.inferer is not None:
                     # GPU: Process full volume via sliding window
-                    preds = inferer(images, self.model)
+                    preds = self.inferer(images, self.model)
                 else:
                     # CPU: Images are already cropped to VAL_PATCH_SIZE, run directly
                     preds = self.model(images)
@@ -575,6 +576,7 @@ class ModelBuilder:
             batch_loss = self.loss_fn(preds, labels).item()
 
             # Accumulate validation loss for the epoch
+            # (This works for model learning, as opposed to `dice_metric`)
             val_loss += batch_loss
             logger.debug("  Batch Loss: %f | Cumulative Loss: %f", batch_loss, val_loss)
 
@@ -593,7 +595,7 @@ class ModelBuilder:
             # Now both val_preds and val_labels are lists of one-hot encoded
             # tensors representing the predicted and true segmentation masks
             # for each sample in the batch.
-            # Calculate and accumulate metrics
+            # Calculate and accumulate metrics (this works for human reading)
             self.dice_metric(y_pred=val_preds, y=val_labels)
 
             # --- LOG OVERLAY ONCE PER EPOCH (first batch only) ---
@@ -605,7 +607,7 @@ class ModelBuilder:
         return val_loss / len(self.val_dl)
 
 
-    def _validate_epoch(self, epoch: int):
+    def _validate(self, epoch: int):
         # Activate inference mode
         self.model.eval()
         # Reset metric from previous epochs
@@ -614,13 +616,16 @@ class ModelBuilder:
         with torch.no_grad():
             avg_val_loss = self._run_val_epoch(epoch)
 
-        epoch_dice = self.dice_metric.aggregate().item()
-
         # === DYNAMIC PER-CLASS DICE REPORTING ===
-        # Retrieve un-reduced per-sample scores: shape (num_samples, num_foreground_classes)
-        per_sample_dice = self.dice_metric.aggregate(reduction="none")
-        # We move the tensor to CPU, as it is no longer needed for GPU computation
-        per_class_dice = per_sample_dice.mean(dim=0).cpu().tolist()
+        # Perform average computation and extract per sample raw scores
+        # Shape: (num_samples, num_foreground_classes)
+        per_sample_dice: torch.Tensor = self.dice_metric.aggregate()
+
+        # We compute the class means and then move the tensor to CPU, as it is no
+        # longer needed for GPU computation
+        per_class_dice: list = per_sample_dice.mean(dim=0).cpu().tolist()
+        # Also compute the global mean dice
+        mean_dice: float = per_sample_dice.mean().item()
 
         # Map foreground indices to names based on current config
         if config.NUM_CLASSES == 3:
@@ -631,22 +636,23 @@ class ModelBuilder:
         log_parts = []
         for idx, name in class_map.items():
             dice_val = per_class_dice[idx]
-            log_parts.append("%s: %.4f" % (name.capitalize(), dice_val))
+            # for logger print
+            log_parts.append("Dice %s: %.4f" % (name, dice_val))
+            # for tensorboard
             self.writer.add_scalar(f"val/dice_{name}", dice_val, epoch)
 
-        # Console logging using %-style formatting
-        # Passing arguments after the string lets Python's logging module 
-        # defer %-evaluation until the message is actually emitted.
-        logger.debug(
-            "Epoch %d | Val Loss: %.4f | Dice Mean: %.4f | %s",
-            epoch, avg_val_loss, epoch_dice, " | ".join(log_parts)
+        logger.info(
+            "(Validation) Epoch %d -> Loss: %.4f | Dice Mean: %.4f | %s",
+            epoch, avg_val_loss, mean_dice, " | ".join(log_parts)
         )
         # ========================================
 
         # Step scheduler based on validation loss
+        # TODO: Check if it's better to step based on tumour DiceCE score
+        # (instead of the average loss)
         self.scheduler.step(avg_val_loss)
 
-        return avg_val_loss, epoch_dice
+        return avg_val_loss, mean_dice
 
     def train(self, num_epochs=None):
         '''
@@ -678,7 +684,7 @@ class ModelBuilder:
             log_memory_usage(logger)
 
             avg_train_loss = self._train_epoch()
-            avg_val_loss, epoch_dice = self._validate_epoch(epoch)
+            avg_val_loss, epoch_dice = self._validate(epoch)
 
             # Get current learning rate for logging
             current_lr = self.optimizer.param_groups[0]['lr']
