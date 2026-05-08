@@ -22,7 +22,9 @@ if __name__ == "__main__":
     logger.info("Done! Some important information about the environment:")
     logger.info("ISO space: %s", config.ISO_SPACING)
     logger.info("Training patch size: %s", config.TRAIN_PATCH_SIZE)
-    logger.debug("Validation patch size: %s", config.VAL_PATCH_SIZE)
+    val_patch_size = getattr(config, "VAL_PATCH_SIZE", None)
+    if val_patch_size is not None:
+        logger.debug("Validation patch size: %s", val_patch_size)
     logger.debug("Batch size: %d", config.BATCH_SIZE)
     logger.debug("Number of epochs: %d", config.NUM_EPOCHS)
     log_memory_usage(logger, prefix="At program start: ")
