@@ -307,7 +307,7 @@ class ModelBuilder:
         logger.debug("Deterministic transforms for training (%d steps):",
                      len(train_det_trans.transforms))
         for i, t in enumerate(train_det_trans.transforms, 1):
-            logger.info("  %2d. %s", i, t.__class__.__name__)
+            logger.debug("  %2d. %s", i, t.__class__.__name__)
 
         logger.debug("Random transforms for training (%d steps):", len(train_ran_trans.transforms))
         for i, t in enumerate(train_ran_trans.transforms, 1):
@@ -564,13 +564,15 @@ class ModelBuilder:
                     # CPU: Images are already cropped to VAL_PATCH_SIZE, run directly
                     preds = self.model(images)
 
-            # Cast predictions and labels to float32 before loss calculation.
+            # Cast predictions to float32 before loss calculation.
             # Mixed precision (float16) can cause numerical instability and NaNs
             # during operations like Dice or cross-entropy. Using float32 ensures
             # stable loss computation while still allowing mixed precision in the
             # forward pass for performance.
             preds = preds.float()
-            labels = labels.float()
+            
+            # Labels need to be long for the loss function, so we do nothing
+
 
             # Get the loss of the current batch
             batch_loss = self.loss_fn(preds, labels).item()

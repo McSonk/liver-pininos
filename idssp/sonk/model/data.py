@@ -120,7 +120,7 @@ class VolumeWrapper:
             - unique_labels
             - liver_first, liver_last, tumor_first, tumor_last (slice thresholds)
             - liver_voxels, tumor_voxels (voxel counts)
-            - liver_ratio, tumor_ratio (foreground ratios)
+            - liver_to_total_ratio, tumor_to_total_ratio, tumor_to_liver_ratio (foreground ratios)
             - has_tumor (boolean)
         '''
         if self.image_data is None or self.label_data is None:
@@ -323,7 +323,7 @@ class DatasetSummary:
     collector.extract_images_and_labels()
     
     summary = DatasetSummary(collector.datasources)
-    summary.analyze_all()
+    summary.analyse_all()
     summary.print_table()
     summary.export_csv('lits_dataset_summary.csv')
     agg = summary.get_aggregate_stats()
