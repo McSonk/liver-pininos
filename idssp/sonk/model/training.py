@@ -102,11 +102,14 @@ class ModelBuilder:
 
         # include_background=False is standard for multi-class segmentation
         # to avoid background dominating the metric.
-        # reduction="mean" because we handle intra-class statistics inside the epoch
+        # reduction="none" keeps per-sample/per-class Dice values so any averaging
+        # can be handled explicitly elsewhere in the validation epoch.
         self.dice_metric = DiceMetric(include_background=False, reduction="none")
-        '''Stores DiceMetric score. When `.aggregate()` is called, it calculates
-           the global mean DICE score across classes (background excluded) between
-           predicted and true segmentation masks.
+        '''Stores DiceMetric scores with background excluded. When `.aggregate()`
+           is called, it returns unreduced Dice values rather than a single global
+           mean. The aggregated result contains per-sample/per-class foreground
+           scores (typically one value for each validation item and non-background
+           class, e.g. shape `[batch_size, config.NUM_CLASSES - 1]`).
 
            To be used in validation step.'''
 
@@ -394,8 +397,8 @@ class ModelBuilder:
             in_channels=1,
             out_channels=config.NUM_CLASSES,
             channels=(32, 64, 128, 256),
-            # Between channels
-            strides=(2, 2, 2, 2),
+            # One stride per downsampling transition: len(strides) == len(channels) - 1
+            strides=(2, 2, 2),
             num_res_units=1 if config.is_limited_env() else 2
         ).to(self.device)
 
