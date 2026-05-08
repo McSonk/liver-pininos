@@ -654,69 +654,73 @@ class ModelBuilder:
 
         return avg_val_loss, mean_dice
 
-    def train(self, num_epochs=None):
-        '''
-        Main training loop that iterates over epochs, performs training and validation,
-        logs metrics, and handles checkpointing and early stopping.
+
+    def _run_epoch(self, epoch: int) -> float:
+        """Runs one full training + validation epoch.
 
         Params
         ------
-        `num_epochs`: int
-            The maximum number of epochs to train for. If None, uses the value from config.
-        '''
-        if num_epochs is None:
-            num_epochs = config.NUM_EPOCHS
+            `epoch`: int
+                Zero-indexed epoch number.
 
+        Returns:
+        ------
+        `epoch_dice`: float
+            Mean validation Dice score for the epoch.
+        """
+        epoch_start_time = time.time()
+
+        logger.info("Starting epoch %d/%d", epoch+1, config.NUM_EPOCHS)
+        log_memory_usage(logger)
+
+        # Train and validate one epoch
+        avg_train_loss = self._train_epoch()
+        avg_val_loss, epoch_dice = self._validate(epoch)
+
+        # Get current learning rate for logging
+        current_lr = self.optimizer.param_groups[0]['lr']
+
+        # Calculate epoch duration
+        epoch_end_time = time.time()
+        epoch_duration = epoch_end_time - epoch_start_time
+
+        # log to tensorboard
+        self.writer.add_scalar("Loss/Train", avg_train_loss, epoch)
+        self.writer.add_scalar("Loss/Val", avg_val_loss, epoch)
+        self.writer.add_scalar("Metrics/Dice", epoch_dice, epoch)
+        self.writer.add_scalar("Hyperparams/LR", current_lr, epoch)
+        self.writer.add_scalar("Time/Epoch_Duration", epoch_duration, epoch)
+
+        logger.info("  Train Loss: %f | Val Loss: %f | Dice: %f | LR: %f",
+                    avg_train_loss, avg_val_loss, epoch_dice, current_lr)
+        logger.info("  Epoch Time: %f seconds", epoch_duration)
+
+        # Track history
+        self.history["train_loss"].append(avg_train_loss)
+        self.history["val_loss"].append(avg_val_loss)
+        self.history["val_dice"].append(epoch_dice)
+
+        return epoch_dice
+
+    def train(self):
+        '''
+        Main training loop that iterates over epochs, performs training and validation,
+        logs metrics, and handles checkpointing and early stopping.
+        '''
         best_val_dice = -1.0
         epochs_no_improve = 0
-        today = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        best_ckpt_path = config.CHECKPOINT_DIR / (today + "_best_model.pth")
+        best_ckpt_path = config.CHECKPOINT_DIR / (self.run_id + "_best_model.pth")
 
         # --- START TOTAL TIMER ---
         total_start_time = time.time()
-        logger.info("Starting training for %d epochs...", num_epochs)
+        logger.info("Starting training for %d epochs...", config.NUM_EPOCHS)
 
-        for epoch in range(num_epochs):
-            # --- START EPOCH TIMER ---
-            epoch_start_time = time.time()
-
-            logger.info("Starting epoch %d/%d", epoch+1, num_epochs)
-            log_memory_usage(logger)
-
-            avg_train_loss = self._train_epoch()
-            avg_val_loss, epoch_dice = self._validate(epoch)
-
-            # Get current learning rate for logging
-            current_lr = self.optimizer.param_groups[0]['lr']
-
-            # --- CALCULATE EPOCH TIME ---
-            epoch_end_time = time.time()
-            epoch_duration = epoch_end_time - epoch_start_time
-            # --------------------------
-
-            # --- LOG TO TENSORBOARD ---
-            self.writer.add_scalar("Loss/Train", avg_train_loss, epoch)
-            self.writer.add_scalar("Loss/Val", avg_val_loss, epoch)
-            self.writer.add_scalar("Metrics/Dice", epoch_dice, epoch)
-            self.writer.add_scalar("Hyperparams/LR", current_lr, epoch)
-            self.writer.add_scalar("lr", self.scheduler.get_last_lr()[0], epoch)
-            self.writer.add_scalar("Time/Epoch_Duration", epoch_duration, epoch)
-            # --------------------------
-
-            logger.info("  Train Loss: %f | Val Loss: %f | Dice: %f | LR: %f",
-                        avg_train_loss, avg_val_loss, epoch_dice, current_lr)
-            logger.info("  Epoch Time: %f seconds", epoch_duration)
-
-            # Track history
-            self.history["train_loss"].append(avg_train_loss)
-            self.history["val_loss"].append(avg_val_loss)
-            self.history["val_dice"].append(epoch_dice)
+        for epoch in range(config.NUM_EPOCHS):
+            epoch_dice = self._run_epoch(epoch)
 
             # --- EARLY STOPPING CHECK AND CHECKPOINT SAVING ---
             if epoch_dice > best_val_dice + config.EARLY_STOPPING_MIN_DELTA:
                 best_val_dice = epoch_dice
-                epochs_no_improve = 0
-                # TODO: add load_checkpoint method
                 torch.save({
                     "epoch": epoch,
                     "model_state_dict": self.model.state_dict(),
@@ -725,15 +729,14 @@ class ModelBuilder:
                     "scaler": self.scaler.state_dict() if self.scaler is not None else None
                 }, best_ckpt_path)
                 logger.info("  -> New Best Model Saved (Dice: %.4f)", best_val_dice)
-            else:
-                epochs_no_improve += 1
-                logger.debug("  -> No improvement (%d/%d epochs)",
-                            epochs_no_improve, config.EARLY_STOPPING_PATIENCE)
 
-                if epochs_no_improve >= config.EARLY_STOPPING_PATIENCE:
-                    logger.info("  -> Early stopping triggered at epoch %d", epoch + 1)
-                    break
-            # --------------------------
+            epochs_no_improve += 1
+            logger.debug("  -> No improvement (%d/%d epochs)",
+                        epochs_no_improve, config.EARLY_STOPPING_PATIENCE)
+
+            if epochs_no_improve >= config.EARLY_STOPPING_PATIENCE:
+                logger.info("  -> Early stopping triggered at epoch %d", epoch + 1)
+                break
 
         # --- END TOTAL TIMER ---
         total_end_time = time.time()
