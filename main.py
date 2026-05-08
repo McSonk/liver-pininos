@@ -1,3 +1,5 @@
+print("[main.py] Importing torch... (This may take a moment)")
+import torch
 from monai.utils import set_determinism
 
 from idssp.sonk import config
@@ -13,11 +15,19 @@ set_determinism(seed=42)
 logger = get_logger(__name__)
 
 if __name__ == "__main__":
-    log_memory_usage(logger, prefix="At program start: ")
     logger.info("Reading directories...")
     loader = DataCollector()
     loader.read_dir(config.CT_ROOT, ds_source='LiTS')
     loader.extract_images_and_labels()
+    logger.info("Done! Some important information about the environment:")
+    logger.info("ISO space: %s", config.ISO_SPACING)
+    logger.info("Training patch size: %s", config.TRAIN_PATCH_SIZE)
+    val_patch_size = getattr(config, "VAL_PATCH_SIZE", None)
+    if val_patch_size is not None:
+        logger.debug("Validation patch size: %s", val_patch_size)
+    logger.debug("Batch size: %d", config.BATCH_SIZE)
+    logger.debug("Number of epochs: %d", config.NUM_EPOCHS)
+    log_memory_usage(logger, prefix="At program start: ")
     logger.debug("Splitting data into train and val sets...")
     train_files, val_files = loader.get_reproducible_split()
     logger.debug("Initializing data wrapper and model builder...")
@@ -25,7 +35,7 @@ if __name__ == "__main__":
 
     if config.is_limited_env(include_vram=False):
         logger.info("Limited environment detected. Using a subset of the data for quick testing.")
-        train_files = train_files[:2]  # Use only 2 samples for training
+        train_files = train_files[:4]  # Use only 4 samples for training
         val_files = val_files[:2]      # Use only 2 samples for validation
 
     logger.info("%d training files", len(train_files))

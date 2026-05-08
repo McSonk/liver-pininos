@@ -5,14 +5,26 @@ import os
 from pathlib import Path
 from typing import Final
 
-print("[Config] Importing torch... (This may take a moment)")
 import torch
+
 from dotenv import load_dotenv
 
 # -----------------------------------------------------------------------------
 # 0. Load Environment Variables
 # -----------------------------------------------------------------------------
 
+print("=" * 80)
+print("This is a configuration file.")
+print("The configuration is loaded at the start of the program and defines important constants, ")
+print("paths, and hyperparameters.")
+print("Please review the settings below and adjust them as needed before running the program.")
+print("If you are running this for the first time, make sure to create a .env")
+print("file based on the .env.example template and fill in the required paths and settings.")
+print("")
+print("NOTE: The logs of this file won't be stored in the logs directory,")
+print("so please pay attention to any warnings or errors printed here.")
+print("=" * 80)
+print("[Config] Loading environment variables from .env file...")
 load_dotenv()
 
 # -----------------------------------------------------------------------------
@@ -115,6 +127,7 @@ LOG_DIR = Path(LOG_DIR_STR)
 
 # CTs are in Hounsfield Units: -1000 (air), 0 (water), 40-60 (soft tissues), 100+ (bone)
 # we just need liver and tumor, so we can clip the intensities to a smaller range
+# -175 includes liver and fat. -75 would include only liver but it might be too aggressive.
 HU_WINDOW_MIN: Final[int] = -175
 HU_WINDOW_MAX: Final[int] = 250
 LEARNING_RATE: Final[float] = 1e-4
@@ -124,6 +137,11 @@ NUM_CLASSES: Final[int] = 3
 For binary segmentation, set to 2 (tumour vs background).
 For multi-class, set to 3 (background, liver, tumour).'''
 
+RAND_CROP_NUM_SAMPLES: Final[int] = 2
+'''Number of random crops to extract from each volume during training.
+Note that the final batch size will be `BATCH_SIZE` * `RAND_CROP_NUM_SAMPLES`
+'''
+
 TUMOUR_CLASS_INDEX: Final[int] = 2 if NUM_CLASSES == 3 else 1
 '''The index of the tumour class in the model's output channels.
 For binary segmentation (NUM_CLASSES=2), this should be 1 if the
@@ -132,7 +150,7 @@ this should be 2 if the classes are ordered as [background, liver, tumour].'''
 
 VAL_BATCH_SIZE: Final[int] = 1
 '''DataLoader's batch size for validation. Kept at 1 for deterministic evaluation
-and memory safety with large 3D volumes.'''
+and memory safety with large 3D volumes. NOT TO BE CONFUSED WITH `VAL_PATCH_SIZE`'''
 
 FIGURE_EPOCH_INTERVAL: Final[int] = 10
 '''Interval (in epochs) at which to log segmentation overlay figures to TensorBoard.
@@ -164,17 +182,29 @@ was at the end of the last epoch, even if that is not the best one.
 # -----------------------------------------------------------------------------
 # 3. Environment-Specific Configuration
 # -----------------------------------------------------------------------------
+# Run `nproc` or `lscpu` for number of CPU cores. NUM_WORKERS < number of cores.
 NUM_WORKERS: int
+'''Number of parallel processes for data loading (CacheDataset or DataLoader)'''
 PIN_MEMORY: bool
+NUM_EPOCHS: int
+TRAIN_PATCH_SIZE: tuple
+VAL_PATCH_SIZE: tuple
+'''The size of the 3D patches to be extracted from the volumes for training and validation.
+(Only used in local env). NOT TO BE CONFUSED WITH `VAL_BATCH_SIZE`'''
 
 # This is a parameter that can be tuned based on the GPU VRAM and CPU RAM available.
 BATCH_SIZE: int
 '''DataLoader's batch size. Set to 1 for memory safety, especially with large 3D volumes.
-(Usually between 1 and 4 depending on GPU VRAM)'''
+(Usually between 1 and 4 depending on GPU VRAM)
+Note that the final batch size will be `BATCH_SIZE` * `RAND_CROP_NUM_SAMPLES`'''
 
-NUM_EPOCHS: int
-TRAIN_PATCH_SIZE: tuple
-VAL_PATCH_SIZE: tuple
+ISO_SPACING: tuple
+'''The isotropic spacing to which all CT volumes will be resampled.
+A good choice is (1.5, 1.5, 1.5). It is memory efficient but it might introduce
+some blurring. (1.0, 1.0, 1.0) is an optimal choice.
+Please note that in LiTS most of the volumes have a z spacing of around 0.7-1.0mm, 
+so resampling to 1.0mm will not introduce much blurring while ensuring. However,
+there are 2 volumes with a z spacing of .5mm, so here we should be more careful.'''
 
 if ENV == "local":
     print("[Config] Running in LOCAL environment.")
@@ -185,19 +215,18 @@ if ENV == "local":
     NUM_EPOCHS = 5
     TRAIN_PATCH_SIZE = (64, 64, 64)
     VAL_PATCH_SIZE = (64, 64, 64)
+    ISO_SPACING = (2.0, 2.0, 2.0)
 
 elif ENV == "cloud":
     print("[Config] Running in CLOUD environment (Lightning AI). Using more computing power.")
 
-    NUM_WORKERS = 4 if HC_GPU else 0
+    NUM_WORKERS = 4 if HC_GPU else 2
     PIN_MEMORY = True
     BATCH_SIZE = 4 if HC_GPU else 2
     NUM_EPOCHS = 90
     TRAIN_PATCH_SIZE = (96, 96, 96)
-    VAL_PATCH_SIZE = (128, 128, 128)
-    # Note: If using SlidingWindowInferer, VAL_PATCH_SIZE determines the window stride/size.
-    # However, on full scans, VAL_PATCH_SIZE will be ignored
-
+    # TODO: Tune. Both options sound valid, so decide which is better based on experiments.
+    ISO_SPACING = (1.0, 1.0, 1.0) if HC_GPU else (1.5, 1.5, 1.5)
     # On clouds with high compute GPUS we can afford CacheDataset
     USE_CACHE_DATASET = True
 
@@ -232,12 +261,15 @@ if STATS_DIR and not STATS_DIR.exists():
 
 print(f"[Config]   Device: {DEVICE}")
 print(f"[Config]   Batch Size: {BATCH_SIZE}")
+print(f"[Config]   RAND_CROP_NUM_SAMPLES: {RAND_CROP_NUM_SAMPLES} (Effective "
+      f"Batch Size: {BATCH_SIZE * RAND_CROP_NUM_SAMPLES})")
 print(f"[Config]   Val Batch Size: {VAL_BATCH_SIZE}")
 print(f"[Config]   Workers: {NUM_WORKERS}")
 print(f"[Config]   Data Root: {CT_ROOT}")
 print(f"[Config]   Checkpoint Dir: {CHECKPOINT_DIR}")
 print(f"[Config]   Log Dir: {LOG_DIR}")
 print(f"[Config]   Persistent Dataset Dir: {PERSISTENT_DATASET_DIR}")
+print("=" * 80)
 # -----------------------------------------------------------------------------
 # 5. Helper Functions
 # -----------------------------------------------------------------------------
@@ -255,3 +287,47 @@ def is_limited_env(include_vram=True) -> bool:
         return True
 
     return include_vram and HC_GPU is False
+
+def to_dict() -> dict:
+    """Returns a serialisable snapshot of all configuration constants."""
+    return {
+        # Environment & Device
+        "ENV": ENV,
+        "DEVICE": DEVICE,
+        "HC_GPU": HC_GPU,
+        "RANDOM_SEED": RANDOM_SEED,
+
+        # Preprocessing
+        "HU_WINDOW_MIN": HU_WINDOW_MIN,
+        "HU_WINDOW_MAX": HU_WINDOW_MAX,
+        "ISO_SPACING": list(ISO_SPACING),  # tuple → list for JSON/weights compatibility
+        "TRAIN_PATCH_SIZE": list(TRAIN_PATCH_SIZE),
+        "VAL_PATCH_SIZE": list(VAL_PATCH_SIZE),
+        "USE_CACHE_DATASET": USE_CACHE_DATASET,
+
+        # Training Hyperparameters
+        "LEARNING_RATE": LEARNING_RATE,
+        "BATCH_SIZE": BATCH_SIZE,
+        "VAL_BATCH_SIZE": VAL_BATCH_SIZE,
+        "RAND_CROP_NUM_SAMPLES": RAND_CROP_NUM_SAMPLES,
+        "NUM_WORKERS": NUM_WORKERS,
+        "PIN_MEMORY": PIN_MEMORY,
+        "NUM_EPOCHS": NUM_EPOCHS,
+        "NUM_CLASSES": NUM_CLASSES,
+        "TUMOUR_CLASS_INDEX": TUMOUR_CLASS_INDEX,
+
+        # Early Stopping
+        "EARLY_STOPPING_PATIENCE": EARLY_STOPPING_PATIENCE,
+        "EARLY_STOPPING_MIN_DELTA": EARLY_STOPPING_MIN_DELTA,
+        "EARLY_STOPPING_RESTORE_BEST": EARLY_STOPPING_RESTORE_BEST,
+
+        # Paths (convert Path objects to strings)
+        "CT_ROOT": str(CT_ROOT),
+        "CHECKPOINT_DIR": str(CHECKPOINT_DIR),
+        "PERSISTENT_DATASET_DIR": str(PERSISTENT_DATASET_DIR) if PERSISTENT_DATASET_DIR else None,
+        "STATS_DIR": str(STATS_DIR) if STATS_DIR else None,
+        "LOG_DIR": str(LOG_DIR),
+        "LOG_LEVEL_CONSOLE": LOG_LEVEL_CONSOLE,
+        "LOG_LEVEL_FILE": LOG_LEVEL_FILE,
+        "FIGURE_EPOCH_INTERVAL": FIGURE_EPOCH_INTERVAL
+    }
