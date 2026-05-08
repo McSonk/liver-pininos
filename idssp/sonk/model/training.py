@@ -707,21 +707,24 @@ class ModelBuilder:
         Main training loop that iterates over epochs, performs training and validation,
         logs metrics, and handles checkpointing and early stopping.
         '''
-        early_stopper = EarlyStopper(
-            self,
-            config.CHECKPOINT_DIR / (self.run_id + "_best_model.pth")
-        )
+        early_stopper = EarlyStopper(self)
 
         total_start_time = time.time()
         logger.info("Starting training for %d epochs...", config.NUM_EPOCHS)
 
-        for epoch in range(config.NUM_EPOCHS):
-            epoch_dice = self._run_epoch(epoch)
+        try:
+            for epoch in range(config.NUM_EPOCHS):
+                epoch_dice = self._run_epoch(epoch)
 
-            # Returns true if the model hasn't improved for `config.EARLY_STOPPING_PATIENCE` epochs
-            if early_stopper(epoch, epoch_dice):
-                break
-        # End epoch loop
+                # Returns true if the model hasn't improved for
+                # `config.EARLY_STOPPING_PATIENCE` epochs
+                if early_stopper(epoch, epoch_dice):
+                    break
+            # End epoch loop
+        except KeyboardInterrupt:
+            logger.warning("Training interrupted by user. Saving current model...")
+            early_stopper.save_checkpoint(is_best=False, current_epoch=epoch)
+            raise
 
         total_end_time = time.time()
         total_duration = total_end_time - total_start_time
@@ -744,11 +747,12 @@ class ModelBuilder:
 
 class EarlyStopper:
     '''Helper class to manage early stopping logic and checkpoint saving.'''
-    def __init__(self, builder: ModelBuilder, checkpoint_path: Path):
+    def __init__(self, builder: ModelBuilder):
         self.best_dice = -1.0
+        self.best_epoch = -1
         self.epochs_no_improve = 0
         self.builder = builder
-        self.checkpoint_path = checkpoint_path
+        self.checkpoint_path = config.CHECKPOINT_DIR / (self.builder.run_id + "_best_model.pth")
 
     def __call__(self, epoch: int, epoch_dice: float) -> bool:
         '''Checks if the current epoch's Dice score shows an improvement over
@@ -766,8 +770,9 @@ class EarlyStopper:
         '''
         if epoch_dice > self.best_dice + config.EARLY_STOPPING_MIN_DELTA:
             self.best_dice = epoch_dice
+            self.best_epoch = epoch
             self.epochs_no_improve = 0
-            self._save_checkpoint(epoch)
+            self.save_checkpoint()
             return False  # Indicates improvement
 
         if self.epochs_no_improve < config.EARLY_STOPPING_PATIENCE:
@@ -779,14 +784,27 @@ class EarlyStopper:
         logger.info("  -> Early stopping triggered at epoch %d", epoch + 1)
         return True  # No improvement
 
-    def _save_checkpoint(self, epoch: int):
+    def save_checkpoint(self, is_best: bool = True, current_epoch: int = None):
         '''Saves a checkpoint of the current model state.'''
+        path: Path = None
+        if is_best:
+            path = self.checkpoint_path
+        else:
+            path = config.CHECKPOINT_DIR / (self.builder.run_id + "_last_epoch.pth")
+
+        before_save_time = time.time()
         torch.save({
-            "epoch": epoch,
+            "epoch": self.best_epoch if is_best else current_epoch,
             "model_state_dict": self.builder.model.state_dict(),
             "optimizer_state_dict": self.builder.optimizer.state_dict(),
             "best_dice": self.best_dice,
             "scaler_state_dict": self.builder.scaler.state_dict() if self.builder.scaler is not None else None,
             "config_snapshot": config.to_dict() if hasattr(config, 'to_dict') else vars(config),
-        }, self.checkpoint_path)
-        logger.info("  -> New Best Model Saved (Dice: %.4f)", self.best_dice)
+            "interrupted": not is_best
+        }, path)
+        after_save_time = time.time()
+        save_duration = after_save_time - before_save_time
+        if is_best:
+            logger.info("  -> New Best Model Saved (Dice: %.4f) in %s (%.2f seconds)", self.best_dice, path, save_duration)
+        else:
+            logger.info("  -> Last Epoch Model Saved in %s (%.2f seconds)", path, save_duration)
