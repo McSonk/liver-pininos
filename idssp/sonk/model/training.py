@@ -573,7 +573,7 @@ class ModelBuilder:
             # stable loss computation while still allowing mixed precision in the
             # forward pass for performance.
             preds = preds.float()
-            
+
             # Labels need to be long for the loss function, so we do nothing
 
 
@@ -800,11 +800,17 @@ class EarlyStopper:
         before_save_time = time.time()
         torch.save({
             "epoch": self.best_epoch if is_best else current_epoch,
+            # Weights and biases
             "model_state_dict": self.builder.model.state_dict(),
+            # Variance, step counters, etc
             "optimizer_state_dict": self.builder.optimizer.state_dict(),
             "best_dice": self.best_dice,
-            "scaler_state_dict": self.builder.scaler.state_dict() if self.builder.scaler is not None else None,
-            "config_snapshot": config.to_dict() if hasattr(config, 'to_dict') else vars(config),
+            # Counters and others for AMP
+            "scaler_state_dict":
+                self.builder.scaler.state_dict() if self.builder.scaler is not None else None,
+            # Config snapshot for reproducibility (can be used to log the exact
+            # config that led to the best model)
+            "config_snapshot": config.to_dict(),
             "interrupted": not is_best
         }, path)
         after_save_time = time.time()

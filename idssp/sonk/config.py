@@ -261,13 +261,15 @@ if STATS_DIR and not STATS_DIR.exists():
 
 print(f"[Config]   Device: {DEVICE}")
 print(f"[Config]   Batch Size: {BATCH_SIZE}")
-print(f"[Config]   RAND_CROP_NUM_SAMPLES: {RAND_CROP_NUM_SAMPLES} (Effective Batch Size: {BATCH_SIZE * RAND_CROP_NUM_SAMPLES})")
+print(f"[Config]   RAND_CROP_NUM_SAMPLES: {RAND_CROP_NUM_SAMPLES} (Effective "
+      f"Batch Size: {BATCH_SIZE * RAND_CROP_NUM_SAMPLES})")
 print(f"[Config]   Val Batch Size: {VAL_BATCH_SIZE}")
 print(f"[Config]   Workers: {NUM_WORKERS}")
 print(f"[Config]   Data Root: {CT_ROOT}")
 print(f"[Config]   Checkpoint Dir: {CHECKPOINT_DIR}")
 print(f"[Config]   Log Dir: {LOG_DIR}")
 print(f"[Config]   Persistent Dataset Dir: {PERSISTENT_DATASET_DIR}")
+print("=" * 80)
 # -----------------------------------------------------------------------------
 # 5. Helper Functions
 # -----------------------------------------------------------------------------
@@ -286,4 +288,46 @@ def is_limited_env(include_vram=True) -> bool:
 
     return include_vram and HC_GPU is False
 
-print("=" * 80)
+def to_dict() -> dict:
+    """Returns a serialisable snapshot of all configuration constants."""
+    return {
+        # Environment & Device
+        "ENV": ENV,
+        "DEVICE": DEVICE,
+        "HC_GPU": HC_GPU,
+        "RANDOM_SEED": RANDOM_SEED,
+
+        # Preprocessing
+        "HU_WINDOW_MIN": HU_WINDOW_MIN,
+        "HU_WINDOW_MAX": HU_WINDOW_MAX,
+        "ISO_SPACING": list(ISO_SPACING),  # tuple → list for JSON/weights compatibility
+        "TRAIN_PATCH_SIZE": list(TRAIN_PATCH_SIZE),
+        "VAL_PATCH_SIZE": list(VAL_PATCH_SIZE),
+        "USE_CACHE_DATASET": USE_CACHE_DATASET,
+
+        # Training Hyperparameters
+        "LEARNING_RATE": LEARNING_RATE,
+        "BATCH_SIZE": BATCH_SIZE,
+        "VAL_BATCH_SIZE": VAL_BATCH_SIZE,
+        "RAND_CROP_NUM_SAMPLES": RAND_CROP_NUM_SAMPLES,
+        "NUM_WORKERS": NUM_WORKERS,
+        "PIN_MEMORY": PIN_MEMORY,
+        "NUM_EPOCHS": NUM_EPOCHS,
+        "NUM_CLASSES": NUM_CLASSES,
+        "TUMOUR_CLASS_INDEX": TUMOUR_CLASS_INDEX,
+
+        # Early Stopping
+        "EARLY_STOPPING_PATIENCE": EARLY_STOPPING_PATIENCE,
+        "EARLY_STOPPING_MIN_DELTA": EARLY_STOPPING_MIN_DELTA,
+        "EARLY_STOPPING_RESTORE_BEST": EARLY_STOPPING_RESTORE_BEST,
+
+        # Paths (convert Path objects to strings)
+        "CT_ROOT": str(CT_ROOT),
+        "CHECKPOINT_DIR": str(CHECKPOINT_DIR),
+        "PERSISTENT_DATASET_DIR": str(PERSISTENT_DATASET_DIR) if PERSISTENT_DATASET_DIR else None,
+        "STATS_DIR": str(STATS_DIR) if STATS_DIR else None,
+        "LOG_DIR": str(LOG_DIR),
+        "LOG_LEVEL_CONSOLE": LOG_LEVEL_CONSOLE,
+        "LOG_LEVEL_FILE": LOG_LEVEL_FILE,
+        "FIGURE_EPOCH_INTERVAL": FIGURE_EPOCH_INTERVAL
+    }
