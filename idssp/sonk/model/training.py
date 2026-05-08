@@ -1,9 +1,8 @@
 import datetime
 import time
+from pathlib import Path
 
 import torch
-from torch.nn.utils import clip_grad_norm_
-
 import torch.optim as optim
 from monai.data import (CacheDataset, DataLoader, Dataset, PersistentDataset,
                         decollate_batch)
@@ -11,11 +10,12 @@ from monai.inferers import SlidingWindowInferer
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from monai.networks.nets import UNet
-from monai.transforms import (Activations, AsDiscrete, Compose, EnsureTyped,
-                              LoadImaged, RandCropByPosNegLabeld, RandFlipd,
-                              ScaleIntensityRanged, Spacingd, Orientationd,
-                              Transform, CropForegroundd)
+from monai.transforms import (Activations, AsDiscrete, Compose,
+                              CropForegroundd, EnsureTyped, LoadImaged,
+                              Orientationd, RandCropByPosNegLabeld, RandFlipd,
+                              ScaleIntensityRanged, Spacingd, Transform)
 from torch.amp import GradScaler, autocast
+from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
 
@@ -702,43 +702,27 @@ class ModelBuilder:
 
         return epoch_dice
 
-    def train(self):
+    def train(self) -> None:
         '''
         Main training loop that iterates over epochs, performs training and validation,
         logs metrics, and handles checkpointing and early stopping.
         '''
-        best_val_dice = -1.0
-        epochs_no_improve = 0
-        best_ckpt_path = config.CHECKPOINT_DIR / (self.run_id + "_best_model.pth")
+        early_stopper = EarlyStopper(
+            self,
+            config.CHECKPOINT_DIR / (self.run_id + "_best_model.pth")
+        )
 
-        # --- START TOTAL TIMER ---
         total_start_time = time.time()
         logger.info("Starting training for %d epochs...", config.NUM_EPOCHS)
 
         for epoch in range(config.NUM_EPOCHS):
             epoch_dice = self._run_epoch(epoch)
 
-            # --- EARLY STOPPING CHECK AND CHECKPOINT SAVING ---
-            if epoch_dice > best_val_dice + config.EARLY_STOPPING_MIN_DELTA:
-                best_val_dice = epoch_dice
-                torch.save({
-                    "epoch": epoch,
-                    "model_state_dict": self.model.state_dict(),
-                    "optimizer_state_dict": self.optimizer.state_dict(),
-                    "best_dice": best_val_dice,
-                    "scaler": self.scaler.state_dict() if self.scaler is not None else None
-                }, best_ckpt_path)
-                logger.info("  -> New Best Model Saved (Dice: %.4f)", best_val_dice)
-
-            epochs_no_improve += 1
-            logger.debug("  -> No improvement (%d/%d epochs)",
-                        epochs_no_improve, config.EARLY_STOPPING_PATIENCE)
-
-            if epochs_no_improve >= config.EARLY_STOPPING_PATIENCE:
-                logger.info("  -> Early stopping triggered at epoch %d", epoch + 1)
+            # Returns true if the model hasn't improved for `config.EARLY_STOPPING_PATIENCE` epochs
+            if early_stopper(epoch, epoch_dice):
                 break
+        # End epoch loop
 
-        # --- END TOTAL TIMER ---
         total_end_time = time.time()
         total_duration = total_end_time - total_start_time
 
@@ -746,18 +730,63 @@ class ModelBuilder:
         hours, rem = divmod(total_duration, 3600)
         minutes, seconds = divmod(rem, 60)
 
-        if config.EARLY_STOPPING_RESTORE_BEST and best_ckpt_path.exists():
-            logger.info("Restoring best model weights from: %s", best_ckpt_path)
-            checkpoint = torch.load(best_ckpt_path, map_location=self.device, weights_only=True)
-            self.model.load_state_dict(checkpoint["model_state_dict"])
-            logger.info("  -> Best validation Dice: %.4f at epoch %d", 
-                        checkpoint["best_dice"], checkpoint["epoch"] + 1)
+        self.writer.add_scalar("Final/Best_Dice", early_stopper.best_dice, 0)
+        self.writer.add_scalar("Final/Total_Duration_Hours", total_duration / 3600, 0)
 
         self.writer.close()
 
         logger.info("\n%s", "="*40)
         logger.info("Training Complete!")
-        logger.info("Best Validation Dice: %f", best_val_dice)
+        logger.info("Best Validation Dice: %f", early_stopper.best_dice)
         logger.info("Total Training Time: %dh %dm %ds", int(hours), int(minutes), seconds)
-        logger.info("Checkpoint saved to: %s", best_ckpt_path)
+        logger.info("Checkpoint saved to: %s", early_stopper.checkpoint_path)
         logger.info("\n%s", "="*40)
+
+class EarlyStopper:
+    '''Helper class to manage early stopping logic and checkpoint saving.'''
+    def __init__(self, builder: ModelBuilder, checkpoint_path: Path):
+        self.best_dice = -1.0
+        self.epochs_no_improve = 0
+        self.builder = builder
+        self.checkpoint_path = checkpoint_path
+
+    def __call__(self, epoch: int, epoch_dice: float) -> bool:
+        '''Checks if the current epoch's Dice score shows an improvement over
+           the best recorded within a window
+
+        Params
+        -----
+        `epoch_dice`: float
+            The mean Dice score for the current epoch.
+
+        Returns
+        -----
+        `bool`
+            True if the model hasn't improved for at least `config.EARLY_STOPPING_PATIENCE` epochs
+        '''
+        if epoch_dice > self.best_dice + config.EARLY_STOPPING_MIN_DELTA:
+            self.best_dice = epoch_dice
+            self.epochs_no_improve = 0
+            self._save_checkpoint(epoch)
+            return False  # Indicates improvement
+
+        if self.epochs_no_improve < config.EARLY_STOPPING_PATIENCE:
+            self.epochs_no_improve += 1
+            logger.debug("  -> No improvement (%d/%d epochs)",
+                        self.epochs_no_improve, config.EARLY_STOPPING_PATIENCE)
+            return False
+
+        logger.info("  -> Early stopping triggered at epoch %d", epoch + 1)
+        return True  # No improvement
+
+    def _save_checkpoint(self, epoch: int):
+        '''Saves a checkpoint of the current model state.'''
+        torch.save({
+            "epoch": epoch,
+            "model_state_dict": self.builder.model.state_dict(),
+            "optimizer_state_dict": self.builder.optimizer.state_dict(),
+            "best_dice": self.best_dice,
+            "scaler_state_dict": self.builder.scaler.state_dict() if self.builder.scaler is not None else None,
+            "config_snapshot": config.to_dict() if hasattr(config, 'to_dict') else vars(config),
+        }, self.checkpoint_path)
+        logger.info("  -> New Best Model Saved (Dice: %.4f)", self.best_dice)
