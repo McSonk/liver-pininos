@@ -14,11 +14,11 @@ https://www.frontiersin.org/journals/oncology/articles/10.3389/fonc.2021.697178/
 
 Usage:
     # In Jupyter:
-    from verify_ircadb_lits import verify_case_pair
+    from compare import verify_case_pair
     verify_case_pair(ircadb_case_num=1, lits_case_num=27)
     
     # From terminal:
-    python verify_ircadb_lits.py --ircadb 1 --lits 27
+    python compare.py --ircadb 1 --lits 27
 """
 
 import SimpleITK as sitk
@@ -29,7 +29,7 @@ import matplotlib.pyplot as plt
 from scipy.ndimage import zoom
 import os
 import argparse
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple
 
 
 # ============================================================================
@@ -78,7 +78,7 @@ def load_lits_ct(case_num: int) -> Tuple[np.ndarray, np.ndarray]:
         raise FileNotFoundError(f"LiTS file not found: {path}")
     
     img_nib = nib.load(path)
-    ct_array = img_nib.get_fdata()  # (X, Y, Z)
+    ct_array = img_nib.get_fdata(dtype=np.float32)  # (X, Y, Z)
     spacing = np.abs(np.diag(img_nib.affine)[:3])  # (x, y, z) in mm
     
     # Convert to (Z, Y, X) order to match IRCADB
