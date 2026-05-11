@@ -219,8 +219,9 @@ class ModelBuilder:
         deterministic_transforms = self._get_deterministic_transforms()
 
         random_transforms = [
-            # Sample patches with a balanced ratio of positive (tumor/liver) and
+            # Sample patches with a 2:1 ratio of positive (tumor/liver) and
             # negative (background) examples.
+            # (This because tumours are significantly small in the LiTS dataset)
             RandCropByPosNegLabeld(
                 keys=["image", "label"],
                 label_key="label",
@@ -632,9 +633,12 @@ class ModelBuilder:
 
         # We compute the class means and then move the tensor to CPU, as it is no
         # longer needed for GPU computation
-        per_class_dice: list = per_sample_dice.mean(dim=0).cpu().tolist()
+        per_class_dice: list = torch.nanmean(per_sample_dice, dim=0).cpu().tolist()
         # Also compute the global mean dice
-        mean_dice: float = per_sample_dice[~per_sample_dice.isnan()].mean().item()
+        mean_dice: float = torch.nanmean(per_sample_dice).item()
+
+        #    OR macro-average (unweighted across classes, often preferred for tumour papers):
+        # mean_dice = float(torch.nanmean(torch.tensor(per_class_dice)).item())
 
         # Map foreground indices to names based on current config
         if config.NUM_CLASSES == 3:
