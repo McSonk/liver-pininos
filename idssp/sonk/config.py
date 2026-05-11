@@ -217,7 +217,8 @@ elif ENV == "cloud":
     BATCH_SIZE = 4 if HC_GPU else 2
     NUM_EPOCHS = 90
     TRAIN_PATCH_SIZE = (96, 96, 96)
-    # This value is not used. Here just to prevent crashes
+    # Not used by the standard cloud validation pipeline, but kept for config/logging
+    # consistency and for code paths that still reference VAL_PATCH_SIZE.
     VAL_PATCH_SIZE = TRAIN_PATCH_SIZE
     # TODO: Tune. Both options sound valid, so decide which is better based on experiments.
     ISO_SPACING = (1.0, 1.0, 1.0) if HC_GPU else (1.5, 1.5, 1.5)
