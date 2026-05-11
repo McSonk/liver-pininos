@@ -225,7 +225,7 @@ class ModelBuilder:
                 keys=["image", "label"],
                 label_key="label",
                 spatial_size=config.TRAIN_PATCH_SIZE,
-                pos=1,
+                pos=2,
                 neg=1,
                 # number of samples to generate per volume
                 num_samples=config.RAND_CROP_NUM_SAMPLES,
@@ -365,7 +365,7 @@ class ModelBuilder:
                     transform=val_transforms,
                     cache_dir=str(config.PERSISTENT_DATASET_DIR /
                                   f"hmin_{config.HU_WINDOW_MIN}"
-                                   "_hmax_{config.HU_WINDOW_MAX}_val_cache")
+                                  f"_hmax_{config.HU_WINDOW_MAX}_val_cache")
                 )
 
         logger.info("Creating training dataloader...")
@@ -634,7 +634,7 @@ class ModelBuilder:
         # longer needed for GPU computation
         per_class_dice: list = per_sample_dice.mean(dim=0).cpu().tolist()
         # Also compute the global mean dice
-        mean_dice: float = per_sample_dice.mean().item()
+        mean_dice: float = per_sample_dice[~per_sample_dice.isnan()].mean().item()
 
         # Map foreground indices to names based on current config
         if config.NUM_CLASSES == 3:
@@ -659,6 +659,15 @@ class ModelBuilder:
         # Step scheduler based on validation loss
         # TODO: Check if it's better to step based on tumour DiceCE score
         # (instead of the average loss)
+
+        # Claude comment:
+        # Your scheduler steps on avg_val_loss, and early stopping triggers on epoch_dice.
+        # These will usually move in the same direction, but not always — particularly
+        # on LiTS where tumour Dice can plateau while loss keeps improving slightly
+        # due to the liver class. This is not a crash risk but it is a logical inconsistency.
+        # Since you care most about tumour Dice, consider stepping the scheduler on
+        # tumour Dice specifically (negated, since the scheduler is in mode='min'),
+        # or switch to mode='max' and pass Dice directly.
         self.scheduler.step(avg_val_loss)
 
         return avg_val_loss, mean_dice
