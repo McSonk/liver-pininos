@@ -225,6 +225,8 @@ elif ENV == "cloud":
     BATCH_SIZE = 4 if HC_GPU else 2
     NUM_EPOCHS = 90
     TRAIN_PATCH_SIZE = (96, 96, 96)
+    # This value is not used. Here just to prevent crashes
+    VAL_PATCH_SIZE = TRAIN_PATCH_SIZE
     # TODO: Tune. Both options sound valid, so decide which is better based on experiments.
     ISO_SPACING = (1.0, 1.0, 1.0) if HC_GPU else (1.5, 1.5, 1.5)
     # On clouds with high compute GPUS we can afford CacheDataset
