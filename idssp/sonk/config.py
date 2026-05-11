@@ -171,14 +171,6 @@ EARLY_STOPPING_PATIENCE = 12
 EARLY_STOPPING_MIN_DELTA = 0.005
 '''Minimum change in the monitored metric to qualify as an improvement.'''
 
-EARLY_STOPPING_RESTORE_BEST = True
-'''Whether to restore model weights from the epoch with the best monitored metric
-at the end of training.
-If True, the model will be rolled back to the state it was in when the best
-validation Dice was achieved. If False, the model will remain in the state it
-was at the end of the last epoch, even if that is not the best one.
-'''
-
 # -----------------------------------------------------------------------------
 # 3. Environment-Specific Configuration
 # -----------------------------------------------------------------------------
@@ -225,6 +217,9 @@ elif ENV == "cloud":
     BATCH_SIZE = 4 if HC_GPU else 2
     NUM_EPOCHS = 90
     TRAIN_PATCH_SIZE = (96, 96, 96)
+    # Not used by the standard cloud validation pipeline, but kept for config/logging
+    # consistency and for code paths that still reference VAL_PATCH_SIZE.
+    VAL_PATCH_SIZE = TRAIN_PATCH_SIZE
     # TODO: Tune. Both options sound valid, so decide which is better based on experiments.
     ISO_SPACING = (1.0, 1.0, 1.0) if HC_GPU else (1.5, 1.5, 1.5)
     # On clouds with high compute GPUS we can afford CacheDataset
@@ -319,7 +314,6 @@ def to_dict() -> dict:
         # Early Stopping
         "EARLY_STOPPING_PATIENCE": EARLY_STOPPING_PATIENCE,
         "EARLY_STOPPING_MIN_DELTA": EARLY_STOPPING_MIN_DELTA,
-        "EARLY_STOPPING_RESTORE_BEST": EARLY_STOPPING_RESTORE_BEST,
 
         # Paths (convert Path objects to strings)
         "CT_ROOT": str(CT_ROOT),

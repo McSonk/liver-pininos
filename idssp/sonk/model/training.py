@@ -219,13 +219,14 @@ class ModelBuilder:
         deterministic_transforms = self._get_deterministic_transforms()
 
         random_transforms = [
-            # Sample patches with a balanced ratio of positive (tumor/liver) and
+            # Sample patches with a 2:1 ratio of positive (tumor/liver) and
             # negative (background) examples.
+            # (This because tumours are significantly small in the LiTS dataset)
             RandCropByPosNegLabeld(
                 keys=["image", "label"],
                 label_key="label",
                 spatial_size=config.TRAIN_PATCH_SIZE,
-                pos=1,
+                pos=2,
                 neg=1,
                 # number of samples to generate per volume
                 num_samples=config.RAND_CROP_NUM_SAMPLES,
@@ -356,7 +357,7 @@ class ModelBuilder:
                         transform=train_det_trans,
                         cache_dir=str(config.PERSISTENT_DATASET_DIR /
                                       f"hmin_{config.HU_WINDOW_MIN}"
-                                       "_hmax_{config.HU_WINDOW_MAX}_train_cache")
+                                      f"_hmax_{config.HU_WINDOW_MAX}_train_cache")
                     ),
                     train_ran_trans
                 )
@@ -365,7 +366,7 @@ class ModelBuilder:
                     transform=val_transforms,
                     cache_dir=str(config.PERSISTENT_DATASET_DIR /
                                   f"hmin_{config.HU_WINDOW_MIN}"
-                                   "_hmax_{config.HU_WINDOW_MAX}_val_cache")
+                                  f"_hmax_{config.HU_WINDOW_MAX}_val_cache")
                 )
 
         logger.info("Creating training dataloader...")
@@ -396,10 +397,14 @@ class ModelBuilder:
             # Just 1 channel for the grayscale CT image.
             in_channels=1,
             out_channels=config.NUM_CLASSES,
+            # channels=(64, 128, 256, 512)
             channels=(32, 64, 128, 256),
             # One stride per downsampling transition: len(strides) == len(channels) - 1
             strides=(2, 2, 2),
-            num_res_units=1 if config.is_limited_env() else 2
+            num_res_units=1 if config.is_limited_env() else 2,
+            # batch norm isn't useful for 3d images (usually batches aren't longer than 4)
+            norm="INSTANCE",
+            act="PRELU"
         ).to(self.device)
 
         log_memory_usage(logger, prefix="After model initialization: ")
@@ -628,9 +633,12 @@ class ModelBuilder:
 
         # We compute the class means and then move the tensor to CPU, as it is no
         # longer needed for GPU computation
-        per_class_dice: list = per_sample_dice.mean(dim=0).cpu().tolist()
+        per_class_dice: list = torch.nanmean(per_sample_dice, dim=0).cpu().tolist()
         # Also compute the global mean dice
-        mean_dice: float = per_sample_dice.mean().item()
+        mean_dice: float = torch.nanmean(per_sample_dice).item()
+
+        #    OR macro-average (unweighted across classes, often preferred for tumour papers):
+        # mean_dice = float(torch.nanmean(torch.tensor(per_class_dice)).item())
 
         # Map foreground indices to names based on current config
         if config.NUM_CLASSES == 3:
@@ -655,6 +663,15 @@ class ModelBuilder:
         # Step scheduler based on validation loss
         # TODO: Check if it's better to step based on tumour DiceCE score
         # (instead of the average loss)
+
+        # Claude comment:
+        # Your scheduler steps on avg_val_loss, and early stopping triggers on epoch_dice.
+        # These will usually move in the same direction, but not always — particularly
+        # on LiTS where tumour Dice can plateau while loss keeps improving slightly
+        # due to the liver class. This is not a crash risk but it is a logical inconsistency.
+        # Since you care most about tumour Dice, consider stepping the scheduler on
+        # tumour Dice specifically (negated, since the scheduler is in mode='min'),
+        # or switch to mode='max' and pass Dice directly.
         self.scheduler.step(avg_val_loss)
 
         return avg_val_loss, mean_dice
