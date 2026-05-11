@@ -356,7 +356,7 @@ class ModelBuilder:
                         transform=train_det_trans,
                         cache_dir=str(config.PERSISTENT_DATASET_DIR /
                                       f"hmin_{config.HU_WINDOW_MIN}"
-                                       "_hmax_{config.HU_WINDOW_MAX}_train_cache")
+                                      f"_hmax_{config.HU_WINDOW_MAX}_train_cache")
                     ),
                     train_ran_trans
                 )
@@ -396,10 +396,14 @@ class ModelBuilder:
             # Just 1 channel for the grayscale CT image.
             in_channels=1,
             out_channels=config.NUM_CLASSES,
+            # channels=(64, 128, 256, 512)
             channels=(32, 64, 128, 256),
             # One stride per downsampling transition: len(strides) == len(channels) - 1
             strides=(2, 2, 2),
-            num_res_units=1 if config.is_limited_env() else 2
+            num_res_units=1 if config.is_limited_env() else 2,
+            # batch norm isn't useful for 3d images (usually batches aren't longer than 4)
+            norm="INSTANCE",
+            act="PRELU"
         ).to(self.device)
 
         log_memory_usage(logger, prefix="After model initialization: ")
