@@ -656,7 +656,7 @@ class ModelBuilder:
 
         logger.info(
             "(Validation) Epoch %d -> Loss: %.4f | Dice Mean: %.4f | %s",
-            epoch, avg_val_loss, mean_dice, " | ".join(log_parts)
+            epoch + 1, avg_val_loss, mean_dice, " | ".join(log_parts)
         )
         # ========================================
 
