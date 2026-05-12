@@ -249,27 +249,20 @@ class DataCollector:
         if r < 0.06:   return "mid"
         return "high"
 
-    def get_stratified_split(self, train_ratio: float = 0.8) -> tuple[list, list]:
-        """
-        Splits paired data into training and validation sets with stratification
-        by tumour burden bin, ensuring proportional representation of:
-        - tumour-negative cases
-        - micro / low / mid / high burden cases
-        """
-        if not self.datasources:
-            raise ValueError("No data loaded. Call read_dir() first.")
-
-        # --- Build burden bin lookup from per-case CSV ---
-
+    def _calc_and_write(self, file_path: Path, train_ratio: float=0.8) -> tuple[list, list]:
+        '''Calculates the stratified split based on the stats and writes
+        the split log to disk.'''
         if not config.PER_CASE_TRAIN_STATS_FILE.exists():
             raise FileNotFoundError(
                 f"per_case_summary.csv not found at {config.PER_CASE_TRAIN_STATS_FILE}. "
                 "Run analyse_dataset.py first."
             )
 
+        logger.info("No existing split log found. Calculating new stratified split...")
+
         stats = pd.read_csv(config.PER_CASE_TRAIN_STATS_FILE)
 
-        # add classification 
+        # add classification
         stats["burden_bin"] = stats.apply(self._assign_bin, axis=1)
         # Map volume filename → burden bin
         bin_lookup = dict(zip(stats["case_name"], stats["burden_bin"]))
@@ -308,14 +301,7 @@ class DataCollector:
                 bin_name, len(group), len(t), len(v)
             )
 
-        logger.info(
-            "Stratified split: %d train / %d val (from %d total)",
-            len(train_files), len(val_files), len(self.datasources)
-        )
-
-        # --- Log split for thesis appendix ---
-        log_path = config.SPLIT_DIR / f"{self.d_sets[0].ds_source}_split_seed{config.RANDOM_SEED}.json"
-        log_path.write_text(
+        file_path.write_text(
             json.dumps(
                 {
                     "train": [Path(f["image"]).name for f in train_files],
@@ -331,6 +317,61 @@ class DataCollector:
             ),
             encoding="utf-8"
         )
-        logger.info("Split logged to %s. Next time you run the script, it will use this split.", log_path)
+        logger.info("Split logged to %s. Next time you run the script, it will use this split.", file_path)
+        return train_files, val_files
+
+    def _load_split(self, file_path: Path) -> tuple[list, list]:
+        logger.info("Existing split log found at %s. Loading split...", file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            split_data = json.load(f)
+
+        train_names = set(split_data["train"])
+        val_names   = set(split_data["val"])
+
+        train_files = [f for f in self.datasources if Path(f["image"]).name in train_names]
+        val_files   = [f for f in self.datasources if Path(f["image"]).name in val_names]
+
+        # catch mismatches between JSON and what's actually on disk
+        loaded = set(Path(f["image"]).name for f in train_files) | \
+                set(Path(f["image"]).name for f in val_files)
+        expected = train_names | val_names
+        missing_from_disk = expected - loaded
+        missing_from_json = set(Path(f["image"]).name for f in self.datasources) - expected
+
+        if missing_from_disk:
+            raise FileNotFoundError(
+                f"Split JSON references {len(missing_from_disk)} file(s) not found on disk: "
+                f"{missing_from_disk}"
+            )
+        if missing_from_json:
+            logger.warning(
+                "%d file(s) on disk are not in the split JSON and will be ignored: %s",
+                len(missing_from_json), missing_from_json
+            )
+
+        return train_files, val_files
+
+    def get_stratified_split(self) -> tuple[list, list]:
+        """
+        Splits paired data into training and validation sets with stratification
+        by tumour burden bin, ensuring proportional representation of:
+        - tumour-negative cases
+        - micro / low / mid / high burden cases
+        """
+        if not self.datasources:
+            raise ValueError("No data loaded. Call read_dir() first.")
+
+        json_file_name = f"{self.d_sets[0].ds_source}_split_seed{config.RANDOM_SEED}.json"
+        json_file_path = config.SPLIT_DIR / json_file_name
+        if json_file_path.exists():
+            train_files, val_files = self._load_split(json_file_path)
+        else: 
+            train_files, val_files = self._calc_and_write(json_file_name)
+
+
+        logger.info(
+            "Stratified split: %d train / %d val (from %d total)",
+            len(train_files), len(val_files), len(self.datasources)
+        )
 
         return train_files, val_files
