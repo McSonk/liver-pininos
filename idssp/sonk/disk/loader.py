@@ -244,9 +244,12 @@ class DataCollector:
         if not row["has_tumor"]:
             return "none"
         r = row["tumor_to_liver_ratio"]
-        if r < 0.002:  return "micro"
-        if r < 0.01:   return "low"
-        if r < 0.06:   return "mid"
+        if r < 0.002:
+            return "micro"
+        if r < 0.01:
+            return "low"
+        if r < 0.06:
+            return "mid"
         return "high"
 
     def _calc_and_write(self, file_path: Path, train_ratio: float=0.8) -> tuple[list, list]:
@@ -365,8 +368,8 @@ class DataCollector:
         json_file_path = config.SPLIT_DIR / json_file_name
         if json_file_path.exists():
             train_files, val_files = self._load_split(json_file_path)
-        else: 
-            train_files, val_files = self._calc_and_write(json_file_name)
+        else:
+            train_files, val_files = self._calc_and_write(json_file_path)
 
 
         logger.info(

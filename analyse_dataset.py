@@ -50,6 +50,9 @@ def main():
     per_case_csv_path = config.PER_CASE_TRAIN_STATS_FILE
     aggregate_csv_path = config.STATS_DIR / "aggregate_stats.csv"
 
+    per_case_csv_path.parent.mkdir(parents=True, exist_ok=True)
+    aggregate_csv_path.parent.mkdir(parents=True, exist_ok=True)
+
     parser = argparse.ArgumentParser(
         description="Analyse LiTS dataset and produce summary statistics"
     )
