@@ -81,6 +81,7 @@ CT_ROOT_STR = os.getenv("LITS_CT_ROOT")
 CHECKPOINT_DIR_STR = os.getenv("CHECKPOINT_DIR")
 PERSISTENT_DATASET_DIR_STR = os.getenv("PERSISTENT_DATASET_DIR")
 STATS_DIR_STR = os.getenv("STATS_DIR")
+SPLIT_DIR_STR = os.getenv("SPLIT_DIR")
 
 LOG_DIR_STR = os.getenv("LOG_DIR")
 LOG_LEVEL_CONSOLE = os.getenv("LOG_LEVEL_CONSOLE", "INFO").upper()
@@ -98,8 +99,14 @@ if not PERSISTENT_DATASET_DIR_STR:
           "PersistentDataset will be disabled.")
 
 if not STATS_DIR_STR:
-    print("[Config] Warning: 'STATS_DIR' is not set. "
-          "Statistics cannot be performed.")
+    raise ValueError("[Config] Environment variable 'STATS_DIR' is not set. "
+          "Stratification cannot be performed. Please set 'STATS_DIR' to the "
+          "directory where the precomputed dataset statistics are stored.")
+
+if not SPLIT_DIR_STR:
+    raise ValueError("[Config] Environment variable 'SPLIT_DIR' is not set. "
+          "Splitting cannot be performed. Please set 'SPLIT_DIR' to the "
+          "directory where the split files will be stored.")
 
 if not LOG_DIR_STR:
     raise ValueError(
@@ -118,7 +125,9 @@ if LOG_LEVEL_FILE not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
 
 CT_ROOT = Path(CT_ROOT_STR)
 CHECKPOINT_DIR = Path(CHECKPOINT_DIR_STR)
-STATS_DIR = Path(STATS_DIR_STR) if STATS_DIR_STR else None
+STATS_DIR = Path(STATS_DIR_STR)
+SPLIT_DIR = Path(SPLIT_DIR_STR)
+PER_CASE_TRAIN_STATS_FILE = STATS_DIR / "train" / "per_case_summary.csv"
 PERSISTENT_DATASET_DIR = Path(PERSISTENT_DATASET_DIR_STR) if PERSISTENT_DATASET_DIR_STR else None
 LOG_DIR = Path(LOG_DIR_STR)
 
@@ -248,10 +257,15 @@ if PERSISTENT_DATASET_DIR and not PERSISTENT_DATASET_DIR.exists():
           f"Creating: {PERSISTENT_DATASET_DIR}")
     PERSISTENT_DATASET_DIR.mkdir(parents=True, exist_ok=True)
 
-if STATS_DIR and not STATS_DIR.exists():
+if not STATS_DIR.exists():
     print("[Config] Stats directory does not exist. "
           f"Creating: {STATS_DIR}")
     STATS_DIR.mkdir(parents=True, exist_ok=True)
+
+if not SPLIT_DIR.exists():
+    print("[Config] Split directory does not exist. "
+          f"Creating: {SPLIT_DIR}")
+    SPLIT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 print(f"[Config]   Device: {DEVICE}")
