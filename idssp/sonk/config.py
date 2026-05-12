@@ -34,7 +34,9 @@ warnings.filterwarnings(
     "ignore",
     # MONAI sliding-window inference triggers a deprecation warning on PyTorch's internal
     # index behaviour. This can be safely ignored.
-    message=".*non-tuple sequence for multidimensional indexing.*"
+    message=".*non-tuple sequence for multidimensional indexing.*",
+    category=DeprecationWarning,
+    module=r"torch(\..*)?$",
 )
 
 # -----------------------------------------------------------------------------

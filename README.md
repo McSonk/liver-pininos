@@ -230,9 +230,9 @@ As mentioned in the thesis objectives, future stages of this project will:
 For uploading the datasets to the servers while ensuring data integrity, the following
 command was run:
 
-```{bash}
+```bash
 # Local
-md5sum *.nii.gz > lits_checksums_local.md5`
+md5sum *.nii.gz > lits_checksums_local.md5
 rsync -avz --checksum --progress ./ *.nii.gz user@server_address:/remote/path/to/lits_data/
 scp lits_checksums_local.md5 user@server_address:/remote/path/to/lits_data/
 
