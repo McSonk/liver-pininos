@@ -46,8 +46,8 @@ def main():
         logger.error("STATS_DIR is not configured. Please set the 'STATS_DIR' "
                      "environment variable to enable statistics export.")
         return
-    
-    per_case_csv_path = config.STATS_DIR / "per_case_summary.csv"
+
+    per_case_csv_path = config.PER_CASE_TRAIN_STATS_FILE
     aggregate_csv_path = config.STATS_DIR / "aggregate_stats.csv"
 
     parser = argparse.ArgumentParser(

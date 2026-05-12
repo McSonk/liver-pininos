@@ -8,8 +8,10 @@ processing in the pipeline.
 import datetime
 import glob
 import json
+from collections import defaultdict
 from pathlib import Path
 
+import pandas as pd
 from monai.data import partition_dataset
 
 from idssp.sonk import config
@@ -214,7 +216,7 @@ class DataCollector:
                     len(train_files), len(val_files))
 
         # Log split for thesis appendix
-        log_path = Path(f"{self.d_sets[0].ds_source}_split_seed{config.RANDOM_SEED}.json")
+        log_path = config.SPLIT_DIR / f"{self.d_sets[0].ds_source}_split_seed{config.RANDOM_SEED}.json"
         log_path.write_text(
             json.dumps(
                 {
@@ -227,5 +229,108 @@ class DataCollector:
             encoding="utf-8"
         )
         logger.info("Split logged to %s", log_path)
+
+        return train_files, val_files
+
+    def _assign_bin(self, row) -> str:
+        '''Assigns a tumour burden bin label based on the tumor-to-liver ratio.
+
+        - "none": No tumor present (tumor_to_liver_ratio = 0)
+        - "micro": Very low tumor burden (0 < tumor_to_liver_ratio < 0.2%)
+        - "low": Low tumor burden (0.2 % ≤ tumor_to_liver_ratio < 1%)
+        - "mid": Moderate tumor burden (1% ≤ tumor_to_liver_ratio < 6%)
+        - "high": High tumor burden (tumor_to_liver_ratio ≥ 6%)
+        '''
+        if not row["has_tumor"]:
+            return "none"
+        r = row["tumor_to_liver_ratio"]
+        if r < 0.002:  return "micro"
+        if r < 0.01:   return "low"
+        if r < 0.06:   return "mid"
+        return "high"
+
+    def get_stratified_split(self, train_ratio: float = 0.8) -> tuple[list, list]:
+        """
+        Splits paired data into training and validation sets with stratification
+        by tumour burden bin, ensuring proportional representation of:
+        - tumour-negative cases
+        - micro / low / mid / high burden cases
+        """
+        if not self.datasources:
+            raise ValueError("No data loaded. Call read_dir() first.")
+
+        # --- Build burden bin lookup from per-case CSV ---
+
+        if not config.PER_CASE_TRAIN_STATS_FILE.exists():
+            raise FileNotFoundError(
+                f"per_case_summary.csv not found at {config.PER_CASE_TRAIN_STATS_FILE}. "
+                "Run analyse_dataset.py first."
+            )
+
+        stats = pd.read_csv(config.PER_CASE_TRAIN_STATS_FILE)
+
+        # add classification 
+        stats["burden_bin"] = stats.apply(self._assign_bin, axis=1)
+        # Map volume filename → burden bin
+        bin_lookup = dict(zip(stats["case_name"], stats["burden_bin"]))
+        # produces a mapping like {"volume-01.nii": "low", "volume-02.nii": "high", ...}
+
+        # --- Group datasources by bin ---
+        bins: dict[str, list] = defaultdict(list)
+
+        for ds in self.datasources:
+            fname = Path(ds["image"]).name
+            b = bin_lookup.get(fname)
+            if b is None:
+                raise ValueError(f"No stats entry for {fname}. Check if the filename matches the case_name in the CSV.")
+            else:
+                bins[b].append(ds)
+
+        # --- Stratified split: partition each bin independently ---
+        train_files, val_files = [], []
+        bin_order = ["none", "micro", "low", "mid", "high"]
+
+        for bin_name in bin_order:
+            group = bins.get(bin_name, [])
+            if not group:
+                logger.warning("No samples found for bin '%s'. Skipping this bin.", bin_name)
+                continue
+            t, v = partition_dataset(
+                data=group,
+                ratios=[train_ratio, 1.0 - train_ratio],
+                shuffle=True,
+                seed=config.RANDOM_SEED
+            )
+            train_files.extend(t)
+            val_files.extend(v)
+            logger.debug(
+                "Bin %-5s: %2d total → %2d train / %2d val",
+                bin_name, len(group), len(t), len(v)
+            )
+
+        logger.info(
+            "Stratified split: %d train / %d val (from %d total)",
+            len(train_files), len(val_files), len(self.datasources)
+        )
+
+        # --- Log split for thesis appendix ---
+        log_path = config.SPLIT_DIR / f"{self.d_sets[0].ds_source}_split_seed{config.RANDOM_SEED}.json"
+        log_path.write_text(
+            json.dumps(
+                {
+                    "train": [Path(f["image"]).name for f in train_files],
+                    "val":   [Path(f["image"]).name for f in val_files],
+                    "creation_date": datetime.datetime.now().isoformat(),
+                    "stratified_by": "tumor_to_liver_ratio_bin",
+                    "bins": {
+                        b: [Path(f["image"]).name for f in bins[b]]
+                        for b in bin_order if b in bins
+                    }
+                },
+                indent=2
+            ),
+            encoding="utf-8"
+        )
+        logger.info("Split logged to %s. Next time you run the script, it will use this split.", log_path)
 
         return train_files, val_files
