@@ -227,6 +227,19 @@ As mentioned in the thesis objectives, future stages of this project will:
 | 3Dircadb | External validation (cases 1–26 only) | [https://www.ircad.fr/research/3d-ircadb-01/](https://www.ircad.fr/research/3d-ircadb-01/) |
 | CHAOS CT | Cross-dataset generalisation test | [Aktas et al., 2021](https://chaos.grand-challenge.org/) |
 
+For uploading the datasets to the servers while ensuring data integrity, the following
+command was run:
+
+```{bash}
+# Local
+md5sum *.nii.gz > lits_checksums_local.md5`
+rsync -avz --checksum --progress ./ *.nii.gz user@server_address:/remote/path/to/lits_data/
+scp lits_checksums_local.md5 user@server_address:/remote/path/to/lits_data/
+
+# server
+md5sum -c lits_checksums_local.md5
+```
+
 ## License
 
 This project is part of a master's thesis at NTU (Taiwan). Please refer to the university's policies regarding code usage and distribution.
