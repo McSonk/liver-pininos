@@ -29,7 +29,7 @@ if __name__ == "__main__":
     logger.debug("Number of epochs: %d", config.NUM_EPOCHS)
     log_memory_usage(logger, prefix="At program start: ")
     logger.debug("Splitting data into train and val sets...")
-    train_files, val_files = loader.get_reproducible_split()
+    train_files, val_files = loader.get_stratified_split()
     logger.debug("Initializing data wrapper and model builder...")
     wrapper = DataWrapper()
 
