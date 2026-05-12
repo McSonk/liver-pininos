@@ -2,11 +2,11 @@
 Adjust paths and hyperparameters as needed.
 """
 import os
+import warnings
 from pathlib import Path
 from typing import Final
 
 import torch
-
 from dotenv import load_dotenv
 
 # -----------------------------------------------------------------------------
@@ -26,6 +26,18 @@ print("so please pay attention to any warnings or errors printed here.")
 print("=" * 80)
 print("[Config] Loading environment variables from .env file...")
 load_dotenv()
+
+# -----------------------------------------------------------------------------
+# 1. Suppress warnings from libraries to keep the logs clean.
+# -----------------------------------------------------------------------------
+warnings.filterwarnings(
+    "ignore",
+    # MONAI sliding-window inference triggers a deprecation warning on PyTorch's internal
+    # index behaviour. This can be safely ignored.
+    message=".*non-tuple sequence for multidimensional indexing.*",
+    category=DeprecationWarning,
+    module=r"torch(\..*)?$",
+)
 
 # -----------------------------------------------------------------------------
 # 2. Environment detection and validation
