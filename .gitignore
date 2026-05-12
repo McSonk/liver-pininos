@@ -1,9 +1,9 @@
 *.pyc
 .env
 
-# For the dataset split logs
-**seed**.json
 .vscode/
 
 # own generated files
-files/
+files/checkpoints
+files/logs
+files/stats
