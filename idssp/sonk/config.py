@@ -181,7 +181,13 @@ Set to 1 to log every epoch, or higher to log less frequently.
 Recommended: 5 on final training, 10+ during testing/debugging to save resources.
 '''
 
-USE_CACHE_DATASET: Final[bool] = False
+cache_source = os.getenv("CACHE_SOURCE", "ram").lower()
+if cache_source not in {"ram", "disk"}:
+    print(f"[Config] Warning: CACHE_SOURCE '{cache_source}' is not valid. "
+          "Defaulting to 'ram'.")
+    cache_source = "ram"
+
+USE_CACHE_DATASET: Final[bool] = cache_source == "ram"
 '''Whether to use a caching dataset that keeps preprocessed volumes in memory.
 This can speed up training but requires more RAM.
 If False, PersistentDataset will be used instead
@@ -245,8 +251,6 @@ elif ENV == "cloud":
     VAL_PATCH_SIZE = TRAIN_PATCH_SIZE
     # TODO: Tune. Both options sound valid, so decide which is better based on experiments.
     ISO_SPACING = (1.0, 1.0, 1.0) if HC_GPU else (1.5, 1.5, 1.5)
-    # On clouds with high compute GPUS we can afford CacheDataset
-    USE_CACHE_DATASET = True
 
 # -----------------------------------------------------------------------------
 # 4. Final Safety Check & Directory Creation
