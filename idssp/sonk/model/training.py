@@ -154,7 +154,7 @@ class ModelBuilder:
             LoadImaged(keys=['image', 'label'], ensure_channel_first=True),
 
             # Ensure consistent orientation (LAS)
-            Orientationd(keys=["image", "label"], axcodes="LAS"),
+            Orientationd(keys=["image", "label"], axcodes="LAS", labels=None),
 
             # We standardise (resample) spacing across all volumes so a tumour of a given
             # voxel size appears at the same scale regardless of the original scan resolution.

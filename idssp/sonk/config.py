@@ -181,7 +181,13 @@ Set to 1 to log every epoch, or higher to log less frequently.
 Recommended: 5 on final training, 10+ during testing/debugging to save resources.
 '''
 
-USE_CACHE_DATASET: Final[bool] = False
+cache_source = os.getenv("CACHE_SOURCE", "ram").lower()
+if cache_source not in {"ram", "disk"}:
+    print(f"[Config] Warning: CACHE_SOURCE '{cache_source}' is not valid. "
+          "Defaulting to 'ram'.")
+    cache_source = "ram"
+
+USE_CACHE_DATASET: Final[bool] = cache_source == "ram"
 '''Whether to use a caching dataset that keeps preprocessed volumes in memory.
 This can speed up training but requires more RAM.
 If False, PersistentDataset will be used instead
