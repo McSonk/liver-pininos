@@ -251,8 +251,6 @@ elif ENV == "cloud":
     VAL_PATCH_SIZE = TRAIN_PATCH_SIZE
     # TODO: Tune. Both options sound valid, so decide which is better based on experiments.
     ISO_SPACING = (1.0, 1.0, 1.0) if HC_GPU else (1.5, 1.5, 1.5)
-    # On clouds with high compute GPUS we can afford CacheDataset
-    USE_CACHE_DATASET = True
 
 # -----------------------------------------------------------------------------
 # 4. Final Safety Check & Directory Creation
