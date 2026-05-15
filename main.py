@@ -4,7 +4,6 @@ from monai.utils import set_determinism
 
 from idssp.sonk import config
 from idssp.sonk.disk.loader import DataCollector
-from idssp.sonk.model.data import DataWrapper
 from idssp.sonk.model.training import ModelBuilder
 from idssp.sonk.utils.logger import (get_logger,
                                      install_global_exception_handlers,
