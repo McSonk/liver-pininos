@@ -24,14 +24,14 @@ def send_training_email(subject: str, body: str, log_file: Path = None) -> bool:
     msg['Subject'] = subject
     msg.attach(MIMEText(body, 'plain'))
 
-    # Attach the specified log file
-    if log_file is not None:
-        with open(log_file, 'rb') as f:
-            attachment = MIMEApplication(f.read(), Name=log_file.name)
-        attachment['Content-Disposition'] = f'attachment; filename="{log_file.name}"'
-        msg.attach(attachment)
-
     try:
+        # Attach the specified log file
+        if log_file is not None:
+            with open(log_file, 'rb') as f:
+                attachment = MIMEApplication(f.read(), Name=log_file.name)
+            attachment['Content-Disposition'] = f'attachment; filename="{log_file.name}"'
+            msg.attach(attachment)
+
         with smtplib.SMTP(config.SMTP_HOST, config.SMTP_PORT) as server:
             server.starttls()
             server.login(config.EMAIL_SENDER, config.EMAIL_PASSWORD)
