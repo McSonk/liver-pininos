@@ -1,11 +1,14 @@
+import faulthandler
 import logging
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 import psutil
 import torch
+import torch.utils.data
 
 # -----------------------------------------------------------------------------
 # Module-level variable to ensure consistent timestamp across all loggers
@@ -142,3 +145,46 @@ def log_memory_usage(logger: logging.Logger, prefix: str = ""):
                     prefix, cpu_memory_used, cpu_memory_total)
     except ImportError:
         logger.info("%spsutil not installed. CPU memory usage not logged.", prefix)
+
+def install_global_exception_handlers(logger: logging.Logger) -> None:
+    """
+    Install global exception hooks to ensure ALL unhandled Python-level errors
+    are logged to your file handler.
+
+    MUST be called AFTER your main logger (with FileHandler) is initialised.
+
+    Params
+    ------
+    `logger`: logging.Logger
+        Your fully-configured main logger (with file handler attached).
+    """
+    # 1. Main process unhandled exceptions
+    original_sys_hook = sys.excepthook
+    def _global_excepthook(exc_type, exc_value, exc_traceback):
+        if issubclass(exc_type, KeyboardInterrupt):
+            original_sys_hook(exc_type, exc_value, exc_traceback)
+            return
+        logger.critical(
+            "UNHANDLED EXCEPTION — PROCESS EXITING",
+            exc_info=(exc_type, exc_value, exc_traceback)
+        )
+        # Still print to stderr for immediate visibility
+        original_sys_hook(exc_type, exc_value, exc_traceback)
+    sys.excepthook = _global_excepthook
+
+    # 2. Unhandled exceptions in background threads
+    original_thread_hook = threading.excepthook
+    def _global_thread_hook(args):
+        logger.critical(
+            "UNHANDLED EXCEPTION IN THREAD '%s'", args.thread.name,
+            exc_info=(args.exc_type, args.exc_value, args.exc_traceback)
+        )
+        original_thread_hook(args)
+    threading.excepthook = _global_thread_hook
+
+    # 3. Optional: faulthandler for C-level crashes (writes to stderr)
+    if not faulthandler.is_enabled():
+        faulthandler.enable()
+        logger.debug("faulthandler enabled for C-level crash diagnostics")
+
+    logger.info("Global exception handlers installed.")

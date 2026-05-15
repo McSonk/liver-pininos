@@ -6,22 +6,24 @@ from idssp.sonk import config
 from idssp.sonk.disk.loader import DataCollector
 from idssp.sonk.model.data import DataWrapper
 from idssp.sonk.model.training import ModelBuilder
-from idssp.sonk.utils.logger import get_logger, log_memory_usage
+from idssp.sonk.utils.logger import get_logger, log_memory_usage, install_global_exception_handlers
 
 # For reproducibility
 set_determinism(seed=42)
 
 # Initialize logger
 logger = get_logger(__name__)
+# Install global hooks (for logging unhandled exceptions)
+install_global_exception_handlers(logger)
 
 if __name__ == "__main__":
     logger.info("Reading directories...")
     loader = DataCollector()
     loader.read_dir(config.CT_ROOT, ds_source='LiTS')
     loader.extract_images_and_labels()
-    logger.info("Done! Some important information about the environment:")
-    logger.info("ISO space: %s", config.ISO_SPACING)
-    logger.info("Training patch size: %s", config.TRAIN_PATCH_SIZE)
+    logger.debug("Done! Some important information about the environment:")
+    logger.debug("ISO space: %s", config.ISO_SPACING)
+    logger.debug("Training patch size: %s", config.TRAIN_PATCH_SIZE)
     val_patch_size = getattr(config, "VAL_PATCH_SIZE", None)
     if val_patch_size is not None:
         logger.debug("Validation patch size: %s", val_patch_size)
