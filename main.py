@@ -83,10 +83,10 @@ if __name__ == "__main__":
         )
         raise
     except Exception as e:
-        logger.error("An error occurred during training: %s", e, exc_info=True)
+        logger.error("An error occurred during training: %s", e)
         send_training_email(
             subject="[Thesis] Training Pipeline Failed",
-             body=(
+            body=(
                 f"Training terminated unexpectedly.\n"
                 f"Error: {str(e)}\n\n"
                 f"Check the attached log file for stack traces and debugging information."
