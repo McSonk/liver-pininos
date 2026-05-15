@@ -339,7 +339,7 @@ class ModelBuilder:
                         data=train_files,
                         transform=train_det_trans,
                         cache_rate=1.0,
-                        num_workers=config.NUM_WORKERS
+                        num_workers=config.NUM_WORKERS,
                     ),
                     train_ran_trans
                 )
@@ -347,7 +347,7 @@ class ModelBuilder:
                     data=val_files,
                     transform=val_transforms,
                     cache_rate=1.0,
-                    num_workers=config.NUM_WORKERS
+                    num_workers=config.NUM_WORKERS,
                 )
             else:
                 logger.info("Sufficient resources detected. Using PersistentDataset.")
@@ -369,25 +369,25 @@ class ModelBuilder:
                                   f"_hmax_{config.HU_WINDOW_MAX}_val_cache")
                 )
 
-        logger.info("Creating training dataloader...")
+        logger.debug("Creating training dataloader...")
         self.train_dl = DataLoader(
             train_ds,
             batch_size=config.BATCH_SIZE,
             shuffle=True,
             num_workers=config.NUM_WORKERS,
-            pin_memory=config.PIN_MEMORY
+            pin_memory=config.PIN_MEMORY,
         )
 
-        logger.info("Creating validation dataloader...")
+        logger.debug("Creating validation dataloader...")
         self.val_dl = DataLoader(
             val_ds,
             batch_size=config.VAL_BATCH_SIZE,
             shuffle=False,
             num_workers=config.NUM_WORKERS,
-            pin_memory=config.PIN_MEMORY
+            pin_memory=config.PIN_MEMORY,
         )
 
-        logger.info("Data loaders initialized successfully.")
+        logger.debug("Data loaders initialized successfully.")
 
     def init_model(self):
         '''Initializes the model (uNet), loss function, and optimizer.'''
