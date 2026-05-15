@@ -67,15 +67,7 @@ if __name__ == "__main__":
 
         builder.init_model()
         logger.info("Model initialized. Starting training...")
-        try:
-            builder.train()
-        except KeyboardInterrupt:
-            logger.warning("Training interrupted by user (Ctrl+C).")
-            send_training_email(
-                subject="[Thesis] Training Interrupted",
-                body="Training was manually stopped. A checkpoint for the last epoch was saved. See logs for details.",
-                log_file=get_active_log_file()
-            )
+        builder.train()
     except KeyboardInterrupt:
         logger.warning("Training setup interrupted by user (Ctrl+C) before training began.")
         send_training_email(
@@ -85,7 +77,9 @@ if __name__ == "__main__":
                 "No last-epoch checkpoint is guaranteed to have been saved. "
                 "See logs for details."
             ),
-            log_file=get_active_log_file()
+            log_file=get_active_log_file(),
+            wait_for_completion=True,
+            timeout=20.0
         )
         raise
     except Exception as e:
@@ -97,13 +91,17 @@ if __name__ == "__main__":
                 f"Error: {str(e)}\n\n"
                 f"Check the attached log file for stack traces and debugging information."
             ),
-            log_file=get_active_log_file()
+            log_file=get_active_log_file(),
+            wait_for_completion=True,
+            timeout=20.0
         )
         raise
-    else:
-        logger.info("Training completed successfully!")
-        send_training_email(
-            subject="[Thesis] Training Pipeline Completed",
-            body="Training has completed successfully!",
-            log_file=get_active_log_file()
-        )
+
+    logger.info("Training completed successfully!")
+    send_training_email(
+        subject="[Thesis] Training Pipeline Completed",
+        body="Training has completed successfully!",
+        log_file=get_active_log_file(),
+        wait_for_completion=True,
+        timeout=20.0
+    )
