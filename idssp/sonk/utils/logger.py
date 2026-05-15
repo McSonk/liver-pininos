@@ -28,7 +28,6 @@ def _get_run_timestamp() -> str:
 def get_active_log_file() -> Optional[Path]:
     """
     Returns the path to the current run's log file, or None if file logging is disabled.
-    Thread-safe: the value is set once during logger initialisation.
     """
     return _RUN_LOG_FILE
 

@@ -317,7 +317,7 @@ if ENABLE_EMAIL_NOTIFICATIONS:
         )
     else:
         print("[Config] Email notifications are enabled. Emails will be sent to "
-              f"{EMAIL_RECIPIENT} at the end of training and on unhandled exceptions.")
+              f"{EMAIL_RECIPIENT} at the end of training and for exceptions handled during training.")
 else:
     print("[Config] Email notifications are disabled. To enable, set "
             "ENABLE_EMAIL_NOTIFICATIONS=true and provide the required email "
