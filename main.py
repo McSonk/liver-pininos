@@ -69,6 +69,13 @@ if __name__ == "__main__":
         builder.init_model()
         logger.info("Model initialized. Starting training...")
         builder.train()
+    except KeyboardInterrupt:
+        logger.warning("Training interrupted by user (Ctrl+C).")
+        send_training_email(
+            subject="[Thesis] Training Interrupted",
+            body="Training was manually stopped. A checkpoint for the last epoch was saved. See logs for details.",
+            log_file=get_active_log_file()
+        )
     except Exception as e:
         logger.error("An error occurred during training: %s", e, exc_info=True)
         send_training_email(
@@ -80,6 +87,7 @@ if __name__ == "__main__":
             ),
             log_file=get_active_log_file()
         )
+        raise
     else:
         logger.info("Training completed successfully!")
         send_training_email(
