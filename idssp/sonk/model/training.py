@@ -13,7 +13,7 @@ from monai.networks.nets import UNet
 from monai.transforms import (Activations, AsDiscrete, Compose,
                               CropForegroundd, EnsureTyped, LoadImaged,
                               Orientationd, RandCropByPosNegLabeld, RandFlipd,
-                              ScaleIntensityRanged, Spacingd, Transform)
+                              ScaleIntensityRanged, Spacingd, Transform, SpatialPadd)
 from torch.amp import GradScaler, autocast
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -191,6 +191,18 @@ class ModelBuilder:
                 margin=10,
                 allow_smaller=True
             ),
+
+            # After cropping foreground we might end up with volumes smaller
+            # than `config.TRAIN_PATCH_SIZE`, which will cause issues
+            # with `RandCropByPosNegLabeld`. To avoid that, we 0-pad the volumes to ensure
+            # they are at least as large as the training patch size.
+            # (it is conceptually just adding air)
+            SpatialPadd(
+                keys=["image", "label"],
+                spatial_size=config.TRAIN_PATCH_SIZE,
+                mode="constant",
+                value=0
+            )
         ]
 
     def get_train_transforms(self) -> tuple[Compose, Compose]:
