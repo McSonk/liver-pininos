@@ -4,9 +4,11 @@ from monai.utils import set_determinism
 
 from idssp.sonk import config
 from idssp.sonk.disk.loader import DataCollector
-from idssp.sonk.model.data import DataWrapper
 from idssp.sonk.model.training import ModelBuilder
-from idssp.sonk.utils.logger import get_logger, log_memory_usage, install_global_exception_handlers
+from idssp.sonk.utils.logger import (get_logger,
+                                     install_global_exception_handlers,
+                                     log_memory_usage, get_active_log_file)
+from idssp.sonk.utils.mail import send_training_email
 
 # For reproducibility
 set_determinism(seed=42)
@@ -21,8 +23,8 @@ if __name__ == "__main__":
     loader = DataCollector()
     loader.read_dir(config.CT_ROOT, ds_source='LiTS')
     loader.extract_images_and_labels()
-    logger.debug("Done! Some important information about the environment:")
-    logger.debug("ISO space: %s", config.ISO_SPACING)
+    logger.debug("Done! Some information about the environment:")
+    logger.debug("ISO spacing: %s", config.ISO_SPACING)
     logger.debug("Training patch size: %s", config.TRAIN_PATCH_SIZE)
     val_patch_size = getattr(config, "VAL_PATCH_SIZE", None)
     if val_patch_size is not None:
@@ -32,8 +34,7 @@ if __name__ == "__main__":
     log_memory_usage(logger, prefix="At program start: ")
     logger.debug("Splitting data into train and val sets...")
     train_files, val_files = loader.get_stratified_split()
-    logger.debug("Initializing data wrapper and model builder...")
-    wrapper = DataWrapper()
+    logger.debug("Initializing model builder...")
 
     if config.is_limited_env(include_vram=False):
         logger.info("Limited environment detected. Using a subset of the data for quick testing.")
@@ -48,9 +49,59 @@ if __name__ == "__main__":
     for file in val_files:
         logger.debug(file)
 
-    builder = ModelBuilder()
-    builder.init_data_loaders(train_files, val_files)
+    send_training_email(
+        subject="[Thesis] Training Pipeline Started",
+        body=(
+            f"Training has commenced.\n"
+            f"Environment: {config.ENV}\n"
+            f"Device: {config.DEVICE}\n"
+            f"ISO Spacing: {config.ISO_SPACING}\n"
+            f"Patch Size: {config.TRAIN_PATCH_SIZE}\n"
+            f"Expected Epochs: {config.NUM_EPOCHS}"
+        )
+    )
 
-    builder.init_model()
-    logger.info("Model initialized. Starting training...")
-    builder.train()
+    try:
+        builder = ModelBuilder()
+        builder.init_data_loaders(train_files, val_files)
+
+        builder.init_model()
+        logger.info("Model initialized. Starting training...")
+        builder.train()
+    except KeyboardInterrupt:
+        logger.warning("Training setup interrupted by user (Ctrl+C) before training began.")
+        send_training_email(
+            subject="[Thesis] Training Interrupted",
+            body=(
+                "Training was manually stopped before or during initialization. "
+                "No last-epoch checkpoint is guaranteed to have been saved. "
+                "See logs for details."
+            ),
+            log_file=get_active_log_file(),
+            wait_for_completion=True,
+            timeout=20.0
+        )
+        raise
+    except Exception as e:
+        logger.error("An error occurred during training: %s", e)
+        send_training_email(
+            subject="[Thesis] Training Pipeline Failed",
+            body=(
+                f"Training terminated unexpectedly.\n"
+                f"Error: {str(e)}\n\n"
+                f"Check the attached log file for stack traces and debugging information."
+            ),
+            log_file=get_active_log_file(),
+            wait_for_completion=True,
+            timeout=20.0
+        )
+        raise
+
+    logger.info("Training completed successfully!")
+    send_training_email(
+        subject="[Thesis] Training Pipeline Completed",
+        body="Training has completed successfully!",
+        log_file=get_active_log_file(),
+        wait_for_completion=True,
+        timeout=20.0
+    )

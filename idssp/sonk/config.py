@@ -297,8 +297,41 @@ print(f"[Config]   Checkpoint Dir: {CHECKPOINT_DIR}")
 print(f"[Config]   Log Dir: {LOG_DIR}")
 print(f"[Config]   Persistent Dataset Dir: {PERSISTENT_DATASET_DIR}")
 print("=" * 80)
+
 # -----------------------------------------------------------------------------
-# 5. Helper Functions
+# 5. Email Notification Configuration
+# -----------------------------------------------------------------------------
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT_RAW = os.getenv("SMTP_PORT", "").strip()
+SMTP_PORT = None
+EMAIL_SENDER = os.getenv("EMAIL_SENDER", "")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
+EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT", "")
+ENABLE_EMAIL_NOTIFICATIONS = os.getenv("ENABLE_EMAIL_NOTIFICATIONS", "false").lower() == "true"
+
+if ENABLE_EMAIL_NOTIFICATIONS:
+    if not all([SMTP_HOST, SMTP_PORT_RAW, EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECIPIENT]):
+        raise ValueError(
+            "[Config] Email notifications are enabled but one or more email configuration "
+            "variables are missing. Please set SMTP_HOST, SMTP_PORT, EMAIL_SENDER, "
+            "EMAIL_PASSWORD, and EMAIL_RECIPIENT in your .env file."
+        )
+    try:
+        SMTP_PORT = int(SMTP_PORT_RAW)
+    except ValueError as exc:
+        raise ValueError(
+            "[Config] Email notifications are enabled but SMTP_PORT is not a valid integer. "
+            "Please set SMTP_PORT to a numeric port value in your .env file."
+        ) from exc
+    print("[Config] Email notifications are enabled. Emails will be sent to "
+          f"{EMAIL_RECIPIENT} at the end of training and for exceptions handled during training.")
+else:
+    print("[Config] Email notifications are disabled. To enable, set "
+            "ENABLE_EMAIL_NOTIFICATIONS=true and provide the required email "
+            "configuration in the .env file.")
+
+# -----------------------------------------------------------------------------
+# 6. Helper Functions
 # -----------------------------------------------------------------------------
 
 def is_limited_env(include_vram=True) -> bool:

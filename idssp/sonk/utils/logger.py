@@ -8,12 +8,12 @@ from typing import Optional
 
 import psutil
 import torch
-import torch.utils.data
 
 # -----------------------------------------------------------------------------
 # Module-level variable to ensure consistent timestamp across all loggers
 # -----------------------------------------------------------------------------
 _RUN_TIMESTAMP: Optional[str] = None
+_RUN_LOG_FILE: Optional[Path] = None
 
 def _get_run_timestamp() -> str:
     """
@@ -24,6 +24,12 @@ def _get_run_timestamp() -> str:
     if _RUN_TIMESTAMP is None:
         _RUN_TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
     return _RUN_TIMESTAMP
+
+def get_active_log_file() -> Optional[Path]:
+    """
+    Returns the path to the current run's log file, or None if file logging is disabled.
+    """
+    return _RUN_LOG_FILE
 
 
 def get_logger(
@@ -91,6 +97,9 @@ def get_logger(
         log_dir.mkdir(parents=True, exist_ok=True)
         timestamp = _get_run_timestamp()
         log_file = log_dir / f"training_{timestamp}.log"
+        global _RUN_LOG_FILE
+        if _RUN_LOG_FILE is None:  # Only set once per process run
+            _RUN_LOG_FILE = log_file
 
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(file_level) 
