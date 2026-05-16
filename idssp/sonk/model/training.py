@@ -222,7 +222,7 @@ class ModelBuilder:
         random_transforms = [
             # Sample patches with a 2:1 ratio of positive (tumor/liver) and
             # negative (background) examples.
-            # (This because tumours are significantly small in the LiTS dataset)
+            # (This because voxel imbalance)
             RandCropByPosNegLabeld(
                 keys=["image", "label"],
                 label_key="label",
@@ -415,6 +415,7 @@ class ModelBuilder:
 
         # Cross entropy: voxel-wise classification (smooth gradients)
         # Dice: measures the overlap between predicted and true segmentation masks.
+        # TODO: consider adding ce_weight=[0.0, 1.0, 3.0]
         self.loss_fn = DiceCELoss(
             to_onehot_y=True,
             softmax=True,
