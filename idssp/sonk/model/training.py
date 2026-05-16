@@ -234,7 +234,7 @@ class ModelBuilder:
         random_transforms = [
             # Sample patches with a 2:1 ratio of positive (tumor/liver) and
             # negative (background) examples.
-            # (This because voxel imbalance)
+            # This is because of voxel imbalance.
             RandCropByPosNegLabeld(
                 keys=["image", "label"],
                 label_key="label",
