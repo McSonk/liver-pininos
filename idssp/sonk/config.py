@@ -246,7 +246,7 @@ elif ENV == "cloud":
     NUM_WORKERS = 4 if HC_GPU else 2
     PIN_MEMORY = True
     BATCH_SIZE = 4 if HC_GPU else 2
-    NUM_EPOCHS = 90
+    NUM_EPOCHS = 90 if HC_GPU else 5
     TRAIN_PATCH_SIZE = (96, 96, 96)
     # Not used by the standard cloud validation pipeline, but kept for config/logging
     # consistency and for code paths that still reference VAL_PATCH_SIZE.

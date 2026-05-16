@@ -36,7 +36,7 @@ if __name__ == "__main__":
     train_files, val_files = loader.get_stratified_split()
     logger.debug("Initializing model builder...")
 
-    if config.is_limited_env(include_vram=False):
+    if config.is_limited_env(include_vram=True):
         logger.info("Limited environment detected. Using a subset of the data for quick testing.")
         train_files = train_files[:4]  # Use only 4 samples for training
         val_files = val_files[:2]      # Use only 2 samples for validation
