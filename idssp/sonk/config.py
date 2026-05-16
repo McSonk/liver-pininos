@@ -196,7 +196,7 @@ If False, PersistentDataset will be used instead
 '''
 
 # Early stopping configuration
-EARLY_STOPPING_PATIENCE = 12
+EARLY_STOPPING_PATIENCE = 18
 '''Number of epochs with no improvement after which training will be stopped.'''
 
 EARLY_STOPPING_MIN_DELTA = 0.005

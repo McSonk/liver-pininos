@@ -730,7 +730,7 @@ class ModelBuilder:
         """
         epoch_start_time = time.time()
 
-        logger.info("Starting epoch %d/%d", epoch+1, config.NUM_EPOCHS)
+        logger.info("======Starting epoch %d/%d ======", epoch+1, config.NUM_EPOCHS)
         log_memory_usage(logger)
 
         # Train and validate one epoch
@@ -839,7 +839,7 @@ class EarlyStopper:
 
         if self.epochs_no_improve < config.EARLY_STOPPING_PATIENCE:
             self.epochs_no_improve += 1
-            logger.debug("  -> No improvement (%d/%d epochs)",
+            logger.info("  -> No improvement (%d/%d epochs)",
                         self.epochs_no_improve, config.EARLY_STOPPING_PATIENCE)
             return False
 
