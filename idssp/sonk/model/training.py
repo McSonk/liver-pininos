@@ -182,6 +182,7 @@ class ModelBuilder:
             # liver + tumour region, with a margin of 10 voxels.)
             # THIS WILL CHANGE THE SHAPE OF THE INPUT DATA
             # Remove on inference if fixed-size validation is needed
+            # TODO: Consider using "image" as source_key (edge case: small peripheral tumours)
             CropForegroundd(
                 keys=["image", "label"],
                 source_key="image",
@@ -350,6 +351,8 @@ class ModelBuilder:
                     num_workers=config.NUM_WORKERS,
                 )
             else:
+                # TODO: implement a hashing mechanism to detect changes in transforms
+                # (use the hash as dir name)
                 logger.info("Sufficient resources detected. Using PersistentDataset.")
                 train_ds = AugmentedDataset(
                     PersistentDataset(
@@ -392,6 +395,7 @@ class ModelBuilder:
     def init_model(self):
         '''Initializes the model (uNet), loss function, and optimizer.'''
         logger.debug("Initializing model...")
+        # TODO: change for a SegResNet
         self.model = UNet(
             spatial_dims=3,
             # Just 1 channel for the grayscale CT image.
@@ -566,8 +570,21 @@ class ModelBuilder:
 
             with autocast(device_type="cuda", enabled=config.DEVICE == "cuda"):
                 if self.inferer is not None:
-                    # GPU: Process full volume via sliding window
-                    preds = self.inferer(images, self.model)
+                    try:
+                        # GPU: Process full volume via sliding window
+                        preds = self.inferer(images, self.model)
+                    except torch.cuda.OutOfMemoryError:
+                        torch.cuda.empty_cache()
+                        logger.warning("OOM during validation, falling back to sw_batch_size=1")
+                        fallback = SlidingWindowInferer(
+                            roi_size=config.TRAIN_PATCH_SIZE,
+                            sw_batch_size=1, # (original: 4)
+                            overlap=0.25, # (original: 0.5)
+                            mode="gaussian",
+                            device=self.device,
+                            progress=False
+                        )
+                        preds = fallback(images, self.model)
                 else:
                     # CPU: Images are already cropped to VAL_PATCH_SIZE, run directly
                     preds = self.model(images)
@@ -623,13 +640,17 @@ class ModelBuilder:
         # Reset metric from previous epochs
         self.dice_metric.reset()
 
-        with torch.no_grad():
+        with torch.inference_mode():
             avg_val_loss = self._run_val_epoch(epoch)
 
         # === DYNAMIC PER-CLASS DICE REPORTING ===
         # Perform average computation and extract per sample raw scores
         # Shape: (num_samples, num_foreground_classes)
         per_sample_dice: torch.Tensor = self.dice_metric.aggregate()
+
+        # Count valid (non-NaN) samples per class to report effective sample size
+        valid_mask = ~torch.isnan(per_sample_dice)
+        valid_counts_per_class = valid_mask.sum(dim=0).cpu().tolist()
 
         # We compute the class means and then move the tensor to CPU, as it is no
         # longer needed for GPU computation
@@ -647,16 +668,20 @@ class ModelBuilder:
             class_map = {0: "tumour"}
 
         log_parts = []
+        count_parts = []
         for idx, name in class_map.items():
             dice_val = per_class_dice[idx]
+            valid_n = valid_counts_per_class[idx]
             # for logger print
             log_parts.append("Dice %s: %.4f" % (name, dice_val))
+            count_parts.append(f"n={valid_n}")
             # for tensorboard
             self.writer.add_scalar(f"val/dice_{name}", dice_val, epoch)
+            self.writer.add_scalar(f"val/valid_samples_{name}", valid_n, epoch)
 
         logger.info(
-            "(Validation) Epoch %d -> Loss: %.4f | Dice Mean: %.4f | %s",
-            epoch + 1, avg_val_loss, mean_dice, " | ".join(log_parts)
+            "(Validation) Epoch %d -> Loss: %.4f | Dice Mean: %.4f | %s | Valid samples: %s",
+            epoch + 1, avg_val_loss, mean_dice, " | ".join(log_parts), " | ".join(count_parts)
         )
         # ========================================
 
@@ -745,6 +770,8 @@ class ModelBuilder:
             # End epoch loop
         except KeyboardInterrupt:
             logger.warning("Training interrupted by user. Saving current model...")
+            # TODO: Add a --resume flag to load the last checkpoint and continue training
+            # (This also works for broken training runs, e.g. due to OOM errors or preemption on a cluster)
             early_stopper.save_checkpoint(is_best=False, current_epoch=epoch)
             raise
 
