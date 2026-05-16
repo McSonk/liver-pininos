@@ -9,6 +9,8 @@ from typing import Final
 import torch
 from dotenv import load_dotenv
 
+# TODO: Consider lazy-init or dataclass
+
 # -----------------------------------------------------------------------------
 # 0. Load Environment Variables
 # -----------------------------------------------------------------------------
