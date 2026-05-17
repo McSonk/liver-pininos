@@ -222,7 +222,7 @@ def send_alert(title: str, message: str, sync: bool = False, file_path: str = No
             # Log a safe message
             logger.error(
                 "Telegram alert failed [status: %s]: %s | API response: %s",
-                e.response.status_code if e.response else "N/A",
+                e.response.status_code if e.response is not None else "N/A",
                 error_msg,
                 error_details
             )

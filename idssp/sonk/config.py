@@ -243,7 +243,9 @@ if ENV == "local":
 elif ENV == "cloud":
     print("[Config] Running in CLOUD environment (Lightning AI). Using more computing power.")
 
-    NUM_WORKERS = 12 if HC_GPU else 2
+    cpu_count = os.cpu_count() or 1
+    preferred_num_workers = 12 if HC_GPU else 2
+    NUM_WORKERS = min(preferred_num_workers, cpu_count)
     PIN_MEMORY = True
     BATCH_SIZE = 4 if HC_GPU else 2
     NUM_EPOCHS = 90 if HC_GPU else 5
