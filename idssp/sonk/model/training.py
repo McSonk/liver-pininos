@@ -17,7 +17,7 @@ from monai.transforms import (Activations, AsDiscrete, Compose,
                               Transform)
 from torch.amp import GradScaler, autocast
 from torch.nn.utils import clip_grad_norm_
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.tensorboard import SummaryWriter
 
 from idssp.sonk import config
@@ -480,19 +480,14 @@ class ModelBuilder:
         logger.info("Optimizer: AdamW | LR: %f | Weight Decay: 1e-5", config.LEARNING_RATE)
 
         # Change to cosine annealing scheduler with warm restarts on ResUNETR
-        # TODO: change to CosineAnnealingLR
-        # (for a 90 run epoch ReduceLROnPlateau never fired)
-        self.scheduler = ReduceLROnPlateau(
+        # TODO: add warm restarts
+        self.scheduler = CosineAnnealingLR(
             self.optimizer,
-            # Minimise the validation loss, not maximise the dice score
-            mode='min',
-            # Halves the learning rate when the validation loss plateaus
-            factor=0.5,
-            # Wait for at least 5 epochs without improvement before reducing LR
-            patience=5
+            T_max=config.NUM_EPOCHS,
+            eta_min=1e-6
         )
 
-        logger.info("Scheduler initialized: ReduceLROnPlateau (patience=5, factor=0.5)")
+        logger.info("Scheduler initialized: CosineAnnealingLR (T_max=%d, eta_min=%e)", config.NUM_EPOCHS, 1e-6)
 
     def back_propagate(self, loss):
         '''
@@ -758,19 +753,7 @@ class ModelBuilder:
         )
         # ========================================
 
-        # Step scheduler based on validation loss
-        # TODO: Check if it's better to step based on tumour DiceCE score
-        # (instead of the average loss)
-
-        # Claude comment:
-        # Your scheduler steps on avg_val_loss, and early stopping triggers on epoch_dice.
-        # These will usually move in the same direction, but not always — particularly
-        # on LiTS where tumour Dice can plateau while loss keeps improving slightly
-        # due to the liver class. This is not a crash risk but it is a logical inconsistency.
-        # Since you care most about tumour Dice, consider stepping the scheduler on
-        # tumour Dice specifically (negated, since the scheduler is in mode='min'),
-        # or switch to mode='max' and pass Dice directly.
-        self.scheduler.step(avg_val_loss)
+        self.scheduler.step()
 
         return avg_val_loss, mean_dice
 
