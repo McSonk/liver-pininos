@@ -123,6 +123,7 @@ class ModelBuilder:
         '''Mixed precision training scaler, enabled only on CUDA for potential speed up.'''
 
         # tensorboard writer for logging training metrics
+        # TODO: Use run_id to store global logs (tensorboard, log, checkpoints)
         self.writer = SummaryWriter(log_dir=
                                     str(config.LOG_DIR / "tensorboard" / self.run_id))
         self.writer.add_hparams(

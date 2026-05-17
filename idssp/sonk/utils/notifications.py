@@ -48,9 +48,10 @@ def _escape_html_for_telegram(text: str) -> str:
 def _truncate_for_telegram(title: str, message: str, is_caption: bool = False) -> tuple[str, str]:
     """
     Truncates title + message to fit Telegram's character limits.
+    Guarantees: len(f"<b>{safe_title}</b>\n{safe_message}") <= limit
     
     Args:
-        title: The notification title (kept intact if possible).
+        title: The notification title (truncated if needed).
         message: The message body (truncated if needed).
         is_caption: If True, use 1024-char caption limit; else use 4096-char text limit.
     
@@ -63,15 +64,52 @@ def _truncate_for_telegram(title: str, message: str, is_caption: bool = False) -
     safe_title = _escape_html_for_telegram(title)
     safe_message = _escape_html_for_telegram(message)
 
-    # Calculate overhead: <b>title</b>\n + potential truncation indicator
-    # We'll reserve space for the title and formatting, then truncate the message
-    overhead = len(f"<b>{safe_title}</b>\n")
+    # Calculate the formatted title overhead: <b>title</b>\n
+    title_wrapper = f"<b>{safe_title}</b>\n"
+
+    # === STEP 1: Handle overlong title ===
+    if len(title_wrapper) >= limit:
+        # Title alone exceeds limit; truncate title to fit with minimal message space
+        # Reserve space for </b>\n + truncation indicator + at least 1 char of message
+        min_message_space = len("</b>\n") + len(_TRUNCATION_INDICATOR) + 1
+        max_title_len = limit - min_message_space - len("<b>")  # Account for opening tag
+
+        if max_title_len <= 0:
+            # Pathological case: limit is too small for any content
+            # Return minimal viable payload
+            return _escape_html_for_telegram("Alert"), _TRUNCATION_INDICATOR
+
+        truncated_title = safe_title[:max_title_len]
+        # Avoid breaking mid-entity or mid-tag
+        if truncated_title.endswith('&') or truncated_title.endswith('&l') or truncated_title.endswith('&lt'):
+            truncated_title = truncated_title.rsplit('&', 1)[0]
+        if truncated_title.endswith('<') or truncated_title.endswith('</'):
+            truncated_title = truncated_title.rsplit('<', 1)[0]
+        truncated_title += _TRUNCATION_INDICATOR
+
+        logger.warning(
+            "Telegram title truncated to %d chars (limit: %d). Original title length: %d",
+            len(f"<b>{truncated_title}</b>\n"), limit, len(title_wrapper)
+        )
+        # Message gets only the truncation indicator since title consumed most space
+        return truncated_title, _TRUNCATION_INDICATOR
+
+    # === STEP 2: Title fits; allocate remaining space to message ===
+    overhead = len(title_wrapper)
     available_for_message = limit - overhead - len(_TRUNCATION_INDICATOR)
+
+    if available_for_message <= 0:
+        # Edge case: title + formatting leaves no room for message
+        logger.warning(
+            "Telegram message omitted: title consumes %d/%d chars",
+            overhead, limit
+        )
+        return safe_title, _TRUNCATION_INDICATOR
 
     if len(safe_message) <= available_for_message:
         return safe_title, safe_message
 
-    # Truncate message, being careful not to break HTML entities or tags
+    # Truncate message safely
     truncated_msg = safe_message[:available_for_message]
 
     # Avoid cutting mid-entity (e.g., &lt;) or mid-tag
@@ -81,8 +119,10 @@ def _truncate_for_telegram(title: str, message: str, is_caption: bool = False) -
         truncated_msg = truncated_msg.rsplit('<', 1)[0]
 
     truncated_msg += _TRUNCATION_INDICATOR
-    logger.warning("Telegram message truncated to %d chars (limit: %d). Original message length: %d",
-                   len(f"<b>{safe_title}</b>\n{truncated_msg}"), limit, len(f"<b>{safe_title}</b>\n{safe_message}"))
+    logger.warning(
+        "Telegram message truncated to %d chars (limit: %d). Original message length: %d",
+        len(f"{title_wrapper}{truncated_msg}"), limit, len(f"{title_wrapper}{safe_message}")
+    )
 
     return safe_title, truncated_msg
 
