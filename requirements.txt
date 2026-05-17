@@ -32,3 +32,6 @@ tqdm==4.66.5
 
 # For reading per-case stats
 pandas==2.3.3
+
+# For sending notifications
+requests==2.34.2

@@ -243,7 +243,9 @@ if ENV == "local":
 elif ENV == "cloud":
     print("[Config] Running in CLOUD environment (Lightning AI). Using more computing power.")
 
-    NUM_WORKERS = 4 if HC_GPU else 2
+    cpu_count = os.cpu_count() or 1
+    preferred_num_workers = 12 if HC_GPU else 2
+    NUM_WORKERS = min(preferred_num_workers, cpu_count)
     PIN_MEMORY = True
     BATCH_SIZE = 4 if HC_GPU else 2
     NUM_EPOCHS = 90 if HC_GPU else 5
@@ -301,7 +303,7 @@ print(f"[Config]   Persistent Dataset Dir: {PERSISTENT_DATASET_DIR}")
 print("=" * 80)
 
 # -----------------------------------------------------------------------------
-# 5. Email Notification Configuration
+# 5. Email / Notification Configuration
 # -----------------------------------------------------------------------------
 SMTP_HOST = os.getenv("SMTP_HOST", "")
 SMTP_PORT_RAW = os.getenv("SMTP_PORT", "").strip()
@@ -310,6 +312,11 @@ EMAIL_SENDER = os.getenv("EMAIL_SENDER", "")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
 EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT", "")
 ENABLE_EMAIL_NOTIFICATIONS = os.getenv("ENABLE_EMAIL_NOTIFICATIONS", "false").lower() == "true"
+
+ENABLE_TELEGRAM_NOTIFICATIONS = os.getenv(
+    "ENABLE_TELEGRAM_NOTIFICATIONS", "false").lower() == "true"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 if ENABLE_EMAIL_NOTIFICATIONS:
     if not all([SMTP_HOST, SMTP_PORT_RAW, EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECIPIENT]):
@@ -331,6 +338,17 @@ else:
     print("[Config] Email notifications are disabled. To enable, set "
             "ENABLE_EMAIL_NOTIFICATIONS=true and provide the required email "
             "configuration in the .env file.")
+
+if ENABLE_TELEGRAM_NOTIFICATIONS:
+    if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
+        raise ValueError(
+            "[Config] Telegram notifications are enabled but TELEGRAM_BOT_TOKEN and/or "
+            "TELEGRAM_CHAT_ID is missing. Please set TELEGRAM_BOT_TOKEN and "
+            "TELEGRAM_CHAT_ID in your .env file."
+        )
+    print("[Config] Telegram notifications are enabled. Alerts will be sent to "
+          "the specified chat at the start of training, at the end of training, "
+          "and for exceptions handled during training.")
 
 # -----------------------------------------------------------------------------
 # 6. Helper Functions

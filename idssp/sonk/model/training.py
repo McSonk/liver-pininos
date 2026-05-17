@@ -13,7 +13,8 @@ from monai.networks.nets import UNet
 from monai.transforms import (Activations, AsDiscrete, Compose,
                               CropForegroundd, EnsureTyped, LoadImaged,
                               Orientationd, RandCropByPosNegLabeld, RandFlipd,
-                              ScaleIntensityRanged, Spacingd, Transform, SpatialPadd)
+                              ScaleIntensityRanged, Spacingd, SpatialPadd,
+                              Transform)
 from torch.amp import GradScaler, autocast
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -122,6 +123,7 @@ class ModelBuilder:
         '''Mixed precision training scaler, enabled only on CUDA for potential speed up.'''
 
         # tensorboard writer for logging training metrics
+        # TODO: Use run_id to store global logs (tensorboard, log, checkpoints)
         self.writer = SummaryWriter(log_dir=
                                     str(config.LOG_DIR / "tensorboard" / self.run_id))
         self.writer.add_hparams(
@@ -687,13 +689,13 @@ class ModelBuilder:
             valid_n = valid_counts_per_class[idx]
             # for logger print
             log_parts.append("Dice %s: %.4f" % (name, dice_val))
-            count_parts.append(f"n={valid_n}")
+            count_parts.append(f"{name} n={valid_n}")
             # for tensorboard
             self.writer.add_scalar(f"val/dice_{name}", dice_val, epoch)
             self.writer.add_scalar(f"val/valid_samples_{name}", valid_n, epoch)
 
         logger.info(
-            "(Validation) Epoch %d -> Loss: %.4f | Dice Mean: %.4f | %s | Valid samples: %s",
+            "(Val) Epoch %d -> Loss: %.4f | Dice Mean: %.4f | %s | Valid samples: %s",
             epoch + 1, avg_val_loss, mean_dice, " | ".join(log_parts), " | ".join(count_parts)
         )
         # ========================================
