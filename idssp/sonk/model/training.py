@@ -22,6 +22,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from idssp.sonk import config
 from idssp.sonk.utils.logger import get_logger, log_memory_usage
+from idssp.sonk.utils.notifications import send_alert
 from idssp.sonk.view.utils import log_segmentation_overlay
 
 logger = get_logger(__name__)
@@ -594,6 +595,20 @@ class ModelBuilder:
             return epoch % 5 == 0    # every 5 epochs during rapid improvement
         return epoch % 10 == 0   # every 10 epochs once stable
 
+    def _should_notify(self, epoch: int) -> bool:
+        """Checks if we should send a notification for the current epoch based on the defined interval:
+
+        - Every 5 epochs for the first 50 epochs to closely monitor early training progress.
+        - Every 10 epochs during the middle phase (epochs 51-100) when improvements are more gradual.
+        - Every 20 epochs once the model performance stabilizes (epoch 101+)
+        
+        """
+        if epoch <= 50:
+            return epoch % 5 == 0    # every 5 epochs for the first 50
+        if epoch <= 100:
+            return epoch % 10 == 0   # every 10 epochs during middle phase
+        return epoch % 20 == 0       # every 20 epochs once stable
+
     def _run_small_inference(self, image: torch.Tensor) -> torch.Tensor:
         """Run full-volume sliding window inference on a single batch."""
         with torch.no_grad():
@@ -668,7 +683,9 @@ class ModelBuilder:
             self.dice_metric(y_pred=val_preds, y=val_labels)
 
         # end for batch
-        # Log every config.FIGURE_EPOCH_INTERVAL epochs
+
+        avg_val_loss = val_loss / len(self.val_dl)
+
         if self._should_log_overlay(epoch):
             img = self._overlay_batch["image"].to(self.device)
             log_segmentation_overlay(
@@ -679,7 +696,7 @@ class ModelBuilder:
                 pred = self._run_small_inference(img)
             )
         # end if
-        return val_loss / len(self.val_dl)
+        return avg_val_loss
 
 
     def _validate(self, epoch: int):
@@ -726,6 +743,14 @@ class ModelBuilder:
             # for tensorboard
             self.writer.add_scalar(f"val/dice_{name}", dice_val, epoch)
             self.writer.add_scalar(f"val/valid_samples_{name}", valid_n, epoch)
+
+        if self._should_notify(epoch):
+            send_alert(
+                title=f"Epoch {epoch+1}/{config.NUM_EPOCHS} completed",
+                message=f"Validation loss: {avg_val_loss:.4f}, <br/>"
+                f"Mean Dice: {mean_dice:.4f}<br/>"
+                + " <br/> ".join(log_parts)
+            )
 
         logger.info(
             "(Val) Epoch %d -> Loss: %.4f | Dice Mean: %.4f | %s | Valid samples: %s",
