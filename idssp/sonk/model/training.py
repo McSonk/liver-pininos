@@ -688,13 +688,13 @@ class ModelBuilder:
             valid_n = valid_counts_per_class[idx]
             # for logger print
             log_parts.append("Dice %s: %.4f" % (name, dice_val))
-            count_parts.append(f"n={valid_n}")
+            count_parts.append(f"{name} n={valid_n}")
             # for tensorboard
             self.writer.add_scalar(f"val/dice_{name}", dice_val, epoch)
             self.writer.add_scalar(f"val/valid_samples_{name}", valid_n, epoch)
 
         logger.info(
-            "(Validation) Epoch %d -> Loss: %.4f | Dice Mean: %.4f | %s | Valid samples: %s",
+            "(Val) Epoch %d -> Loss: %.4f | Dice Mean: %.4f | %s | Val samples: %s",
             epoch + 1, avg_val_loss, mean_dice, " | ".join(log_parts), " | ".join(count_parts)
         )
         # ========================================
