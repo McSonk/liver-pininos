@@ -1,7 +1,7 @@
 """idssp/sonk/utils/notifications.py
 Lightweight, fire-and-forget HTTP webhook dispatcher for training alerts.
 Uses HTTPS (port 443) to bypass cloud SMTP restrictions.
-Supports text-only or text+file attachment.
+Supports text-only or text+file attachment with safe truncation.
 """
 import html
 import threading
@@ -13,6 +13,11 @@ from idssp.sonk import config
 from idssp.sonk.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Telegram API limits (per https://core.telegram.org/bots/api)
+_TELEGRAM_TEXT_LIMIT = 4096      # for sendMessage text field
+_TELEGRAM_CAPTION_LIMIT = 1024   # for sendDocument caption field
+_TRUNCATION_INDICATOR = "… (truncated)"
 
 
 def _escape_html_for_telegram(text: str) -> str:
@@ -32,6 +37,49 @@ def _escape_html_for_telegram(text: str) -> str:
         escaped = escaped.replace(f"__TAG_CLOSE_{tag}__", f"</{tag}>")
 
     return escaped
+
+
+def _truncate_for_telegram(title: str, message: str, is_caption: bool = False) -> tuple[str, str]:
+    """
+    Truncates title + message to fit Telegram's character limits.
+    
+    Args:
+        title: The notification title (kept intact if possible).
+        message: The message body (truncated if needed).
+        is_caption: If True, use 1024-char caption limit; else use 4096-char text limit.
+    
+    Returns:
+        (safe_title, safe_message) tuple, both HTML-escaped and within limits.
+    """
+    limit = _TELEGRAM_CAPTION_LIMIT if is_caption else _TELEGRAM_TEXT_LIMIT
+
+    # Escape first so we count the actual characters that will be sent
+    safe_title = _escape_html_for_telegram(title)
+    safe_message = _escape_html_for_telegram(message)
+
+    # Calculate overhead: <b>title</b>\n + potential truncation indicator
+    # We'll reserve space for the title and formatting, then truncate the message
+    overhead = len(f"<b>{safe_title}</b>\n")
+    available_for_message = limit - overhead - len(_TRUNCATION_INDICATOR)
+
+    if len(safe_message) <= available_for_message:
+        return safe_title, safe_message
+
+    # Truncate message, being careful not to break HTML entities or tags
+    truncated_msg = safe_message[:available_for_message]
+
+    # Avoid cutting mid-entity (e.g., &lt;) or mid-tag
+    if truncated_msg.endswith('&') or truncated_msg.endswith('&l') or truncated_msg.endswith('&lt'):
+        truncated_msg = truncated_msg.rsplit('&', 1)[0]
+    if truncated_msg.endswith('<') or truncated_msg.endswith('</'):
+        truncated_msg = truncated_msg.rsplit('<', 1)[0]
+
+    truncated_msg += _TRUNCATION_INDICATOR
+    logger.warning("Telegram message truncated to %d chars (limit: %d). Original message length: %d",
+                   len(f"<b>{safe_title}</b>\n{truncated_msg}"), limit, len(f"<b>{safe_title}</b>\n{safe_message}"))
+
+    return safe_title, truncated_msg
+
 
 def send_alert(title: str, message: str, sync: bool = False, file_path: str = None, timeout: float = 10.0) -> None:
     """
@@ -89,14 +137,19 @@ def send_alert(title: str, message: str, sync: bool = False, file_path: str = No
 
     def _post():
         try:
-            safe_title = _escape_html_for_telegram(title)
-            safe_message = _escape_html_for_telegram(message)
+            # Apply truncation BEFORE sending
+            if file_path:
+                safe_title, safe_message = _truncate_for_telegram(title, message, is_caption=True)
+            else:
+                safe_title, safe_message = _truncate_for_telegram(title, message, is_caption=False)
+
             if file_path:
                 try:
                     resp = _send_file(safe_title, safe_message)
                 except (FileNotFoundError, ValueError) as e:
                     logger.error("Error occurred while sending file: %s", e)
-                    # Fallback to text-only alert if file issues arise
+                    # Fallback to text-only with appropriate limit
+                    safe_title, safe_message = _truncate_for_telegram(title, message, is_caption=False)
                     resp = _send_message(safe_title, safe_message)
             else:
                 resp = _send_message(safe_title, safe_message)
