@@ -4,15 +4,15 @@ Uses HTTPS (port 443) to bypass cloud SMTP restrictions.
 Supports text-only or text+file attachment.
 """
 import html
-import logging
 import threading
 from pathlib import Path
 
 import requests
 
 from idssp.sonk import config
+from idssp.sonk.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _escape_html_for_telegram(text: str) -> str:
@@ -33,7 +33,7 @@ def _escape_html_for_telegram(text: str) -> str:
 
     return escaped
 
-def send_alert(title: str, message: str, sync: bool = False, file_path: str | None = None, timeout: float = 10.0) -> None:
+def send_alert(title: str, message: str, sync: bool = False, file_path: str = None, timeout: float = 10.0) -> None:
     """
     Dispatches a formatted alert via Telegram.
     
@@ -52,45 +52,57 @@ def send_alert(title: str, message: str, sync: bool = False, file_path: str | No
     chat_id = config.TELEGRAM_CHAT_ID
     base_url = f"https://api.telegram.org/bot{bot_token}"
 
+    def _send_file(title, message):
+        path = Path(file_path)
+        if not path.exists():
+            logger.error("File not found for attachment: %s", file_path)
+            raise FileNotFoundError(f"Attachment file not found: {file_path}")
+
+        # Telegram limit is 50 MB; we'll cap at 45 MB to leave headroom
+        if path.stat().st_size > 45 * 1024 * 1024:
+            logger.warning("File exceeds 45 MB. Skipping attachment: %s", file_path)
+            raise ValueError("Attachment file too large for Telegram (max 45 MB)")
+
+        endpoint = f"{base_url}/sendDocument"
+        payload = {
+            "chat_id": chat_id,
+            "caption": f"<b>{title}</b>\n{message}",
+            "parse_mode": "HTML"
+        }
+        with open(path, "rb") as f:
+            # requests handles multipart/form-data automatically
+            resp = requests.post(
+                endpoint,
+                data=payload,
+                files={"document": (path.name, f)},
+                timeout=timeout)
+        return resp
+
+    def _send_message(title, message):
+        endpoint = f"{base_url}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": f"<b>{title}</b>\n{message}",
+            "parse_mode": "HTML"
+        }
+        return requests.post(endpoint, json=payload, timeout=timeout)
+
     def _post():
         try:
             safe_title = _escape_html_for_telegram(title)
             safe_message = _escape_html_for_telegram(message)
             if file_path:
-                path = Path(file_path)
-                if not path.exists():
-                    logger.error("File not found for attachment: %s", file_path)
-                    return
-
-                # Telegram limit is 50 MB; we'll cap at 45 MB to leave headroom
-                if path.stat().st_size > 45 * 1024 * 1024:
-                    logger.warning("File exceeds 45 MB. Skipping attachment: %s", file_path)
-                    return
-
-                endpoint = f"{base_url}/sendDocument"
-                payload = {
-                    "chat_id": chat_id,
-                    "caption": f"<b>{safe_title}</b>\n{safe_message}",
-                    "parse_mode": "HTML"
-                }
-                with open(path, "rb") as f:
-                    # requests handles multipart/form-data automatically
-                    resp = requests.post(
-                        endpoint,
-                        data=payload,
-                        files={"document": (path.name, f)},
-                        timeout=timeout)
+                try:
+                    resp = _send_file(safe_title, safe_message)
+                except (FileNotFoundError, ValueError) as e:
+                    logger.error("Error occurred while sending file: %s", e)
+                    # Fallback to text-only alert if file issues arise
+                    resp = _send_message(safe_title, safe_message)
             else:
-                endpoint = f"{base_url}/sendMessage"
-                payload = {
-                    "chat_id": chat_id,
-                    "text": f"<b>{safe_title}</b>\n{safe_message}",
-                    "parse_mode": "HTML"
-                }
-                resp = requests.post(endpoint, json=payload, timeout=timeout)
+                resp = _send_message(safe_title, safe_message)
 
             resp.raise_for_status()
-            logger.debug("Telegram alert dispatched successfully.")
+            logger.info("Telegram alert dispatched successfully.")
         except requests.RequestException as e:
             logger.error("Telegram alert failed: %s", e)
 
