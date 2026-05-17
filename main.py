@@ -85,7 +85,12 @@ if __name__ == "__main__":
             wait_for_completion=True,
             timeout=20.0
         )
-        send_alert(keyboard_title, keyboard_body, sync=True, timeout=20.0)
+        send_alert(
+            keyboard_title,
+            keyboard_body,
+            file_path=get_active_log_file(),
+            sync=True,
+            timeout=20.0)
         raise
     except Exception as e:
         logger.error("An error occurred during training: %s", e)
@@ -102,7 +107,12 @@ if __name__ == "__main__":
             wait_for_completion=True,
             timeout=20.0
         )
-        send_alert(error_title, error_body, sync=True, timeout=20.0)
+        send_alert(
+            error_title,
+            error_body,
+            file_path=get_active_log_file(),
+            sync=True,
+            timeout=30.0)
         raise
 
     success_title = "[Thesis] Training Pipeline Completed"
@@ -118,4 +128,9 @@ if __name__ == "__main__":
         wait_for_completion=True,
         timeout=20.0
     )
-    send_alert(success_title, success_body, sync=True, timeout=20.0)
+    send_alert(
+        success_title,
+        success_body,
+        file_path=get_active_log_file(),
+        sync=True,
+        timeout=30.0)
