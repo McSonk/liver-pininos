@@ -4,6 +4,7 @@ Uses HTTPS (port 443) to bypass cloud SMTP restrictions.
 Supports text-only or text+file attachment with safe truncation.
 """
 import html
+import re
 import threading
 from pathlib import Path
 
@@ -18,7 +19,12 @@ logger = get_logger(__name__)
 _TELEGRAM_TEXT_LIMIT = 4096      # for sendMessage text field
 _TELEGRAM_CAPTION_LIMIT = 1024   # for sendDocument caption field
 _TRUNCATION_INDICATOR = "… (truncated)"
+# Regex to match Telegram bot tokens: digits:digits+letters+underscores+dashes
+_BOT_TOKEN_PATTERN = re.compile(r"\b\d+:[A-Za-z0-9_-]+\b")
 
+def _redact_bot_token(text: str, placeholder: str = "[---]") -> str:
+    """Redacts Telegram bot tokens from any string."""
+    return _BOT_TOKEN_PATTERN.sub(placeholder, text)
 
 def _escape_html_for_telegram(text: str) -> str:
     """Escape HTML-special chars while preserving allowed Telegram tags."""
@@ -157,7 +163,27 @@ def send_alert(title: str, message: str, sync: bool = False, file_path: str = No
             resp.raise_for_status()
             logger.info("Telegram alert dispatched successfully.")
         except requests.RequestException as e:
-            logger.error("Telegram alert failed: %s", e)
+            # Redact sensitive info before logging
+            error_msg = _redact_bot_token(str(e))
+
+            # Try to extract Telegram's structured error response
+            error_details = "No response body"
+            if e.response is not None:
+                try:
+                    resp_json = e.response.json()
+                    # Telegram returns {"ok": false, "error_code": 400, "description": "..."}
+                    error_details = resp_json.get("description", str(resp_json))
+                except:
+                    # Fallback if response isn't valid JSON
+                    error_details = _redact_bot_token(e.response.text[:200])
+
+            # Log a safe message
+            logger.error(
+                "Telegram alert failed [status: %s]: %s | API response: %s",
+                e.response.status_code if e.response else "N/A",
+                error_msg,
+                error_details
+            )
 
     if sync:
         _post()
