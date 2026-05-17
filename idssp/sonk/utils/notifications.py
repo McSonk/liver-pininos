@@ -19,8 +19,8 @@ logger = get_logger(__name__)
 _TELEGRAM_TEXT_LIMIT = 4096      # for sendMessage text field
 _TELEGRAM_CAPTION_LIMIT = 1024   # for sendDocument caption field
 _TRUNCATION_INDICATOR = "… (truncated)"
-# Regex to match Telegram bot tokens: digits:digits+letters+underscores+dashes
-_BOT_TOKEN_PATTERN = re.compile(r"\b\d+:[A-Za-z0-9_-]+\b")
+# Regex to match Telegram bot tokens, including tokens embedded in Telegram API URLs
+_BOT_TOKEN_PATTERN = re.compile(r"(?<!\d)\d+:[A-Za-z0-9_-]+\b")
 
 def _redact_bot_token(text: str, placeholder: str = "[---]") -> str:
     """Redacts Telegram bot tokens from any string."""
@@ -28,17 +28,18 @@ def _redact_bot_token(text: str, placeholder: str = "[---]") -> str:
 
 def _escape_html_for_telegram(text: str) -> str:
     """Escape HTML-special chars while preserving allowed Telegram tags."""
-    # Temporarily protect allowed tags
+    # Temporarily protect only exact tags that are valid in this literal form.
+    # Do not preserve bare <a></a>: Telegram anchors require an href attribute.
     protected = text
-    for tag in ["b", "i", "u", "s", "code", "pre", "a"]:
+    for tag in ["b", "i", "u", "s", "code", "pre"]:
         protected = protected.replace(f"<{tag}>", f"__TAG_OPEN_{tag}__")
         protected = protected.replace(f"</{tag}>", f"__TAG_CLOSE_{tag}__")
 
     # Escape remaining special chars
     escaped = html.escape(protected, quote=False)
 
-    # Restore allowed tags
-    for tag in ["b", "i", "u", "s", "code", "pre", "a"]:
+    # Restore allowed exact tags
+    for tag in ["b", "i", "u", "s", "code", "pre"]:
         escaped = escaped.replace(f"__TAG_OPEN_{tag}__", f"<{tag}>")
         escaped = escaped.replace(f"__TAG_CLOSE_{tag}__", f"</{tag}>")
 
@@ -174,7 +175,7 @@ def send_alert(title: str, message: str, sync: bool = False, file_path: str = No
                     resp_json = e.response.json()
                     # Telegram returns {"ok": false, "error_code": 400, "description": "..."}
                     error_details = resp_json.get("description", str(resp_json))
-                except Exception as ex:
+                except Exception:
                     # Fallback if response isn't valid JSON
                     error_details = _redact_bot_token(e.response.text[:200])
 
@@ -187,7 +188,7 @@ def send_alert(title: str, message: str, sync: bool = False, file_path: str = No
             )
 
         except Exception as e:
-             logger.error("Telegram alert failed due to an unexpected error: %s", e)
+            logger.error("Telegram alert failed due to an unexpected error: %s", e)
 
     if sync:
         _post()
