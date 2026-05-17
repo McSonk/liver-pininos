@@ -173,7 +173,7 @@ def send_alert(title: str, message: str, sync: bool = False, file_path: str = No
                     resp_json = e.response.json()
                     # Telegram returns {"ok": false, "error_code": 400, "description": "..."}
                     error_details = resp_json.get("description", str(resp_json))
-                except:
+                except Exception as ex:
                     # Fallback if response isn't valid JSON
                     error_details = _redact_bot_token(e.response.text[:200])
 
@@ -184,6 +184,9 @@ def send_alert(title: str, message: str, sync: bool = False, file_path: str = No
                 error_msg,
                 error_details
             )
+
+        except Exception as e:
+             logger.error("Telegram alert failed due to an unexpected error: %s", e)
 
     if sync:
         _post()
