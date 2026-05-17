@@ -474,6 +474,8 @@ class ModelBuilder:
         logger.info("Optimizer: AdamW | LR: %f | Weight Decay: 1e-5", config.LEARNING_RATE)
 
         # Change to cosine annealing scheduler with warm restarts on ResUNETR
+        # TODO: change to CosineAnnealingLR
+        # (for a 90 run epoch ReduceLROnPlateau never fired)
         self.scheduler = ReduceLROnPlateau(
             self.optimizer,
             # Minimise the validation loss, not maximise the dice score
@@ -593,7 +595,7 @@ class ModelBuilder:
                         logger.warning("OOM during validation, falling back to sw_batch_size=1")
                         fallback = SlidingWindowInferer(
                             roi_size=config.TRAIN_PATCH_SIZE,
-                            sw_batch_size=1, # (original: 4)
+                            sw_batch_size=16, # (original: 4)
                             overlap=0.25, # (original: 0.5)
                             mode="gaussian",
                             device=self.device,
