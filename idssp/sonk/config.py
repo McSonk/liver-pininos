@@ -243,7 +243,7 @@ if ENV == "local":
 elif ENV == "cloud":
     print("[Config] Running in CLOUD environment (Lightning AI). Using more computing power.")
 
-    NUM_WORKERS = 4 if HC_GPU else 2
+    NUM_WORKERS = 12 if HC_GPU else 2
     PIN_MEMORY = True
     BATCH_SIZE = 4 if HC_GPU else 2
     NUM_EPOCHS = 90 if HC_GPU else 5
@@ -301,7 +301,7 @@ print(f"[Config]   Persistent Dataset Dir: {PERSISTENT_DATASET_DIR}")
 print("=" * 80)
 
 # -----------------------------------------------------------------------------
-# 5. Email Notification Configuration
+# 5. Email / Notification Configuration
 # -----------------------------------------------------------------------------
 SMTP_HOST = os.getenv("SMTP_HOST", "")
 SMTP_PORT_RAW = os.getenv("SMTP_PORT", "").strip()
@@ -310,6 +310,10 @@ EMAIL_SENDER = os.getenv("EMAIL_SENDER", "")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
 EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT", "")
 ENABLE_EMAIL_NOTIFICATIONS = os.getenv("ENABLE_EMAIL_NOTIFICATIONS", "false").lower() == "true"
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+ENABLE_TELEGRAM_ALERTS = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
 
 if ENABLE_EMAIL_NOTIFICATIONS:
     if not all([SMTP_HOST, SMTP_PORT_RAW, EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECIPIENT]):

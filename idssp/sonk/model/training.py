@@ -13,7 +13,8 @@ from monai.networks.nets import UNet
 from monai.transforms import (Activations, AsDiscrete, Compose,
                               CropForegroundd, EnsureTyped, LoadImaged,
                               Orientationd, RandCropByPosNegLabeld, RandFlipd,
-                              ScaleIntensityRanged, Spacingd, Transform, SpatialPadd)
+                              ScaleIntensityRanged, Spacingd, SpatialPadd,
+                              Transform)
 from torch.amp import GradScaler, autocast
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import ReduceLROnPlateau
