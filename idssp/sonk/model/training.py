@@ -459,8 +459,8 @@ class ModelBuilder:
             self.inferer = SlidingWindowInferer(
                 # MUST be the same as the training patch size
                 roi_size=config.TRAIN_PATCH_SIZE,
-                # Process 4 patches in parallel
-                sw_batch_size=4,
+                # Process 16 patches in parallel
+                sw_batch_size=16,
                 # Generate overlapping patches (reduces the step size)
                 # to smooth out predictions at patch borders
                 # (25% is a common choice, but 50% can further reduce border
