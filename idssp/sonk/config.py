@@ -177,12 +177,6 @@ VAL_BATCH_SIZE: Final[int] = 1
 '''DataLoader's batch size for validation. Kept at 1 for deterministic evaluation
 and memory safety with large 3D volumes. NOT TO BE CONFUSED WITH `VAL_PATCH_SIZE`'''
 
-FIGURE_EPOCH_INTERVAL: Final[int] = 10
-'''Interval (in epochs) at which to log segmentation overlay figures to TensorBoard.
-Set to 1 to log every epoch, or higher to log less frequently.
-Recommended: 5 on final training, 10+ during testing/debugging to save resources.
-'''
-
 cache_source = os.getenv("CACHE_SOURCE", "ram").lower()
 if cache_source not in {"ram", "disk"}:
     print(f"[Config] Warning: CACHE_SOURCE '{cache_source}' is not valid. "
@@ -408,5 +402,13 @@ def to_dict() -> dict:
         "LOG_DIR": str(LOG_DIR),
         "LOG_LEVEL_CONSOLE": LOG_LEVEL_CONSOLE,
         "LOG_LEVEL_FILE": LOG_LEVEL_FILE,
-        "FIGURE_EPOCH_INTERVAL": FIGURE_EPOCH_INTERVAL
+        "SPLIT_DIR": str(SPLIT_DIR),
+        "TRAIN_STATS_DIR": str(TRAIN_STATS_DIR),
+        "PER_CASE_TRAIN_STATS_FILE": str(PER_CASE_TRAIN_STATS_FILE),
+
+        # Notifications
+        "ENABLE_EMAIL_NOTIFICATIONS": ENABLE_EMAIL_NOTIFICATIONS,
+        "EMAIL_SENDER": EMAIL_SENDER,
+        "EMAIL_RECIPIENT": EMAIL_RECIPIENT,
+        "ENABLE_TELEGRAM_NOTIFICATIONS": ENABLE_TELEGRAM_NOTIFICATIONS,
     }

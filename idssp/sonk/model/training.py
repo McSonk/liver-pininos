@@ -70,6 +70,8 @@ class ModelBuilder:
         self.scheduler = None
         self.inferer: SlidingWindowInferer = None
         self.device = torch.device(config.DEVICE)
+        self._overlay_batch = None 
+        '''This will store a fixed validation image for logging to tensorboard'''
         self.run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # Post-processing & Metrics
@@ -404,6 +406,9 @@ class ModelBuilder:
             pin_memory=config.PIN_MEMORY,
         )
 
+        # Initialise a fixed validation batch for logging overlays during training
+        self._overlay_batch = next(iter(self.val_dl))
+
         logger.debug("Data loaders initialized successfully.")
 
     def init_model(self):
@@ -574,6 +579,26 @@ class ModelBuilder:
 
         return train_loss / len(self.train_dl)
 
+    def _should_log_overlay(self, epoch: int) -> bool:
+        """Checks if we should log the segmentation overlay for the current epoch
+        based on the defined interval:
+
+        - Every epoch for the first 10 epochs to closely monitor initial learning dynamics.
+        - Every 5 epochs during the rapid improvement phase (epochs 11-30)
+        - Every 10 epochs once the model performance stabilizes (epoch 31+)
+        
+        """
+        if epoch <= 10:
+            return True          # every epoch for the first 10
+        if epoch <= 30:
+            return epoch % 5 == 0    # every 5 epochs during rapid improvement
+        return epoch % 10 == 0   # every 10 epochs once stable
+
+    def _run_small_inference(self, image: torch.Tensor) -> torch.Tensor:
+        """Run full-volume sliding window inference on a single batch."""
+        with torch.no_grad():
+            return self.inferer(inputs=image, network=self.model)
+
     def _run_val_epoch(self, epoch: int):
         val_loss = 0
 
@@ -642,12 +667,18 @@ class ModelBuilder:
             # Calculate and accumulate metrics (this works for human reading)
             self.dice_metric(y_pred=val_preds, y=val_labels)
 
-            # --- LOG OVERLAY ONCE PER EPOCH (first batch only) ---
-            # Log every config.FIGURE_EPOCH_INTERVAL epochs
-            if epoch % config.FIGURE_EPOCH_INTERVAL == 0 and batch_idx == 0:
-                log_segmentation_overlay(self.writer, epoch, images, labels, preds)
-            # -----------------------------------------------------
         # end for batch
+        # Log every config.FIGURE_EPOCH_INTERVAL epochs
+        if self._should_log_overlay(epoch):
+            img = self._overlay_batch["image"].to(self.device)
+            log_segmentation_overlay(
+                self.writer,
+                epoch,
+                img,
+                self._overlay_batch["label"].to(self.device),
+                pred = self._run_small_inference(img)
+            )
+        # end if
         return val_loss / len(self.val_dl)
 
 
