@@ -345,8 +345,8 @@ if ENABLE_TELEGRAM_NOTIFICATIONS:
             "TELEGRAM_CHAT_ID in your .env file."
         )
     print("[Config] Telegram notifications are enabled. Alerts will be sent to "
-          "the specified chat at the end of training and for exceptions handled "
-          "during training.")
+          "the specified chat at the start of training, at the end of training, "
+          "and for exceptions handled during training.")
 
 # -----------------------------------------------------------------------------
 # 6. Helper Functions

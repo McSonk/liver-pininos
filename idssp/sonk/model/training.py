@@ -695,7 +695,7 @@ class ModelBuilder:
             self.writer.add_scalar(f"val/valid_samples_{name}", valid_n, epoch)
 
         logger.info(
-            "(Val) Epoch %d -> Loss: %.4f | Dice Mean: %.4f | %s | Val samples: %s",
+            "(Val) Epoch %d -> Loss: %.4f | Dice Mean: %.4f | %s | Valid samples: %s",
             epoch + 1, avg_val_loss, mean_dice, " | ".join(log_parts), " | ".join(count_parts)
         )
         # ========================================
