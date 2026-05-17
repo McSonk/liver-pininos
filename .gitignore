@@ -6,3 +6,4 @@
 # own generated files
 files/checkpoints
 files/logs
+files/server_logs
