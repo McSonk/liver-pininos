@@ -99,7 +99,8 @@ def send_alert(title: str, message: str, sync: bool = False, file_path: str = No
         file_path: Optional path to attach a file (e.g., training log).
         timeout: Maximum time to wait for the request to complete.
     """
-    if not getattr(config, "ENABLE_TELEGRAM_ALERTS", False):
+    if not config.ENABLE_TELEGRAM_NOTIFICATIONS:
+        logger.debug("Telegram notifications are disabled. Skipping alert.")
         return
 
     bot_token = config.TELEGRAM_BOT_TOKEN

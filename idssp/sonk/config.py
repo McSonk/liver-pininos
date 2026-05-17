@@ -311,9 +311,10 @@ EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
 EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT", "")
 ENABLE_EMAIL_NOTIFICATIONS = os.getenv("ENABLE_EMAIL_NOTIFICATIONS", "false").lower() == "true"
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-ENABLE_TELEGRAM_ALERTS = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+ENABLE_TELEGRAM_NOTIFICATIONS = os.getenv(
+    "ENABLE_TELEGRAM_NOTIFICATIONS", "false").lower() == "true"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 if ENABLE_EMAIL_NOTIFICATIONS:
     if not all([SMTP_HOST, SMTP_PORT_RAW, EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECIPIENT]):
@@ -335,6 +336,17 @@ else:
     print("[Config] Email notifications are disabled. To enable, set "
             "ENABLE_EMAIL_NOTIFICATIONS=true and provide the required email "
             "configuration in the .env file.")
+
+if ENABLE_TELEGRAM_NOTIFICATIONS:
+    if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
+        raise ValueError(
+            "[Config] Telegram notifications are enabled but TELEGRAM_BOT_TOKEN and/or "
+            "TELEGRAM_CHAT_ID is missing. Please set TELEGRAM_BOT_TOKEN and "
+            "TELEGRAM_CHAT_ID in your .env file."
+        )
+    print("[Config] Telegram notifications are enabled. Alerts will be sent to "
+          "the specified chat at the end of training and for exceptions handled "
+          "during training.")
 
 # -----------------------------------------------------------------------------
 # 6. Helper Functions
