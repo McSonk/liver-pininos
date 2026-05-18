@@ -247,15 +247,19 @@ def log_segmentation_overlay(
 
     # --- Select most informative slice ---
     if slice_idx is None:
-        # LAS orientation: sum over X (dim 0) and Y (dim 1) 
-        # to get tumour voxel count per axial Z slice (dim 2)
-        tumour_per_slice = (label_vol == config.TUMOUR_CLASS_INDEX).sum(dim=(0, 1))
+        # Sum over the two dims that are NOT slice_axis to get
+        # tumour voxel count per slice along slice_axis
+        all_dims = {0, 1, 2}
+        sum_dims = tuple(all_dims - {slice_axis})
+        tumour_per_slice = (label_vol == config.TUMOUR_CLASS_INDEX).sum(dim=sum_dims)
         if tumour_per_slice.max() > 0:
             slice_idx = tumour_per_slice.argmax().item()
-            logger.debug("Overlay: using tumour-centred slice %d", slice_idx)
+            logger.debug("Overlay: using tumour-centred slice %d (axis %d)",
+                        slice_idx, slice_axis)
         else:
             slice_idx = img_vol.shape[slice_axis] // 2
-            logger.debug("Overlay: tumour-negative volume, using middle slice %d", slice_idx)
+            logger.debug("Overlay: tumour-negative volume, using middle slice %d (axis %d)",
+                        slice_idx, slice_axis)
 
     # --- Extract 2D slices ---
     img_slice  = img_vol.select(slice_axis, slice_idx)             # [H, W]

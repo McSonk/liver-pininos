@@ -489,9 +489,14 @@ class ModelBuilder:
             total_iters=config.WARMUP_EPOCHS
         )
         # TODO: UNDERSTAND THIS
+        t_max = config.NUM_EPOCHS - config.WARMUP_EPOCHS
+        if t_max <= 0:
+            logger.info("WARMUP_EPOCHS (%d) is greater than or equal to NUM_EPOCHS (%d). "
+            "Cosine annealing will not be applied.", config.WARMUP_EPOCHS, config.NUM_EPOCHS)
+            t_max = 1  # Avoid invalid T_max for CosineAnnealingLR
         cosine = CosineAnnealingLR(
             self.optimizer,
-            T_max=config.NUM_EPOCHS - config.WARMUP_EPOCHS,
+            T_max=t_max,
             eta_min=1e-6
         )
         self.scheduler = SequentialLR(
@@ -501,7 +506,7 @@ class ModelBuilder:
         )
 
         logger.info("Scheduler initialized: CosineAnnealingLR (T_max=%d, eta_min=%e)",
-                    config.NUM_EPOCHS, 1e-6)
+                    t_max, 1e-6)
 
     def back_propagate(self, loss):
         '''
@@ -619,16 +624,17 @@ class ModelBuilder:
         return epoch % 20 == 0       # every 20 epochs once stable
 
     def _run_small_inference(self, image: torch.Tensor) -> torch.Tensor:
-        """Run full-volume sliding window inference on a single batch."""
-        if self.inferer is not None:
-            with torch.no_grad():
+        """Run full-volume sliding window inference on a single batch.
+        Called from within torch.inference_mode() and autocast contexts in _validate.
+        """
+        with autocast(device_type="cuda", enabled=config.DEVICE == "cuda"):
+            if self.inferer is not None:
                 return self.inferer(inputs=image, network=self.model)
-        else:
-            # If inferer is not available (e.g. on CPU), run the model directly.
-            # This assumes the input image is already cropped to a manageable size.
-            logger.debug("(Tensorboard image) Inferer not available, running "
-                         "direct inference on CPU.")
-            with torch.no_grad():
+            else:
+                logger.debug(
+                    "(Tensorboard image) Inferer not available, running "
+                    "direct inference on CPU."
+                )
                 return self.model(image)
 
     def _run_val_epoch(self, epoch: int):
