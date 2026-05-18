@@ -95,6 +95,7 @@ RANDOM_SEED: Final[int] = 42
 # ----------------------------------------------------------------
 
 CT_ROOT_STR = os.getenv("LITS_CT_ROOT")
+CT_TEST_STR = os.getenv("LITS_CT_TEST")
 OUTPUT_DIR_STR = os.getenv("OUTPUT_DIR")
 # CHECKPOINT_DIR_STR = os.getenv("CHECKPOINT_DIR")
 PERSISTENT_DATASET_DIR_STR = os.getenv("PERSISTENT_DATASET_DIR")
@@ -110,6 +111,8 @@ LOG_LEVEL_FILE = os.getenv("LOG_LEVEL_FILE", "DEBUG").upper()
 
 if not CT_ROOT_STR:
     raise ValueError("[Config] Environment variable 'LITS_CT_ROOT' is not set!")
+if not CT_TEST_STR:
+    raise ValueError("[Config] Environment variable 'LITS_CT_TEST' is not set!")
 if not OUTPUT_DIR_STR:
     raise ValueError("[Config] Environment variable 'OUTPUT_DIR' is not set. "
           "Please set 'OUTPUT_DIR' to the directory where checkpoints, logs, and "
@@ -138,6 +141,7 @@ if LOG_LEVEL_FILE not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
     LOG_LEVEL_FILE = "DEBUG"
 
 CT_ROOT = Path(CT_ROOT_STR)
+CT_TEST = Path(CT_TEST_STR)
 OUTPUT_DIR = Path(OUTPUT_DIR_STR)
 STATS_DIR = Path(STATS_DIR_STR)
 SPLIT_DIR = Path(SPLIT_DIR_STR)
@@ -403,6 +407,7 @@ def to_dict() -> dict:
 
         # Paths (convert Path objects to strings)
         "CT_ROOT": str(CT_ROOT),
+        "CT_TEST": str(CT_TEST),
         "OUTPUT_DIR": str(OUTPUT_DIR),
         "CHECKPOINT_DIR": str(CHECKPOINT_DIR),
         "TENSORBOARD_DIR": str(TENSORBOARD_DIR),
