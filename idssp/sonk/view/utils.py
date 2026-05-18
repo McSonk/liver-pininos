@@ -254,7 +254,7 @@ def log_segmentation_overlay(
             slice_idx = tumour_per_slice.argmax().item()
             logger.debug("Overlay: using tumour-centred slice %d", slice_idx)
         else:
-            slice_idx = img_vol.shape[0] // 2
+            slice_idx = img_vol.shape[slice_axis] // 2
             logger.debug("Overlay: tumour-negative volume, using middle slice %d", slice_idx)
 
     # --- Extract 2D slices ---
