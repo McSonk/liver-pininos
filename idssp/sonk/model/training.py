@@ -17,7 +17,7 @@ from monai.transforms import (Activations, AsDiscrete, Compose,
                               Transform)
 from torch.amp import GradScaler, autocast
 from torch.nn.utils import clip_grad_norm_
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.tensorboard import SummaryWriter
 
 from idssp.sonk import config
@@ -479,15 +479,28 @@ class ModelBuilder:
         logger.info("Model initialized on %s", self.device)
         logger.info("Optimizer: AdamW | LR: %f | Weight Decay: 1e-5", config.LEARNING_RATE)
 
-        # Change to cosine annealing scheduler with warm restarts on ResUNETR
-        # TODO: add warm restarts
-        self.scheduler = CosineAnnealingLR(
+
+        # During training scheduler follows a cosine curve between LEARNING_RATE
+        # and eta_min (1e-6) over NUM_EPOCHS epochs
+        warmup = LinearLR(
             self.optimizer,
-            T_max=config.NUM_EPOCHS,
+            start_factor=0.1,
+            end_factor=1.0,
+            total_iters=config.WARMUP_EPOCHS
+        )
+        cosine = CosineAnnealingLR(
+            self.optimizer,
+            T_max=config.NUM_EPOCHS - config.WARMUP_EPOCHS,
             eta_min=1e-6
         )
+        self.scheduler = SequentialLR(
+            self.optimizer,
+            schedulers=[warmup, cosine],
+            milestones=[config.WARMUP_EPOCHS]
+        )
 
-        logger.info("Scheduler initialized: CosineAnnealingLR (T_max=%d, eta_min=%e)", config.NUM_EPOCHS, 1e-6)
+        logger.info("Scheduler initialized: CosineAnnealingLR (T_max=%d, eta_min=%e)",
+                    config.NUM_EPOCHS, 1e-6)
 
     def back_propagate(self, loss):
         '''

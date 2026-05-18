@@ -196,6 +196,9 @@ EARLY_STOPPING_PATIENCE = 20
 EARLY_STOPPING_MIN_DELTA = 0.005
 '''Minimum change in the monitored metric to qualify as an improvement.'''
 
+WARMUP_EPOCHS: Final[int] = 5
+'''Number of epochs for linear learning rate warmup (CosineSchedule).'''
+
 # -----------------------------------------------------------------------------
 # 3. Environment-Specific Configuration
 # -----------------------------------------------------------------------------
