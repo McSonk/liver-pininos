@@ -771,9 +771,11 @@ class ModelBuilder:
         if self._should_notify(epoch):
             send_alert(
                 title=f"Epoch {epoch+1}/{config.NUM_EPOCHS} completed",
-                message=f"Validation loss: {avg_val_loss:.4f}\n"
-                f"Mean Dice: {mean_dice:.4f}\n"
-                + "\n".join(log_parts)
+                message="\n".join([
+                    f"Validation loss: {avg_val_loss:.4f}",
+                    f"Mean Dice: {mean_dice:.4f}",
+                    *log_parts,
+                ])
             )
 
         logger.info(
