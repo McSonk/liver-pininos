@@ -18,6 +18,7 @@
 # Medical Imaging & MONAI
 monai==1.5.2
 nibabel==5.4.2
+scipy==1.15.3
 
 # Visualization
 matplotlib==3.10.8

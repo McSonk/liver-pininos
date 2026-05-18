@@ -192,6 +192,7 @@ class DataCollector:
             self.datasources.extend(paired_files)
 
         logger.debug("Extracted %d image-label pairs from the dataset.", len(self.datasources))
+        return self.datasources
 
     def get_reproducible_split(self, train_ratio: float = 0.8) -> tuple[list, list]:
         """
