@@ -97,12 +97,17 @@ class TestEvaluator:
     def _get_test_transforms(self) -> Compose:
         """
         Deterministic preprocessing for test data.
-        Cropping/padding is omitted to preserve full anatomical context for inference.
+        Ensures image/label spatial alignment via reference-key resampling.
         """
         return Compose([
             LoadImaged(keys=["image", "label"], ensure_channel_first=True),
             Orientationd(keys=["image", "label"], axcodes="LAS"),
-            Spacingd(keys=["image", "label"], pixdim=config.ISO_SPACING, mode=("bilinear", "nearest")),
+            Spacingd(
+                keys=["image", "label"],
+                pixdim=config.ISO_SPACING,
+                mode=("bilinear", "nearest"),
+                recompute_affine=True,  # Ensure output affines are updated
+            ),
             ScaleIntensityRanged(
                 keys=["image"],
                 a_min=config.HU_WINDOW_MIN,
@@ -150,7 +155,27 @@ class TestEvaluator:
                 # Apply MONAI post-processing (matches training.py exactly)
                 val_preds = [self.pred_transform(p) for p in val_preds]
                 val_labels = [self.label_transform(l) for l in val_labels]
-                
+
+                # === SHAPE VALIDATION & ALIGNMENT ===
+                for i, (pred, label) in enumerate(zip(val_preds, val_labels)):
+                    pred_spatial = pred.shape[1:]  # Exclude channel dimension
+                    label_spatial = label.shape[1:]
+                    
+                    if pred_spatial != label_spatial:
+                        logger.warning(
+                            "Shape mismatch for sample %d: pred=%s, label=%s. "
+                            "Resampling label to match prediction spatial dimensions.",
+                            i, pred.shape, label.shape
+                        )
+                        # Use nearest-neighbour interpolation to preserve integer class labels
+                        label_resampled = torch.nn.functional.interpolate(
+                            label.unsqueeze(0).float(),  # Add batch dim for interpolate
+                            size=pred_spatial,
+                            mode='nearest'
+                        ).squeeze(0).to(label.dtype)  # Remove batch dim, restore dtype
+                        val_labels[i] = label_resampled
+                # ======
+
                 # Compute metrics on one-hot tensors
                 self.dice_metric(y_pred=val_preds, y=val_labels)
                 self.hd95_metric(y_pred=val_preds, y=val_labels)
