@@ -619,8 +619,16 @@ class ModelBuilder:
 
     def _run_small_inference(self, image: torch.Tensor) -> torch.Tensor:
         """Run full-volume sliding window inference on a single batch."""
-        with torch.no_grad():
-            return self.inferer(inputs=image, network=self.model)
+        if self.inferer is not None:
+            with torch.no_grad():
+                return self.inferer(inputs=image, network=self.model)
+        else:
+            # If inferer is not available (e.g. on CPU), run the model directly.
+            # This assumes the input image is already cropped to a manageable size.
+            logger.debug("(Tensorboard image) Inferer not available, running "
+                         "direct inference on CPU.")
+            with torch.no_grad():
+                return self.model(image)
 
     def _run_val_epoch(self, epoch: int):
         val_loss = 0
