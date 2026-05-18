@@ -486,7 +486,7 @@ class ModelBuilder:
             self.optimizer,
             start_factor=0.1,
             end_factor=1.0,
-            total_iters=config.WARMUP_EPOCHS
+            total_iters=config.WARMUP_EPOCHS - 1   # reach full LR on the last warmup epoch
         )
         # TODO: UNDERSTAND THIS
         t_max = config.NUM_EPOCHS - config.WARMUP_EPOCHS
