@@ -409,9 +409,7 @@ def to_dict() -> dict:
         "TRAIN_STATS_DIR": str(TRAIN_STATS_DIR),
         "PER_CASE_TRAIN_STATS_FILE": str(PER_CASE_TRAIN_STATS_FILE),
 
-        # Notifications
+        # Notifications (exclude contact details/secrets from persisted config snapshots)
         "ENABLE_EMAIL_NOTIFICATIONS": ENABLE_EMAIL_NOTIFICATIONS,
-        "EMAIL_SENDER": EMAIL_SENDER,
-        "EMAIL_RECIPIENT": EMAIL_RECIPIENT,
         "ENABLE_TELEGRAM_NOTIFICATIONS": ENABLE_TELEGRAM_NOTIFICATIONS,
     }
