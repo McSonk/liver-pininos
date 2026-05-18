@@ -272,17 +272,10 @@ def log_segmentation_overlay(
     gt_tumour_mask   = (gt_slice   == config.TUMOUR_CLASS_INDEX).float()  # [H, W]
     pred_tumour_mask = (pred_slice == config.TUMOUR_CLASS_INDEX).float()  # [H, W]
 
-    # --- Spatial mismatch guard ---
+    # --- Spatial mismatch guard & resize ---
     img_spatial = img_norm.shape[1:]
-    for name, mask in [("gt", gt_tumour_mask), ("pred", pred_tumour_mask)]:
-        if mask.shape != img_spatial:
-            logger.warning(
-                "Spatial mismatch in overlay: %s mask=%s vs image=%s — resizing.",
-                name, mask.shape, img_spatial
-            )
-
-    gt_tumour_mask   = _resize_mask_if_needed(gt_tumour_mask,   img_spatial)
-    pred_tumour_mask = _resize_mask_if_needed(pred_tumour_mask, img_spatial)
+    gt_tumour_mask   = _resize_mask_if_needed(gt_tumour_mask,   img_spatial, name="gt")
+    pred_tumour_mask = _resize_mask_if_needed(pred_tumour_mask, img_spatial, name="pred")
 
     # --- Build overlays ---
     gt_overlay   = blend_images(
@@ -316,12 +309,20 @@ def log_segmentation_overlay(
     )
 
 
-def _resize_mask_if_needed(mask: torch.Tensor, target_size: tuple) -> torch.Tensor:
+def _resize_mask_if_needed(
+    mask: torch.Tensor,
+    target_size: tuple,
+    name: str = ""
+) -> torch.Tensor:
     """Resize [H, W] mask to target_size using nearest-neighbour if needed."""
     if mask.shape == target_size:
         return mask
+    logger.warning(
+        "Spatial mismatch in overlay%s: mask=%s vs image=%s — resizing.",
+        f" ({name})" if name else "", mask.shape, target_size
+    )
     return F.interpolate(
-        mask.unsqueeze(0).unsqueeze(0).float(),  # [1, 1, H, W]
+        mask.unsqueeze(0).unsqueeze(0).float(),
         size=target_size,
         mode='nearest'
     ).squeeze(0).squeeze(0)

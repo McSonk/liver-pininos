@@ -488,6 +488,7 @@ class ModelBuilder:
             end_factor=1.0,
             total_iters=config.WARMUP_EPOCHS
         )
+        # TODO: UNDERSTAND THIS
         cosine = CosineAnnealingLR(
             self.optimizer,
             T_max=config.NUM_EPOCHS - config.WARMUP_EPOCHS,
@@ -649,9 +650,10 @@ class ModelBuilder:
                     except torch.cuda.OutOfMemoryError:
                         torch.cuda.empty_cache()
                         logger.warning("OOM during validation, falling back to sw_batch_size=1")
+                        # Fallback on low memory
                         fallback = SlidingWindowInferer(
                             roi_size=config.TRAIN_PATCH_SIZE,
-                            sw_batch_size=16, # (original: 4)
+                            sw_batch_size=1, # (original: 4)
                             overlap=0.25, # (original: 0.5)
                             mode="gaussian",
                             device=self.device,
