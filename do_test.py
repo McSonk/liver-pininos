@@ -49,6 +49,13 @@ def _main(args: argparse.Namespace):
     loader = DataCollector()
     loader.read_dir(config.CT_TEST, ds_source='LiTS')
     test_files = loader.extract_images_and_labels()
+    if not test_files:
+        logger.error(
+            "No valid test image/label pairs were found in %s. "
+            "Check the test dataset configuration and contents before running evaluation.",
+            config.CT_TEST,
+        )
+        return 1
     logger.debug("Done! Some information about the environment:")
     logger.debug("ISO spacing: %s", config.ISO_SPACING)
     logger.debug("Training patch size: %s", config.TRAIN_PATCH_SIZE)

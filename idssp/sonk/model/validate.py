@@ -59,7 +59,7 @@ class TestEvaluator:
             raise FileNotFoundError(f"Checkpoint not found: {self.checkpoint_path}")
 
         logger.info("Loading checkpoint: %s", self.checkpoint_path)
-        checkpoint = torch.load(self.checkpoint_path, map_location=self.device, weights_only=False)
+        checkpoint = torch.load(self.checkpoint_path, map_location=self.device, weights_only=True)
 
         if "config_snapshot" in checkpoint:
             for key in ["NUM_CLASSES", "ISO_SPACING", "HU_WINDOW_MIN", "HU_WINDOW_MAX"]:
