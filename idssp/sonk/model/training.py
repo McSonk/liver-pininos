@@ -478,11 +478,15 @@ class ModelBuilder:
 
         # During training scheduler follows a cosine curve between LEARNING_RATE
         # and eta_min (1e-6) over NUM_EPOCHS epochs
+        warm_epochs = config.WARMUP_EPOCHS
+        if warm_epochs <= 0:
+            warm_epochs = 1  # Avoid invalid total_iters for LinearLR
+
         warmup = LinearLR(
             self.optimizer,
             start_factor=0.1,
             end_factor=1.0,
-            total_iters=config.WARMUP_EPOCHS - 1   # reach full LR on the last warmup epoch
+            total_iters=warm_epochs - 1
         )
         # TODO: UNDERSTAND THIS
         t_max = config.NUM_EPOCHS - config.WARMUP_EPOCHS
