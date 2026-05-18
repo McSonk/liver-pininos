@@ -1,4 +1,3 @@
-import datetime
 import time
 from pathlib import Path
 
@@ -73,7 +72,6 @@ class ModelBuilder:
         self.device = torch.device(config.DEVICE)
         self._overlay_batch = None 
         '''This will store a fixed validation image for logging to tensorboard'''
-        self.run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # Post-processing & Metrics
         self.pred_trans = Compose([
@@ -126,9 +124,7 @@ class ModelBuilder:
         '''Mixed precision training scaler, enabled only on CUDA for potential speed up.'''
 
         # tensorboard writer for logging training metrics
-        # TODO: Use run_id to store global logs (tensorboard, log, checkpoints)
-        self.writer = SummaryWriter(log_dir=
-                                    str(config.LOG_DIR / "tensorboard" / self.run_id))
+        self.writer = SummaryWriter(log_dir=str(config.TENSORBOARD_DIR))
         self.writer.add_hparams(
             { # h param dict
                 "environment": config.ENV,
@@ -886,7 +882,7 @@ class EarlyStopper:
         self.best_epoch = -1
         self.epochs_no_improve = 0
         self.builder = builder
-        self.checkpoint_path = config.CHECKPOINT_DIR / (self.builder.run_id + "_best_model.pth")
+        self.checkpoint_path = config.CHECKPOINT_DIR / "best_model.pth"
 
     def __call__(self, epoch: int, epoch_dice: float) -> bool:
         '''Checks if the current epoch's Dice score shows an improvement over
@@ -924,7 +920,7 @@ class EarlyStopper:
         if is_best:
             path = self.checkpoint_path
         else:
-            path = config.CHECKPOINT_DIR / (self.builder.run_id + "_last_epoch.pth")
+            path = config.CHECKPOINT_DIR / "last_epoch.pth"
 
         before_save_time = time.time()
         torch.save({
