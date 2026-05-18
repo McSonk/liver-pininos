@@ -1,6 +1,7 @@
 """Configuration file for the HCC Segmentation Thesis.
 Adjust paths and hyperparameters as needed.
 """
+import datetime
 import os
 import warnings
 from pathlib import Path
@@ -68,6 +69,8 @@ if ENV not in RECOGNISED_ENVS:
 
 print(f"[Config] Loading configuration for environment: [{ENV.upper()}]")
 
+RUN_ID = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
 # -----------------------------------------------------------------------------
 # 2. Shared Constants (Same across all environments)
 # -----------------------------------------------------------------------------
@@ -92,12 +95,13 @@ RANDOM_SEED: Final[int] = 42
 # ----------------------------------------------------------------
 
 CT_ROOT_STR = os.getenv("LITS_CT_ROOT")
-CHECKPOINT_DIR_STR = os.getenv("CHECKPOINT_DIR")
+OUTPUT_DIR_STR = os.getenv("OUTPUT_DIR")
+# CHECKPOINT_DIR_STR = os.getenv("CHECKPOINT_DIR")
 PERSISTENT_DATASET_DIR_STR = os.getenv("PERSISTENT_DATASET_DIR")
 STATS_DIR_STR = os.getenv("STATS_DIR")
 SPLIT_DIR_STR = os.getenv("SPLIT_DIR")
 
-LOG_DIR_STR = os.getenv("LOG_DIR")
+# LOG_DIR_STR = os.getenv("LOG_DIR")
 LOG_LEVEL_CONSOLE = os.getenv("LOG_LEVEL_CONSOLE", "INFO").upper()
 LOG_LEVEL_FILE = os.getenv("LOG_LEVEL_FILE", "DEBUG").upper()
 
@@ -106,8 +110,10 @@ LOG_LEVEL_FILE = os.getenv("LOG_LEVEL_FILE", "DEBUG").upper()
 
 if not CT_ROOT_STR:
     raise ValueError("[Config] Environment variable 'LITS_CT_ROOT' is not set!")
-if not CHECKPOINT_DIR_STR:
-    raise ValueError("[Config] Environment variable 'CHECKPOINT_DIR' is not set!")
+if not OUTPUT_DIR_STR:
+    raise ValueError("[Config] Environment variable 'OUTPUT_DIR' is not set. "
+          "Please set 'OUTPUT_DIR' to the directory where checkpoints, logs, and "
+          "other outputs will be saved.")
 if not PERSISTENT_DATASET_DIR_STR:
     print("[Config] Warning: 'PERSISTENT_DATASET_DIR' is not set. "
           "PersistentDataset will be disabled.")
@@ -122,12 +128,6 @@ if not SPLIT_DIR_STR:
           "Splitting cannot be performed. Please set 'SPLIT_DIR' to the "
           "directory where the split files will be stored.")
 
-if not LOG_DIR_STR:
-    raise ValueError(
-        "[Config] Environment variable 'LOG_DIR' is not set!\n"
-        "Please set it in your '.env' file (see .env.example), for example:\n"
-        "   LOG_DIR=/path/where/to/save/logs"
-    )
 if LOG_LEVEL_CONSOLE not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
     print(f"[Config] Warning: LOG_LEVEL_CONSOLE '{LOG_LEVEL_CONSOLE}' is not "
            "valid. Defaulting to 'INFO'.")
@@ -138,14 +138,17 @@ if LOG_LEVEL_FILE not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
     LOG_LEVEL_FILE = "DEBUG"
 
 CT_ROOT = Path(CT_ROOT_STR)
-CHECKPOINT_DIR = Path(CHECKPOINT_DIR_STR)
+OUTPUT_DIR = Path(OUTPUT_DIR_STR)
 STATS_DIR = Path(STATS_DIR_STR)
 SPLIT_DIR = Path(SPLIT_DIR_STR)
 TRAIN_STATS_DIR = STATS_DIR / "train"
 TRAIN_STATS_DIR.mkdir(parents=True, exist_ok=True)
 PER_CASE_TRAIN_STATS_FILE = TRAIN_STATS_DIR / "per_case_summary.csv"
 PERSISTENT_DATASET_DIR = Path(PERSISTENT_DATASET_DIR_STR) if PERSISTENT_DATASET_DIR_STR else None
-LOG_DIR = Path(LOG_DIR_STR)
+
+CHECKPOINT_DIR = OUTPUT_DIR / RUN_ID / "checkpoints"
+LOG_DIR = OUTPUT_DIR / RUN_ID / "logs"
+TENSORBOARD_DIR = OUTPUT_DIR / RUN_ID / "tensorboard"
 
 #  Hyperparameters and constants
 # ----------------------------------------------------------------
@@ -177,12 +180,6 @@ VAL_BATCH_SIZE: Final[int] = 1
 '''DataLoader's batch size for validation. Kept at 1 for deterministic evaluation
 and memory safety with large 3D volumes. NOT TO BE CONFUSED WITH `VAL_PATCH_SIZE`'''
 
-FIGURE_EPOCH_INTERVAL: Final[int] = 10
-'''Interval (in epochs) at which to log segmentation overlay figures to TensorBoard.
-Set to 1 to log every epoch, or higher to log less frequently.
-Recommended: 5 on final training, 10+ during testing/debugging to save resources.
-'''
-
 cache_source = os.getenv("CACHE_SOURCE", "ram").lower()
 if cache_source not in {"ram", "disk"}:
     print(f"[Config] Warning: CACHE_SOURCE '{cache_source}' is not valid. "
@@ -196,11 +193,14 @@ If False, PersistentDataset will be used instead
 '''
 
 # Early stopping configuration
-EARLY_STOPPING_PATIENCE = 18
+EARLY_STOPPING_PATIENCE = 20
 '''Number of epochs with no improvement after which training will be stopped.'''
 
 EARLY_STOPPING_MIN_DELTA = 0.005
 '''Minimum change in the monitored metric to qualify as an improvement.'''
+
+WARMUP_EPOCHS: Final[int] = 5
+'''Number of epochs for linear learning rate warmup (CosineSchedule).'''
 
 # -----------------------------------------------------------------------------
 # 3. Environment-Specific Configuration
@@ -248,7 +248,7 @@ elif ENV == "cloud":
     NUM_WORKERS = min(preferred_num_workers, cpu_count)
     PIN_MEMORY = True
     BATCH_SIZE = 4 if HC_GPU else 2
-    NUM_EPOCHS = 90 if HC_GPU else 5
+    NUM_EPOCHS = 150 if HC_GPU else 5
     TRAIN_PATCH_SIZE = (96, 96, 96)
     # Not used by the standard cloud validation pipeline, but kept for config/logging
     # consistency and for code paths that still reference VAL_PATCH_SIZE.
@@ -371,6 +371,7 @@ def is_limited_env(include_vram=True) -> bool:
 def to_dict() -> dict:
     """Returns a serialisable snapshot of all configuration constants."""
     return {
+        "RUN_ID": RUN_ID,
         # Environment & Device
         "ENV": ENV,
         "DEVICE": DEVICE,
@@ -402,11 +403,19 @@ def to_dict() -> dict:
 
         # Paths (convert Path objects to strings)
         "CT_ROOT": str(CT_ROOT),
+        "OUTPUT_DIR": str(OUTPUT_DIR),
         "CHECKPOINT_DIR": str(CHECKPOINT_DIR),
+        "TENSORBOARD_DIR": str(TENSORBOARD_DIR),
         "PERSISTENT_DATASET_DIR": str(PERSISTENT_DATASET_DIR) if PERSISTENT_DATASET_DIR else None,
         "STATS_DIR": str(STATS_DIR) if STATS_DIR else None,
         "LOG_DIR": str(LOG_DIR),
         "LOG_LEVEL_CONSOLE": LOG_LEVEL_CONSOLE,
         "LOG_LEVEL_FILE": LOG_LEVEL_FILE,
-        "FIGURE_EPOCH_INTERVAL": FIGURE_EPOCH_INTERVAL
+        "SPLIT_DIR": str(SPLIT_DIR),
+        "TRAIN_STATS_DIR": str(TRAIN_STATS_DIR),
+        "PER_CASE_TRAIN_STATS_FILE": str(PER_CASE_TRAIN_STATS_FILE),
+
+        # Notifications (exclude contact details/secrets from persisted config snapshots)
+        "ENABLE_EMAIL_NOTIFICATIONS": ENABLE_EMAIL_NOTIFICATIONS,
+        "ENABLE_TELEGRAM_NOTIFICATIONS": ENABLE_TELEGRAM_NOTIFICATIONS,
     }

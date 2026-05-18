@@ -1,4 +1,3 @@
-import datetime
 import time
 from pathlib import Path
 
@@ -17,11 +16,12 @@ from monai.transforms import (Activations, AsDiscrete, Compose,
                               Transform)
 from torch.amp import GradScaler, autocast
 from torch.nn.utils import clip_grad_norm_
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.tensorboard import SummaryWriter
 
 from idssp.sonk import config
 from idssp.sonk.utils.logger import get_logger, log_memory_usage
+from idssp.sonk.utils.notifications import send_alert
 from idssp.sonk.view.utils import log_segmentation_overlay
 
 logger = get_logger(__name__)
@@ -70,7 +70,8 @@ class ModelBuilder:
         self.scheduler = None
         self.inferer: SlidingWindowInferer = None
         self.device = torch.device(config.DEVICE)
-        self.run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._overlay_batch = None 
+        '''This will store a fixed validation image for logging to tensorboard'''
 
         # Post-processing & Metrics
         self.pred_trans = Compose([
@@ -123,9 +124,7 @@ class ModelBuilder:
         '''Mixed precision training scaler, enabled only on CUDA for potential speed up.'''
 
         # tensorboard writer for logging training metrics
-        # TODO: Use run_id to store global logs (tensorboard, log, checkpoints)
-        self.writer = SummaryWriter(log_dir=
-                                    str(config.LOG_DIR / "tensorboard" / self.run_id))
+        self.writer = SummaryWriter(log_dir=str(config.TENSORBOARD_DIR))
         self.writer.add_hparams(
             { # h param dict
                 "environment": config.ENV,
@@ -404,6 +403,9 @@ class ModelBuilder:
             pin_memory=config.PIN_MEMORY,
         )
 
+        # Initialise a fixed validation batch for logging overlays during training
+        self._overlay_batch = next(iter(self.val_dl))
+
         logger.debug("Data loaders initialized successfully.")
 
     def init_model(self):
@@ -453,8 +455,8 @@ class ModelBuilder:
             self.inferer = SlidingWindowInferer(
                 # MUST be the same as the training patch size
                 roi_size=config.TRAIN_PATCH_SIZE,
-                # Process 4 patches in parallel
-                sw_batch_size=4,
+                # Process 16 patches in parallel
+                sw_batch_size=16,
                 # Generate overlapping patches (reduces the step size)
                 # to smooth out predictions at patch borders
                 # (25% is a common choice, but 50% can further reduce border
@@ -473,18 +475,38 @@ class ModelBuilder:
         logger.info("Model initialized on %s", self.device)
         logger.info("Optimizer: AdamW | LR: %f | Weight Decay: 1e-5", config.LEARNING_RATE)
 
-        # Change to cosine annealing scheduler with warm restarts on ResUNETR
-        self.scheduler = ReduceLROnPlateau(
+
+        # During training scheduler follows a cosine curve between LEARNING_RATE
+        # and eta_min (1e-6) over NUM_EPOCHS epochs
+        warm_epochs = config.WARMUP_EPOCHS
+        if warm_epochs <= 0:
+            warm_epochs = 1  # Avoid invalid total_iters for LinearLR
+
+        warmup = LinearLR(
             self.optimizer,
-            # Minimise the validation loss, not maximise the dice score
-            mode='min',
-            # Halves the learning rate when the validation loss plateaus
-            factor=0.5,
-            # Wait for at least 5 epochs without improvement before reducing LR
-            patience=5
+            start_factor=0.1,
+            end_factor=1.0,
+            total_iters=warm_epochs - 1
+        )
+        # TODO: UNDERSTAND THIS
+        t_max = config.NUM_EPOCHS - config.WARMUP_EPOCHS
+        if t_max <= 0:
+            logger.info("WARMUP_EPOCHS (%d) is greater than or equal to NUM_EPOCHS (%d). "
+            "Cosine annealing will not be applied.", config.WARMUP_EPOCHS, config.NUM_EPOCHS)
+            t_max = 1  # Avoid invalid T_max for CosineAnnealingLR
+        cosine = CosineAnnealingLR(
+            self.optimizer,
+            T_max=t_max,
+            eta_min=1e-6
+        )
+        self.scheduler = SequentialLR(
+            self.optimizer,
+            schedulers=[warmup, cosine],
+            milestones=[config.WARMUP_EPOCHS]
         )
 
-        logger.info("Scheduler initialized: ReduceLROnPlateau (patience=5, factor=0.5)")
+        logger.info("Scheduler initialized: CosineAnnealingLR (T_max=%d, eta_min=%e)",
+                    t_max, 1e-6)
 
     def back_propagate(self, loss):
         '''
@@ -572,6 +594,49 @@ class ModelBuilder:
 
         return train_loss / len(self.train_dl)
 
+    def _should_log_overlay(self, epoch: int) -> bool:
+        """Checks if we should log the segmentation overlay for the current epoch
+        based on the defined interval:
+
+        - Every epoch for the first 10 epochs to closely monitor initial learning dynamics.
+        - Every 5 epochs during the rapid improvement phase (epochs 11-30)
+        - Every 10 epochs once the model performance stabilizes (epoch 31+)
+        
+        """
+        if epoch <= 10:
+            return True          # every epoch for the first 10
+        if epoch <= 30:
+            return epoch % 5 == 0    # every 5 epochs during rapid improvement
+        return epoch % 10 == 0   # every 10 epochs once stable
+
+    def _should_notify(self, epoch: int) -> bool:
+        """Checks if we should send a notification for the current epoch based on the defined interval:
+
+        - Every 5 epochs for the first 50 epochs to closely monitor early training progress.
+        - Every 10 epochs during the middle phase (epochs 51-100) when improvements are more gradual.
+        - Every 20 epochs once the model performance stabilizes (epoch 101+)
+        
+        """
+        if epoch <= 50:
+            return epoch % 5 == 0    # every 5 epochs for the first 50
+        if epoch <= 100:
+            return epoch % 10 == 0   # every 10 epochs during middle phase
+        return epoch % 20 == 0       # every 20 epochs once stable
+
+    def _run_small_inference(self, image: torch.Tensor) -> torch.Tensor:
+        """Run full-volume sliding window inference on a single batch.
+        Called from within torch.inference_mode() and autocast contexts in _validate.
+        """
+        with autocast(device_type="cuda", enabled=config.DEVICE == "cuda"):
+            if self.inferer is not None:
+                return self.inferer(inputs=image, network=self.model)
+            else:
+                logger.debug(
+                    "(Tensorboard image) Inferer not available, running "
+                    "direct inference on CPU."
+                )
+                return self.model(image)
+
     def _run_val_epoch(self, epoch: int):
         val_loss = 0
 
@@ -591,6 +656,7 @@ class ModelBuilder:
                     except torch.cuda.OutOfMemoryError:
                         torch.cuda.empty_cache()
                         logger.warning("OOM during validation, falling back to sw_batch_size=1")
+                        # Fallback on low memory
                         fallback = SlidingWindowInferer(
                             roi_size=config.TRAIN_PATCH_SIZE,
                             sw_batch_size=1, # (original: 4)
@@ -640,13 +706,21 @@ class ModelBuilder:
             # Calculate and accumulate metrics (this works for human reading)
             self.dice_metric(y_pred=val_preds, y=val_labels)
 
-            # --- LOG OVERLAY ONCE PER EPOCH (first batch only) ---
-            # Log every config.FIGURE_EPOCH_INTERVAL epochs
-            if epoch % config.FIGURE_EPOCH_INTERVAL == 0 and batch_idx == 0:
-                log_segmentation_overlay(self.writer, epoch, images, labels, preds)
-            # -----------------------------------------------------
         # end for batch
-        return val_loss / len(self.val_dl)
+
+        avg_val_loss = val_loss / len(self.val_dl)
+
+        if self._should_log_overlay(epoch):
+            img = self._overlay_batch["image"].to(self.device)
+            log_segmentation_overlay(
+                self.writer,
+                epoch,
+                img,
+                self._overlay_batch["label"].to(self.device),
+                pred = self._run_small_inference(img)
+            )
+        # end if
+        return avg_val_loss
 
 
     def _validate(self, epoch: int):
@@ -694,25 +768,23 @@ class ModelBuilder:
             self.writer.add_scalar(f"val/dice_{name}", dice_val, epoch)
             self.writer.add_scalar(f"val/valid_samples_{name}", valid_n, epoch)
 
+        if self._should_notify(epoch):
+            send_alert(
+                title=f"Epoch {epoch+1}/{config.NUM_EPOCHS} completed",
+                message="\n".join([
+                    f"Validation loss: {avg_val_loss:.4f}",
+                    f"Mean Dice: {mean_dice:.4f}",
+                    *log_parts,
+                ])
+            )
+
         logger.info(
             "(Val) Epoch %d -> Loss: %.4f | Dice Mean: %.4f | %s | Valid samples: %s",
             epoch + 1, avg_val_loss, mean_dice, " | ".join(log_parts), " | ".join(count_parts)
         )
         # ========================================
 
-        # Step scheduler based on validation loss
-        # TODO: Check if it's better to step based on tumour DiceCE score
-        # (instead of the average loss)
-
-        # Claude comment:
-        # Your scheduler steps on avg_val_loss, and early stopping triggers on epoch_dice.
-        # These will usually move in the same direction, but not always — particularly
-        # on LiTS where tumour Dice can plateau while loss keeps improving slightly
-        # due to the liver class. This is not a crash risk but it is a logical inconsistency.
-        # Since you care most about tumour Dice, consider stepping the scheduler on
-        # tumour Dice specifically (negated, since the scheduler is in mode='min'),
-        # or switch to mode='max' and pass Dice directly.
-        self.scheduler.step(avg_val_loss)
+        self.scheduler.step()
 
         return avg_val_loss, mean_dice
 
@@ -816,7 +888,7 @@ class EarlyStopper:
         self.best_epoch = -1
         self.epochs_no_improve = 0
         self.builder = builder
-        self.checkpoint_path = config.CHECKPOINT_DIR / (self.builder.run_id + "_best_model.pth")
+        self.checkpoint_path = config.CHECKPOINT_DIR / "best_model.pth"
 
     def __call__(self, epoch: int, epoch_dice: float) -> bool:
         '''Checks if the current epoch's Dice score shows an improvement over
@@ -854,7 +926,7 @@ class EarlyStopper:
         if is_best:
             path = self.checkpoint_path
         else:
-            path = config.CHECKPOINT_DIR / (self.builder.run_id + "_last_epoch.pth")
+            path = config.CHECKPOINT_DIR / "last_epoch.pth"
 
         before_save_time = time.time()
         torch.save({

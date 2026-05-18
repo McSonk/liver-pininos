@@ -4,6 +4,5 @@
 .vscode/
 
 # own generated files
-files/checkpoints
-files/logs
+files/outputs
 files/server_logs

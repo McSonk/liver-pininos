@@ -212,84 +212,121 @@ def slice_to_world_coordinates(image_object, slice_index):
     return world_coord[2]
 
 
-def log_segmentation_overlay(writer, epoch: int, image: torch.Tensor, 
-                                label: torch.Tensor, pred: torch.Tensor,
-                                slice_axis: int = 2, slice_idx: int = None):
+def log_segmentation_overlay(
+    writer,
+    epoch: int,
+    image: torch.Tensor,
+    label: torch.Tensor,
+    pred: torch.Tensor,
+    slice_axis: int = 2,
+    slice_idx: int = None
+):
     """
-    Logs a blended CT slice + prediction overlay to TensorBoard.
-    
+    Logs a side-by-side GT vs prediction overlay to TensorBoard.
+    Slice is chosen automatically as the axial slice with the most
+    tumour voxels in the ground truth. Falls back to middle slice
+    for tumour-negative volumes.
+
     Args:
-        epoch: Current training epoch (used as global step).
-        image: Input CT volume tensor [B, C, D, H, W].
-        label: Ground truth segmentation [B, 1, D, H, W] or [B, C, D, H, W].
-        pred: Model prediction logits [B, NUM_CLASSES, D, H, W].
-        slice_axis: Axis to extract slice from (0=sagittal, 1=coronal, 2=axial).
-        slice_idx: Index along slice_axis. If None, uses middle slice.
+        writer:     TensorBoard SummaryWriter.
+        epoch:      Current epoch (used as global_step).
+        image:      CT volume [B, 1, D, H, W] — full volume from SlidingWindowInferer input.
+        label:      Ground truth [B, 1, D, H, W].
+        pred:       Model logits [B, NUM_CLASSES, D, H, W] — full-volume inference output.
+        slice_axis: Axis to slice along (0=sagittal, 1=coronal, 2=axial).
+        slice_idx:  Override automatic slice selection if provided.
     """
-    # Ensure CPU tensors for visualisation
     image = image.detach().cpu()
     label = label.detach().cpu()
-    pred = pred.detach().cpu()
+    pred  = pred.detach().cpu()
 
     # Take first sample in batch
-    img_vol = image[0]          # [C, D, H, W]
-    pred_vol = pred[0]          # [NUM_CLASSES, D, H, W]
+    img_vol   = image[0, 0]    # [D, H, W]
+    label_vol = label[0, 0]    # [D, H, W]
+    pred_vol  = pred[0]        # [NUM_CLASSES, D, H, W]
 
-    # Determine slice index if not provided
-    # Spatial dims in [C, D, H, W] are at indices 1,2,3
+    # --- Select most informative slice ---
     if slice_idx is None:
-        slice_idx = img_vol.shape[slice_axis + 1] // 2
+        # Sum over the two dims that are NOT slice_axis to get
+        # tumour voxel count per slice along slice_axis
+        all_dims = {0, 1, 2}
+        sum_dims = tuple(all_dims - {slice_axis})
+        tumour_per_slice = (label_vol == config.TUMOUR_CLASS_INDEX).sum(dim=sum_dims)
+        if tumour_per_slice.max() > 0:
+            slice_idx = tumour_per_slice.argmax().item()
+            logger.debug("Overlay: using tumour-centred slice %d (axis %d)",
+                        slice_idx, slice_axis)
+        else:
+            slice_idx = img_vol.shape[slice_axis] // 2
+            logger.debug("Overlay: tumour-negative volume, using middle slice %d (axis %d)",
+                        slice_idx, slice_axis)
 
-    # Extract 2D slice using correct tensor axis mapping
-    img_slice = img_vol.select(slice_axis + 1, slice_idx)      # [C, H, W]
+    # --- Extract 2D slices ---
+    img_slice  = img_vol.select(slice_axis, slice_idx)             # [H, W]
+    gt_slice   = label_vol.select(slice_axis, slice_idx)           # [H, W]
+    pred_class = torch.argmax(pred_vol, dim=0)                     # [D, H, W]
+    pred_slice = pred_class.select(slice_axis, slice_idx)          # [H, W]
 
-    # Get predicted class map and extract matching slice
-    pred_class_map = torch.argmax(pred_vol, dim=0)              # [D, H, W]
-    pred_slice = pred_class_map.select(slice_axis, slice_idx)   # [H, W]
-
-    # Normalise CT image to [0, 1]
+    # --- Normalise CT to [0, 1] ---
     img_min, img_max = img_slice.min(), img_slice.max()
-    img_norm = (img_slice - img_min) / (img_max - img_min + 1e-8)  # [1, H, W]
+    img_norm = (img_slice - img_min) / (img_max - img_min + 1e-8)  # [H, W]
+    img_norm = img_norm.unsqueeze(0)                                # [1, H, W]
 
-    # Convert prediction to one-hot if needed
-    if pred_slice.dim() == 2:
-        pred_onehot = torch.zeros(config.NUM_CLASSES, *pred_slice.shape, dtype=torch.float32)
-        for c in range(config.NUM_CLASSES):
-            pred_onehot[c] = (pred_slice == c).float()
-        pred_slice = pred_onehot  # [NUM_CLASSES, H, W]
+    # --- Extract tumour masks ---
+    gt_tumour_mask   = (gt_slice   == config.TUMOUR_CLASS_INDEX).float()  # [H, W]
+    pred_tumour_mask = (pred_slice == config.TUMOUR_CLASS_INDEX).float()  # [H, W]
 
-    tumour_mask = pred_slice[config.TUMOUR_CLASS_INDEX]  # [H, W] - tumour channel
+    # --- Spatial mismatch guard & resize ---
+    img_spatial = img_norm.shape[1:]
+    gt_tumour_mask   = _resize_mask_if_needed(gt_tumour_mask,   img_spatial, name="gt")
+    pred_tumour_mask = _resize_mask_if_needed(pred_tumour_mask, img_spatial, name="pred")
 
-    # CRITICAL: Verify spatial dimensions match before blending
-    img_spatial = img_norm.shape[1:]  # (H, W)
-    mask_spatial = tumour_mask.shape   # (H, W)
-
-    if img_spatial != mask_spatial:
-        logger.warning(
-            "Spatial mismatch in overlay logging: "
-            "image=%s, mask=%s. "
-            "Resizing mask to match image dimensions.",
-            img_spatial, mask_spatial
-        )
-        # Resize mask to match image using nearest-neighbor (preserves class labels)
-        tumour_mask = F.interpolate(
-            tumour_mask.unsqueeze(0).unsqueeze(0),  # [1, 1, H, W]
-            size=img_spatial,
-            mode='nearest'
-        ).squeeze(0).squeeze(0)  # [H, W]
-
-    # Blend: MONAI expects [B, C, H, W]
-    overlay = blend_images(
-        image=img_norm.unsqueeze(0),                    # [1, 1, H, W]
-        label=tumour_mask.unsqueeze(0).unsqueeze(0),    # [1, 1, H, W]
+    # --- Build overlays ---
+    gt_overlay   = blend_images(
+        image=img_norm.unsqueeze(0),                       # [1, 1, H, W]
+        label=gt_tumour_mask.unsqueeze(0).unsqueeze(0),    # [1, 1, H, W]
         alpha=0.4,
         cmap="hot"
-    )  # [1, 3, H, W] RGB
+    )  # [1, 3, H, W]
 
-    writer.add_image(
-        tag="Visualisation/CT_Tumour_Overlay_Axial",
-        img_tensor=overlay[0],  # [3, H, W]
+    pred_overlay = blend_images(
+        image=img_norm.unsqueeze(0),
+        label=pred_tumour_mask.unsqueeze(0).unsqueeze(0),
+        alpha=0.4,
+        cmap="hot"
+    )  # [1, 3, H, W]
+
+    # --- Log side by side ---
+    writer.add_images(
+        tag="Visualisation/GT_vs_Pred_Tumour",
+        img_tensor=torch.cat([gt_overlay, pred_overlay], dim=0),  # [2, 3, H, W]
         global_step=epoch,
-        dataformats="CHW"
+        dataformats="NCHW"
     )
-    logger.debug("Logged segmentation overlay for epoch %d (slice %d)", epoch, slice_idx)
+
+    logger.debug(
+        "Logged GT vs Pred overlay at epoch %d, slice %d "
+        "(gt tumour px: %d, pred tumour px: %d)",
+        epoch, slice_idx,
+        int(gt_tumour_mask.sum()),
+        int(pred_tumour_mask.sum())
+    )
+
+
+def _resize_mask_if_needed(
+    mask: torch.Tensor,
+    target_size: tuple,
+    name: str = ""
+) -> torch.Tensor:
+    """Resize [H, W] mask to target_size using nearest-neighbour if needed."""
+    if mask.shape == target_size:
+        return mask
+    logger.warning(
+        "Spatial mismatch in overlay%s: mask=%s vs image=%s — resizing.",
+        f" ({name})" if name else "", mask.shape, target_size
+    )
+    return F.interpolate(
+        mask.unsqueeze(0).unsqueeze(0).float(),
+        size=target_size,
+        mode='nearest'
+    ).squeeze(0).squeeze(0)
