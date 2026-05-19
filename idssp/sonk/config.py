@@ -4,355 +4,445 @@ Adjust paths and hyperparameters as needed.
 import datetime
 import os
 import warnings
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final
 
 import torch
 from dotenv import load_dotenv
 
-# TODO: Consider lazy-init or dataclass
+@dataclass(frozen=True)
+class Config:
+     # Environment & Device
+    RUN_ID: str
+    ENV: str
+    DEVICE: str
+    HC_GPU: bool
+    '''HC_GPU is a flag to indicate if we are on the High-Compute GPU.
+    Note that this only means the GPU has more than 30GB of VRAM'''
+    RANDOM_SEED: int = 42
 
-# -----------------------------------------------------------------------------
-# 0. Load Environment Variables
-# -----------------------------------------------------------------------------
+    # Preprocessing
+    HU_WINDOW_MIN: int = -175
+    HU_WINDOW_MAX: int = 250
+    ISO_SPACING: tuple = (1.0, 1.0, 1.0)
+    '''The isotropic spacing to which all CT volumes will be resampled.
+       A good choice is (1.5, 1.5, 1.5). It is memory efficient but it might introduce
+       some blurring. (1.0, 1.0, 1.0) is an optimal choice.
+       Please note that in LiTS most of the volumes have a z spacing of around 0.7-1.0mm, 
+       so resampling to 1.0mm will not introduce much blurring while ensuring. However,
+       there are 2 volumes with a z spacing of .5mm, so here we should be more careful.'''
 
-print("=" * 80)
-print("This is a configuration file.")
-print("The configuration is loaded at the start of the program and defines important constants, ")
-print("paths, and hyperparameters.")
-print("Please review the settings below and adjust them as needed before running the program.")
-print("If you are running this for the first time, make sure to create a .env")
-print("file based on the .env.example template and fill in the required paths and settings.")
-print("")
-print("NOTE: The logs of this file won't be stored in the logs directory,")
-print("so please pay attention to any warnings or errors printed here.")
-print("=" * 80)
-print("[Config] Loading environment variables from .env file...")
-load_dotenv()
+    TRAIN_PATCH_SIZE: tuple = (96, 96, 96)
+    VAL_PATCH_SIZE: tuple = (96, 96, 96)
+    '''The size of the 3D patches to be extracted from the volumes for training and validation.
+       (Only used in local env). NOT TO BE CONFUSED WITH `VAL_BATCH_SIZE`'''
+    USE_CACHE_DATASET: bool = True
+    '''Whether to use a caching dataset that keeps preprocessed volumes in memory.
+    This can speed up training but requires more RAM.
+    If False, PersistentDataset will be used instead
+    '''
 
-# -----------------------------------------------------------------------------
-# 1. Suppress warnings from libraries to keep the logs clean.
-# -----------------------------------------------------------------------------
-warnings.filterwarnings(
-    "ignore",
-    # MONAI sliding-window inference triggers a deprecation warning on PyTorch's internal
-    # index behaviour. This can be safely ignored.
-    message=".*non-tuple sequence for multidimensional indexing.*",
-    category=DeprecationWarning,
-    module=r"torch(\..*)?$",
-)
+    # Training
+    LEARNING_RATE: float = 1e-4
+    BATCH_SIZE: int = 2
+    '''DataLoader's batch size. Set to 1 for memory safety, especially with large 3D volumes.
+       (Usually between 1 and 4 depending on GPU VRAM)
+       Note that the final batch size will be `BATCH_SIZE` * `RAND_CROP_NUM_SAMPLES`'''
+    VAL_BATCH_SIZE: int = 1
+    '''DataLoader's batch size for validation. Kept at 1 for deterministic evaluation
+    and memory safety with large 3D volumes. NOT TO BE CONFUSED WITH `VAL_PATCH_SIZE`'''
+    RAND_CROP_NUM_SAMPLES: int = 2
+    '''Number of random crops to extract from each volume during training.
+    Note that the final batch size will be `BATCH_SIZE` * `RAND_CROP_NUM_SAMPLES`
+    '''
+    NUM_WORKERS: int = 4
+    '''Number of parallel processes for data loading (CacheDataset or DataLoader)'''
+    PIN_MEMORY: bool = True
+    NUM_EPOCHS: int = 150
+    NUM_CLASSES: int = -1
+    '''How many classes to predict.
+    For binary segmentation, set to 2 (tumour vs background).
+    For multi-class, set to 3 (background, liver, tumour).'''
+    TUMOUR_CLASS_INDEX: int = -1
+    '''The index of the tumour class in the model's output channels.
+    For binary segmentation (NUM_CLASSES=2), this should be 1 if the
+    classes are ordered as [background, tumour]. For multi-class segmentation (NUM_CLASSES=3),
+    this should be 2 if the classes are ordered as [background, liver, tumour].'''
 
-# -----------------------------------------------------------------------------
-# 2. Environment detection and validation
-# -----------------------------------------------------------------------------
-ENV = os.getenv("PIN_ENV")
+    # Early Stopping
+    EARLY_STOPPING_PATIENCE: int = 20
+    '''Number of epochs with no improvement after which training will be stopped.'''
+    EARLY_STOPPING_MIN_DELTA: float = 0.005
+    '''Minimum change in the monitored metric to qualify as an improvement.'''
+    WARMUP_EPOCHS: int = 5
+    '''Number of epochs for linear learning rate warmup (CosineSchedule).'''
 
-if ENV is None:
-    raise EnvironmentError(
-        "[Config] ERROR: Environment variable 'PIN_ENV' is not set!\n"
-        "Please do one of the following:\n"
-        "   1. Create a '.env' file in the project root with: PIN_ENV=local\n"
-        "   2. Or set it in your terminal: export PIN_ENV=local\n"
-        "   3. Or set it in Lightning AI Studio settings.\n\n"
-        "In any case, be sure to check .env.example for the expected format "
-        "of the .env file and required variables."
-    )
+    # Paths (resolved at init)
+    CT_ROOT: Path = field(default_factory=Path)
+    CT_TEST: Path = field(default_factory=Path)
+    OUTPUT_DIR: Path = field(default_factory=Path)
+    CHECKPOINT_DIR: Path = field(default_factory=Path)
+    LOG_DIR: Path = field(default_factory=Path)
+    TENSORBOARD_DIR: Path = field(default_factory=Path)
+    PERSISTENT_DATASET_DIR: Path = field(default_factory=Path)
+    STATS_DIR: Path = field(default_factory=Path)
+    SPLIT_DIR: Path = field(default_factory=Path)
+    TRAIN_STATS_DIR: Path = field(default_factory=Path)
+    PER_CASE_TRAIN_STATS_FILE: Path = field(default_factory=Path)
+    LOG_LEVEL_CONSOLE: str = "INFO"
+    LOG_LEVEL_FILE: str = "DEBUG"
 
-ENV = ENV.lower()
-RECOGNISED_ENVS = {"local", "cloud"}
+    # Notifications (mail)
+    ENABLE_EMAIL_NOTIFICATIONS: bool = False
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = -1
+    EMAIL_SENDER: str = ""
+    EMAIL_PASSWORD: str = ""
+    EMAIL_RECIPIENT: str = ""
 
-if ENV not in RECOGNISED_ENVS:
-    raise ValueError(
-        f"[Config] Environment [{ENV}] is not recognised. Please set PIN_ENV to"
-        f" one of {RECOGNISED_ENVS}"
-    )
+    # Notifications (Telegram)
+    ENABLE_TELEGRAM_NOTIFICATIONS: bool = False
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID: str = ""
 
-print(f"[Config] Loading configuration for environment: [{ENV.upper()}]")
+# Module-level singleton (lazy)
+_config: Config = None
 
-RUN_ID = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+def init() -> Config:
+    global _config
+    if _config is not None:
+        return _config
 
-# -----------------------------------------------------------------------------
-# 2. Shared Constants (Same across all environments)
-# -----------------------------------------------------------------------------
+    #  Check computing power
+    # ----------------------------------------------------------------
 
-#  Check computing power
-# ----------------------------------------------------------------
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    hc_gpu = False
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-HC_GPU = False
-'''HC_GPU is a flag to indicate if we are on the High-Compute GPU.
-Note that this only means the GPU has more than 30GB of VRAM'''
+    if device == "cuda":
+        if torch.cuda.is_available():
+            vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            hc_gpu = vram_gb >= 30
 
-if DEVICE == "cuda":
-    if torch.cuda.is_available():
-        vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-        HC_GPU = vram_gb >= 30
-
-# For reproducibility
-RANDOM_SEED: Final[int] = 42
-
-#  File locations
-# ----------------------------------------------------------------
-
-CT_ROOT_STR = os.getenv("LITS_CT_ROOT")
-CT_TEST_STR = os.getenv("LITS_CT_TEST")
-OUTPUT_DIR_STR = os.getenv("OUTPUT_DIR")
-# CHECKPOINT_DIR_STR = os.getenv("CHECKPOINT_DIR")
-PERSISTENT_DATASET_DIR_STR = os.getenv("PERSISTENT_DATASET_DIR")
-STATS_DIR_STR = os.getenv("STATS_DIR")
-SPLIT_DIR_STR = os.getenv("SPLIT_DIR")
-
-# LOG_DIR_STR = os.getenv("LOG_DIR")
-LOG_LEVEL_CONSOLE = os.getenv("LOG_LEVEL_CONSOLE", "INFO").upper()
-LOG_LEVEL_FILE = os.getenv("LOG_LEVEL_FILE", "DEBUG").upper()
-
-#  File validations
-# ----------------------------------------------------------------
-
-if not CT_ROOT_STR:
-    raise ValueError("[Config] Environment variable 'LITS_CT_ROOT' is not set!")
-if not CT_TEST_STR:
-    raise ValueError("[Config] Environment variable 'LITS_CT_TEST' is not set!")
-if not OUTPUT_DIR_STR:
-    raise ValueError("[Config] Environment variable 'OUTPUT_DIR' is not set. "
-          "Please set 'OUTPUT_DIR' to the directory where checkpoints, logs, and "
-          "other outputs will be saved.")
-if not PERSISTENT_DATASET_DIR_STR:
-    print("[Config] Warning: 'PERSISTENT_DATASET_DIR' is not set. "
-          "PersistentDataset will be disabled.")
-
-if not STATS_DIR_STR:
-    raise ValueError("[Config] Environment variable 'STATS_DIR' is not set. "
-          "Stratification cannot be performed. Please set 'STATS_DIR' to the "
-          "directory where the precomputed dataset statistics are stored.")
-
-if not SPLIT_DIR_STR:
-    raise ValueError("[Config] Environment variable 'SPLIT_DIR' is not set. "
-          "Splitting cannot be performed. Please set 'SPLIT_DIR' to the "
-          "directory where the split files will be stored.")
-
-if LOG_LEVEL_CONSOLE not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
-    print(f"[Config] Warning: LOG_LEVEL_CONSOLE '{LOG_LEVEL_CONSOLE}' is not "
-           "valid. Defaulting to 'INFO'.")
-    LOG_LEVEL_CONSOLE = "INFO"
-if LOG_LEVEL_FILE not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
-    print(f"[Config] Warning: LOG_LEVEL_FILE '{LOG_LEVEL_FILE}' is not valid. "
-           "Defaulting to 'DEBUG'.")
-    LOG_LEVEL_FILE = "DEBUG"
-
-CT_ROOT = Path(CT_ROOT_STR)
-CT_TEST = Path(CT_TEST_STR)
-OUTPUT_DIR = Path(OUTPUT_DIR_STR)
-STATS_DIR = Path(STATS_DIR_STR)
-SPLIT_DIR = Path(SPLIT_DIR_STR)
-TRAIN_STATS_DIR = STATS_DIR / "train"
-TRAIN_STATS_DIR.mkdir(parents=True, exist_ok=True)
-PER_CASE_TRAIN_STATS_FILE = TRAIN_STATS_DIR / "per_case_summary.csv"
-PERSISTENT_DATASET_DIR = Path(PERSISTENT_DATASET_DIR_STR) if PERSISTENT_DATASET_DIR_STR else None
-
-CHECKPOINT_DIR = OUTPUT_DIR / RUN_ID / "checkpoints"
-LOG_DIR = OUTPUT_DIR / RUN_ID / "logs"
-TENSORBOARD_DIR = OUTPUT_DIR / RUN_ID / "tensorboard"
-
-#  Hyperparameters and constants
-# ----------------------------------------------------------------
-
-# CTs are in Hounsfield Units: -1000 (air), 0 (water), 40-60 (soft tissues), 100+ (bone)
-# we just need liver and tumor, so we can clip the intensities to a smaller range
-# -175 includes liver and fat. -75 would include only liver but it might be too aggressive.
-HU_WINDOW_MIN: Final[int] = -175
-HU_WINDOW_MAX: Final[int] = 250
-LEARNING_RATE: Final[float] = 1e-4
-
-NUM_CLASSES: Final[int] = 3
-'''How many classes to predict.
-For binary segmentation, set to 2 (tumour vs background).
-For multi-class, set to 3 (background, liver, tumour).'''
-
-RAND_CROP_NUM_SAMPLES: Final[int] = 2
-'''Number of random crops to extract from each volume during training.
-Note that the final batch size will be `BATCH_SIZE` * `RAND_CROP_NUM_SAMPLES`
-'''
-
-TUMOUR_CLASS_INDEX: Final[int] = 2 if NUM_CLASSES == 3 else 1
-'''The index of the tumour class in the model's output channels.
-For binary segmentation (NUM_CLASSES=2), this should be 1 if the
-classes are ordered as [background, tumour]. For multi-class segmentation (NUM_CLASSES=3),
-this should be 2 if the classes are ordered as [background, liver, tumour].'''
-
-VAL_BATCH_SIZE: Final[int] = 1
-'''DataLoader's batch size for validation. Kept at 1 for deterministic evaluation
-and memory safety with large 3D volumes. NOT TO BE CONFUSED WITH `VAL_PATCH_SIZE`'''
-
-cache_source = os.getenv("CACHE_SOURCE", "ram").lower()
-if cache_source not in {"ram", "disk"}:
-    print(f"[Config] Warning: CACHE_SOURCE '{cache_source}' is not valid. "
-          "Defaulting to 'ram'.")
-    cache_source = "ram"
-
-USE_CACHE_DATASET: Final[bool] = cache_source == "ram"
-'''Whether to use a caching dataset that keeps preprocessed volumes in memory.
-This can speed up training but requires more RAM.
-If False, PersistentDataset will be used instead
-'''
-
-# Early stopping configuration
-EARLY_STOPPING_PATIENCE = 20
-'''Number of epochs with no improvement after which training will be stopped.'''
-
-EARLY_STOPPING_MIN_DELTA = 0.005
-'''Minimum change in the monitored metric to qualify as an improvement.'''
-
-WARMUP_EPOCHS: Final[int] = 5
-'''Number of epochs for linear learning rate warmup (CosineSchedule).'''
-
-# -----------------------------------------------------------------------------
-# 3. Environment-Specific Configuration
-# -----------------------------------------------------------------------------
-# Run `nproc` or `lscpu` for number of CPU cores. NUM_WORKERS < number of cores.
-NUM_WORKERS: int
-'''Number of parallel processes for data loading (CacheDataset or DataLoader)'''
-PIN_MEMORY: bool
-NUM_EPOCHS: int
-TRAIN_PATCH_SIZE: tuple
-VAL_PATCH_SIZE: tuple
-'''The size of the 3D patches to be extracted from the volumes for training and validation.
-(Only used in local env). NOT TO BE CONFUSED WITH `VAL_BATCH_SIZE`'''
-
-# This is a parameter that can be tuned based on the GPU VRAM and CPU RAM available.
-BATCH_SIZE: int
-'''DataLoader's batch size. Set to 1 for memory safety, especially with large 3D volumes.
-(Usually between 1 and 4 depending on GPU VRAM)
-Note that the final batch size will be `BATCH_SIZE` * `RAND_CROP_NUM_SAMPLES`'''
-
-ISO_SPACING: tuple
-'''The isotropic spacing to which all CT volumes will be resampled.
-A good choice is (1.5, 1.5, 1.5). It is memory efficient but it might introduce
-some blurring. (1.0, 1.0, 1.0) is an optimal choice.
-Please note that in LiTS most of the volumes have a z spacing of around 0.7-1.0mm, 
-so resampling to 1.0mm will not introduce much blurring while ensuring. However,
-there are 2 volumes with a z spacing of .5mm, so here we should be more careful.'''
-
-if ENV == "local":
-    print("[Config] Running in LOCAL environment.")
-
-    NUM_WORKERS = 0
-    PIN_MEMORY = False
-    BATCH_SIZE = 1
-    NUM_EPOCHS = 5
-    TRAIN_PATCH_SIZE = (64, 64, 64)
-    VAL_PATCH_SIZE = (64, 64, 64)
-    ISO_SPACING = (2.0, 2.0, 2.0)
-
-elif ENV == "cloud":
-    print("[Config] Running in CLOUD environment (Lightning AI). Using more computing power.")
+    run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
     cpu_count = os.cpu_count() or 1
-    preferred_num_workers = 12 if HC_GPU else 2
-    NUM_WORKERS = min(preferred_num_workers, cpu_count)
-    PIN_MEMORY = True
-    BATCH_SIZE = 4 if HC_GPU else 2
-    NUM_EPOCHS = 150 if HC_GPU else 5
-    TRAIN_PATCH_SIZE = (96, 96, 96)
-    # Not used by the standard cloud validation pipeline, but kept for config/logging
-    # consistency and for code paths that still reference VAL_PATCH_SIZE.
-    VAL_PATCH_SIZE = TRAIN_PATCH_SIZE
-    # TODO: Tune. Both options sound valid, so decide which is better based on experiments.
-    ISO_SPACING = (1.0, 1.0, 1.0) if HC_GPU else (1.5, 1.5, 1.5)
 
-# -----------------------------------------------------------------------------
-# 4. Final Safety Check & Directory Creation
-# -----------------------------------------------------------------------------
-CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-LOG_DIR.mkdir(parents=True, exist_ok=True)
+    # ---------------------------------------
+    # YOU CAN CHANGE VALUES HERE
+    # ---------------------------------------
+    # `hc_gpu` is a flag to indicate if we are on the High-Compute GPU.
+    # Note that this only means the GPU has more than 30GB of VRAM.
 
-if NUM_CLASSES != 2 and NUM_CLASSES != 3:
-    raise ValueError("[Config] NUM_CLASSES must be either 2 (for binary segmentation) "
-                     "or 3 (for multi-class segmentation).")
+    # num_classes = 2 or 3
+    num_classes = 3
+    tumour_class_index = 2 if num_classes == 3 else 1
+    gpu_num_workers = 12 if hc_gpu else 2
 
-if not CT_ROOT.exists():
-    raise FileNotFoundError(f"[Config] CT root directory does not exist: {CT_ROOT}")
+    local_specific = {
+        "num_workers": 0,
+        "pin_memory": False,
+        "batch_size": 1,
+        "num_epochs": 5,
+        "train_patch_size": (64, 64, 64),
+        "val_patch_size": (64, 64, 64),
+        "iso_spacing": (2.0, 2.0, 2.0),
+    }
 
-if DEVICE == "cuda" and not USE_CACHE_DATASET:
-    if PERSISTENT_DATASET_DIR is None:
-        raise ValueError("[Config] Persistent dataset directory must be set when"
-                          " using CUDA without cache dataset.")
+    cloud_specific = {
+        "num_workers": min(gpu_num_workers, cpu_count),
+        "pin_memory": True,
+        "batch_size": 4 if hc_gpu else 2,
+        "num_epochs": 150 if hc_gpu else 5,
+        "train_patch_size": (96, 96, 96),
+        "val_patch_size": (96, 96, 96),  # Not used but kept for config/logging consistency
+        # TODO: Tune. Both options sound valid, so decide which is better based on experiments.
+        "iso_spacing": (1.0, 1.0, 1.0) if hc_gpu else (1.5, 1.5, 1.5),
+    }
 
-if PERSISTENT_DATASET_DIR and not PERSISTENT_DATASET_DIR.exists():
-    print("[Config] Persistent dataset directory does not exist. "
-          f"Creating: {PERSISTENT_DATASET_DIR}")
-    PERSISTENT_DATASET_DIR.mkdir(parents=True, exist_ok=True)
+    # -----------------------------------------------------------------------------
+    # 0. Load Environment Variables
+    # -----------------------------------------------------------------------------
 
-if not STATS_DIR.exists():
-    print("[Config] Stats directory does not exist. "
-          f"Creating: {STATS_DIR}")
-    STATS_DIR.mkdir(parents=True, exist_ok=True)
+    print("=" * 80)
+    print("This is a configuration file.")
+    print("The configuration is loaded at the start of the program and defines important constants, ")
+    print("paths, and hyperparameters.")
+    print("Please review the settings below and adjust them as needed before running the program.")
+    print("If you are running this for the first time, make sure to create a .env")
+    print("file based on the .env.example template and fill in the required paths and settings.")
+    print("")
+    print("NOTE: The logs of this file won't be stored in the logs directory,")
+    print("so please pay attention to any warnings or errors printed here.")
+    print("=" * 80)
+    print("[Config] Loading environment variables from .env file...")
+    load_dotenv()
 
-if not SPLIT_DIR.exists():
-    print("[Config] Split directory does not exist. "
-          f"Creating: {SPLIT_DIR}")
-    SPLIT_DIR.mkdir(parents=True, exist_ok=True)
+    # -----------------------------------------------------------------------------
+    # 1. Suppress warnings from libraries to keep the logs clean.
+    # -----------------------------------------------------------------------------
+    warnings.filterwarnings(
+        "ignore",
+        # MONAI sliding-window inference triggers a deprecation warning on PyTorch's internal
+        # index behaviour. This can be safely ignored.
+        message=".*non-tuple sequence for multidimensional indexing.*",
+        category=DeprecationWarning,
+        module=r"torch(\..*)?$",
+    )
 
+    # -----------------------------------------------------------------------------
+    # 2. Environment detection and validation
+    # -----------------------------------------------------------------------------
+    env = os.getenv("PIN_ENV", "").lower()
 
-print(f"[Config]   Device: {DEVICE}")
-print(f"[Config]   Batch Size: {BATCH_SIZE}")
-print(f"[Config]   RAND_CROP_NUM_SAMPLES: {RAND_CROP_NUM_SAMPLES} (Effective "
-      f"Batch Size: {BATCH_SIZE * RAND_CROP_NUM_SAMPLES})")
-print(f"[Config]   Val Batch Size: {VAL_BATCH_SIZE}")
-print(f"[Config]   Workers: {NUM_WORKERS}")
-print(f"[Config]   Data Root: {CT_ROOT}")
-print(f"[Config]   Checkpoint Dir: {CHECKPOINT_DIR}")
-print(f"[Config]   Log Dir: {LOG_DIR}")
-print(f"[Config]   Persistent Dataset Dir: {PERSISTENT_DATASET_DIR}")
-print("=" * 80)
-
-# -----------------------------------------------------------------------------
-# 5. Email / Notification Configuration
-# -----------------------------------------------------------------------------
-SMTP_HOST = os.getenv("SMTP_HOST", "")
-SMTP_PORT_RAW = os.getenv("SMTP_PORT", "").strip()
-SMTP_PORT = None
-EMAIL_SENDER = os.getenv("EMAIL_SENDER", "")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
-EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT", "")
-ENABLE_EMAIL_NOTIFICATIONS = os.getenv("ENABLE_EMAIL_NOTIFICATIONS", "false").lower() == "true"
-
-ENABLE_TELEGRAM_NOTIFICATIONS = os.getenv(
-    "ENABLE_TELEGRAM_NOTIFICATIONS", "false").lower() == "true"
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-
-if ENABLE_EMAIL_NOTIFICATIONS:
-    if not all([SMTP_HOST, SMTP_PORT_RAW, EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECIPIENT]):
-        raise ValueError(
-            "[Config] Email notifications are enabled but one or more email configuration "
-            "variables are missing. Please set SMTP_HOST, SMTP_PORT, EMAIL_SENDER, "
-            "EMAIL_PASSWORD, and EMAIL_RECIPIENT in your .env file."
+    if not env:
+        raise EnvironmentError(
+            "[Config] ERROR: Environment variable 'PIN_ENV' is not set!\n"
+            "Please do one of the following:\n"
+            "   1. Create a '.env' file in the project root with: PIN_ENV=local\n"
+            "   2. Or set it in your terminal: export PIN_ENV=local\n"
+            "   3. Or set it in Lightning AI Studio settings.\n\n"
+            "In any case, be sure to check .env.example for the expected format "
+            "of the .env file and required variables."
         )
-    try:
-        SMTP_PORT = int(SMTP_PORT_RAW)
-    except ValueError as exc:
-        raise ValueError(
-            "[Config] Email notifications are enabled but SMTP_PORT is not a valid integer. "
-            "Please set SMTP_PORT to a numeric port value in your .env file."
-        ) from exc
-    print("[Config] Email notifications are enabled. Emails will be sent to "
-          f"{EMAIL_RECIPIENT} at the end of training and for exceptions handled during training.")
-else:
-    print("[Config] Email notifications are disabled. To enable, set "
-            "ENABLE_EMAIL_NOTIFICATIONS=true and provide the required email "
-            "configuration in the .env file.")
 
-if ENABLE_TELEGRAM_NOTIFICATIONS:
-    if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
+    recognised_envs = {"local", "cloud"}
+
+    if env not in recognised_envs:
         raise ValueError(
-            "[Config] Telegram notifications are enabled but TELEGRAM_BOT_TOKEN and/or "
-            "TELEGRAM_CHAT_ID is missing. Please set TELEGRAM_BOT_TOKEN and "
-            "TELEGRAM_CHAT_ID in your .env file."
+            f"[Config] Environment [{env}] is not recognised. Please set PIN_ENV to"
+            f" one of {recognised_envs}"
         )
-    print("[Config] Telegram notifications are enabled. Alerts will be sent to "
-          "the specified chat at the start of training, at the end of training, "
-          "and for exceptions handled during training.")
+
+    print(f"[Config] Loading configuration for environment: [{env.upper()}]")
+
+    # -----------------------------------------------------------------------------
+    # 2. Shared Constants (Same across all environments)
+    # -----------------------------------------------------------------------------
+
+    #  File locations
+    # ----------------------------------------------------------------
+
+    ct_root_str = os.getenv("LITS_CT_ROOT")
+    ct_test_str = os.getenv("LITS_CT_TEST")
+    output_dir_str = os.getenv("OUTPUT_DIR")
+    # CHECKPOINT_DIR_STR = os.getenv("CHECKPOINT_DIR")
+    persistent_dataset_dir_str = os.getenv("PERSISTENT_DATASET_DIR")
+    stats_dir_str = os.getenv("STATS_DIR")
+    split_dir_str = os.getenv("SPLIT_DIR")
+
+    # LOG_DIR_STR = os.getenv("LOG_DIR")
+    log_level_console = os.getenv("LOG_LEVEL_CONSOLE", "INFO").upper()
+    log_level_file = os.getenv("LOG_LEVEL_FILE", "DEBUG").upper()
+
+    #  File validations
+    # ----------------------------------------------------------------
+
+    if not ct_root_str:
+        raise ValueError("[Config] Environment variable 'LITS_CT_ROOT' is not set!")
+    if not ct_test_str:
+        raise ValueError("[Config] Environment variable 'LITS_CT_TEST' is not set!")
+    if not output_dir_str:
+        raise ValueError("[Config] Environment variable 'OUTPUT_DIR' is not set. "
+            "Please set 'OUTPUT_DIR' to the directory where checkpoints, logs, and "
+            "other outputs will be saved.")
+    if not persistent_dataset_dir_str:
+        print("[Config] Warning: 'PERSISTENT_DATASET_DIR' is not set. "
+            "PersistentDataset will be disabled.")
+
+    if not stats_dir_str:
+        raise ValueError("[Config] Environment variable 'STATS_DIR' is not set. "
+            "Stratification cannot be performed. Please set 'STATS_DIR' to the "
+            "directory where the precomputed dataset statistics are stored.")
+
+    if not split_dir_str:
+        raise ValueError("[Config] Environment variable 'SPLIT_DIR' is not set. "
+            "Splitting cannot be performed. Please set 'SPLIT_DIR' to the "
+            "directory where the split files will be stored.")
+
+    if log_level_console not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+        print(f"[Config] Warning: LOG_LEVEL_CONSOLE '{log_level_console}' is not "
+            "valid. Defaulting to 'INFO'.")
+        log_level_console = "INFO"
+    if log_level_file not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+        print(f"[Config] Warning: LOG_LEVEL_FILE '{log_level_file}' is not valid. "
+            "Defaulting to 'DEBUG'.")
+        log_level_file = "DEBUG"
+
+    #  Hyperparameters and constants
+    # ----------------------------------------------------------------
+    if num_classes != 2 and num_classes != 3:
+        raise ValueError("[Config] NUM_CLASSES must be either 2 (for binary segmentation) "
+                        "or 3 (for multi-class segmentation).")
+
+    cache_source = os.getenv("CACHE_SOURCE", "ram").lower()
+    if cache_source not in {"ram", "disk"}:
+        print(f"[Config] Warning: CACHE_SOURCE '{cache_source}' is not valid. "
+            "Defaulting to 'ram'.")
+        cache_source = "ram"
+
+    use_cache_dataset = cache_source == "ram"
+
+    # -------------------
+    # Path resolution
+    # -------------------
+
+    ct_root = Path(ct_root_str)
+    ct_test = Path(ct_test_str)
+    output_dir = Path(output_dir_str)
+    stats_dir = Path(stats_dir_str)
+    split_dir = Path(split_dir_str)
+    train_stats_dir = stats_dir / "train"
+    train_stats_dir.mkdir(parents=True, exist_ok=True)
+    per_case_train_stats_file = train_stats_dir / "per_case_summary.csv"
+    persistent_dataset_dir = Path(persistent_dataset_dir_str) if persistent_dataset_dir_str else None
+
+    checkpoint_dir = output_dir / run_id / "checkpoints"
+    log_dir = output_dir / run_id / "logs"
+    tensorboard_dir = output_dir / run_id / "tensorboard"
+
+    if device == "cuda" and not use_cache_dataset:
+        if persistent_dataset_dir is None:
+            raise ValueError("[Config] Persistent dataset directory must be set when"
+                            " using CUDA without cache dataset.")
+
+    # -----------------------------------------------------------------------------
+    # 3. Environment-Specific Configuration
+    # -----------------------------------------------------------------------------
+    # Run `nproc` or `lscpu` for number of CPU cores. NUM_WORKERS < number of cores.
+
+    if env == "local":
+        print("[Config] Running in LOCAL environment.")
+        num_workers = local_specific["num_workers"]
+        pin_memory = local_specific["pin_memory"]
+        batch_size = local_specific["batch_size"]
+        num_epochs = local_specific["num_epochs"]
+        train_patch_size = local_specific["train_patch_size"]
+        val_patch_size = local_specific["val_patch_size"]
+        iso_spacing = local_specific["iso_spacing"]
+
+    else:
+        print("[Config] Running in CLOUD environment. Using more computing power.")
+        num_workers = cloud_specific["num_workers"]
+        pin_memory = cloud_specific["pin_memory"]
+        batch_size = cloud_specific["batch_size"]
+        num_epochs = cloud_specific["num_epochs"]
+        train_patch_size = cloud_specific["train_patch_size"]
+        val_patch_size = cloud_specific["val_patch_size"]
+        iso_spacing = cloud_specific["iso_spacing"]
+
+    # -----------------------------------------------------------------------------
+    # 4. Final Safety Check & Directory Creation
+    # -----------------------------------------------------------------------------
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    if not ct_root.exists():
+        raise FileNotFoundError(f"[Config] CT root directory does not exist: {ct_root}")
+
+    if persistent_dataset_dir and not persistent_dataset_dir.exists():
+        print("[Config] Persistent dataset directory does not exist. "
+            f"Creating: {persistent_dataset_dir}")
+        persistent_dataset_dir.mkdir(parents=True, exist_ok=True)
+
+    # -----------------------------------------------------------------------------
+    # 5. Email / Notification Configuration
+    # -----------------------------------------------------------------------------
+    smtp_host = os.getenv("SMTP_HOST", "")
+    smtp_port_raw = os.getenv("SMTP_PORT", "").strip()
+    smtp_port = None
+    email_sender = os.getenv("EMAIL_SENDER", "")
+    email_password = os.getenv("EMAIL_PASSWORD", "")
+    email_recipient = os.getenv("EMAIL_RECIPIENT", "")
+    enable_email_notifications = os.getenv("ENABLE_EMAIL_NOTIFICATIONS", "false").lower() == "true"
+
+    enable_telegram_notifications = os.getenv(
+        "ENABLE_TELEGRAM_NOTIFICATIONS", "false").lower() == "true"
+    telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+
+    if enable_email_notifications:
+        if not all([smtp_host, smtp_port_raw, email_sender, email_password, email_recipient]):
+            raise ValueError(
+                "[Config] Email notifications are enabled but one or more email configuration "
+                "variables are missing. Please set SMTP_HOST, SMTP_PORT, EMAIL_SENDER, "
+                "EMAIL_PASSWORD, and EMAIL_RECIPIENT in your .env file."
+            )
+        try:
+            smtp_port = int(smtp_port_raw)
+        except ValueError as exc:
+            raise ValueError(
+                "[Config] Email notifications are enabled but SMTP_PORT is not a valid integer. "
+                "Please set SMTP_PORT to a numeric port value in your .env file."
+            ) from exc
+        print("[Config] Email notifications are enabled. Emails will be sent to "
+            f"{email_recipient} at the end of training and for exceptions handled during training.")
+    else:
+        print("[Config] Email notifications are disabled. To enable, set "
+                "ENABLE_EMAIL_NOTIFICATIONS=true and provide the required email "
+                "configuration in the .env file.")
+
+    if enable_telegram_notifications:
+        if not all([telegram_bot_token, telegram_chat_id]):
+            raise ValueError(
+                "[Config] Telegram notifications are enabled but TELEGRAM_BOT_TOKEN and/or "
+                "TELEGRAM_CHAT_ID is missing. Please set TELEGRAM_BOT_TOKEN and "
+                "TELEGRAM_CHAT_ID in your .env file."
+            )
+        print("[Config] Telegram notifications are enabled. Alerts will be sent to "
+            "the specified chat at the start of training, at the end of training, "
+            "and for exceptions handled during training.")
+
+    print("[Config] Configuration successfully loaded.")
+    print("=" * 80)
+
+    _config = Config(
+        RUN_ID=run_id,
+        ENV=env,
+        DEVICE=device,
+        HC_GPU=hc_gpu,
+        CT_ROOT=ct_root,
+        CT_TEST=ct_test,
+        NUM_CLASSES=num_classes,
+        OUTPUT_DIR=output_dir,
+        CHECKPOINT_DIR=checkpoint_dir,
+        LOG_DIR=log_dir,
+        TENSORBOARD_DIR=tensorboard_dir,
+        PERSISTENT_DATASET_DIR=persistent_dataset_dir,
+        STATS_DIR=stats_dir,
+        SPLIT_DIR=split_dir,
+        TRAIN_STATS_DIR=train_stats_dir,
+        PER_CASE_TRAIN_STATS_FILE=per_case_train_stats_file,
+        LOG_LEVEL_CONSOLE=log_level_console,
+        LOG_LEVEL_FILE=log_level_file,
+        NUM_WORKERS=num_workers,
+        PIN_MEMORY=pin_memory,
+        BATCH_SIZE=batch_size,
+        NUM_EPOCHS=num_epochs,
+        TRAIN_PATCH_SIZE=train_patch_size,
+        VAL_PATCH_SIZE=val_patch_size,
+        ISO_SPACING=iso_spacing,
+        USE_CACHE_DATASET=use_cache_dataset,
+        TUMOUR_CLASS_INDEX=tumour_class_index,
+        ENABLE_EMAIL_NOTIFICATIONS=enable_email_notifications,
+        SMTP_HOST=smtp_host,
+        SMTP_PORT=smtp_port,
+        EMAIL_SENDER=email_sender,
+        EMAIL_PASSWORD=email_password,
+        EMAIL_RECIPIENT=email_recipient,
+        ENABLE_TELEGRAM_NOTIFICATIONS=enable_telegram_notifications,
+        TELEGRAM_BOT_TOKEN=telegram_bot_token,
+        TELEGRAM_CHAT_ID=telegram_chat_id,
+    )
+
+    return _config
+
+def get() -> Config:
+    """Safely retrieve the initialised config. Raises if init() was never called."""
+    if _config is None:
+        raise RuntimeError(
+            "Configuration not initialised. Call config.init() before accessing attributes."
+        )
+    return _config
 
 # -----------------------------------------------------------------------------
 # 6. Helper Functions
@@ -367,60 +457,63 @@ def is_limited_env(include_vram=True) -> bool:
     the amount of memory of GPU so a CUDA device with less than 30GB of VRAM
     will be considered a limited environment.
     '''
-    if ENV == "local" or DEVICE == "cpu":
+    config = get()
+    if config.ENV == "local" or config.DEVICE == "cpu":
         return True
 
-    return include_vram and HC_GPU is False
+    return include_vram and config.HC_GPU is False
 
 def to_dict() -> dict:
     """Returns a serialisable snapshot of all configuration constants."""
+    config = get()
     return {
-        "RUN_ID": RUN_ID,
+        "RUN_ID": config.RUN_ID,
         # Environment & Device
-        "ENV": ENV,
-        "DEVICE": DEVICE,
-        "HC_GPU": HC_GPU,
-        "RANDOM_SEED": RANDOM_SEED,
+        "ENV": config.ENV,
+        "DEVICE": config.DEVICE,
+        "HC_GPU": config.HC_GPU,
+        "RANDOM_SEED": config.RANDOM_SEED,
 
         # Preprocessing
-        "HU_WINDOW_MIN": HU_WINDOW_MIN,
-        "HU_WINDOW_MAX": HU_WINDOW_MAX,
-        "ISO_SPACING": list(ISO_SPACING),  # tuple → list for JSON/weights compatibility
-        "TRAIN_PATCH_SIZE": list(TRAIN_PATCH_SIZE),
-        "VAL_PATCH_SIZE": list(VAL_PATCH_SIZE),
-        "USE_CACHE_DATASET": USE_CACHE_DATASET,
+        "HU_WINDOW_MIN": config.HU_WINDOW_MIN,
+        "HU_WINDOW_MAX": config.HU_WINDOW_MAX,
+        "ISO_SPACING": list(config.ISO_SPACING),  # tuple → list for JSON/weights compatibility
+        "TRAIN_PATCH_SIZE": list(config.TRAIN_PATCH_SIZE),
+        "VAL_PATCH_SIZE": list(config.VAL_PATCH_SIZE),
+        "USE_CACHE_DATASET": config.USE_CACHE_DATASET,
 
         # Training Hyperparameters
-        "LEARNING_RATE": LEARNING_RATE,
-        "BATCH_SIZE": BATCH_SIZE,
-        "VAL_BATCH_SIZE": VAL_BATCH_SIZE,
-        "RAND_CROP_NUM_SAMPLES": RAND_CROP_NUM_SAMPLES,
-        "NUM_WORKERS": NUM_WORKERS,
-        "PIN_MEMORY": PIN_MEMORY,
-        "NUM_EPOCHS": NUM_EPOCHS,
-        "NUM_CLASSES": NUM_CLASSES,
-        "TUMOUR_CLASS_INDEX": TUMOUR_CLASS_INDEX,
+        "LEARNING_RATE": config.LEARNING_RATE,
+        "BATCH_SIZE": config.BATCH_SIZE,
+        "VAL_BATCH_SIZE": config.VAL_BATCH_SIZE,
+        "RAND_CROP_NUM_SAMPLES": config.RAND_CROP_NUM_SAMPLES,
+        "NUM_WORKERS": config.NUM_WORKERS,
+        "PIN_MEMORY": config.PIN_MEMORY,
+        "NUM_EPOCHS": config.NUM_EPOCHS,
+        "NUM_CLASSES": config.NUM_CLASSES,
+        "TUMOUR_CLASS_INDEX": config.TUMOUR_CLASS_INDEX,
 
         # Early Stopping
-        "EARLY_STOPPING_PATIENCE": EARLY_STOPPING_PATIENCE,
-        "EARLY_STOPPING_MIN_DELTA": EARLY_STOPPING_MIN_DELTA,
+        "EARLY_STOPPING_PATIENCE": config.EARLY_STOPPING_PATIENCE,
+        "EARLY_STOPPING_MIN_DELTA": config.EARLY_STOPPING_MIN_DELTA,
+        "WARMUP_EPOCHS": config.WARMUP_EPOCHS,
 
         # Paths (convert Path objects to strings)
-        "CT_ROOT": str(CT_ROOT),
-        "CT_TEST": str(CT_TEST),
-        "OUTPUT_DIR": str(OUTPUT_DIR),
-        "CHECKPOINT_DIR": str(CHECKPOINT_DIR),
-        "TENSORBOARD_DIR": str(TENSORBOARD_DIR),
-        "PERSISTENT_DATASET_DIR": str(PERSISTENT_DATASET_DIR) if PERSISTENT_DATASET_DIR else None,
-        "STATS_DIR": str(STATS_DIR) if STATS_DIR else None,
-        "LOG_DIR": str(LOG_DIR),
-        "LOG_LEVEL_CONSOLE": LOG_LEVEL_CONSOLE,
-        "LOG_LEVEL_FILE": LOG_LEVEL_FILE,
-        "SPLIT_DIR": str(SPLIT_DIR),
-        "TRAIN_STATS_DIR": str(TRAIN_STATS_DIR),
-        "PER_CASE_TRAIN_STATS_FILE": str(PER_CASE_TRAIN_STATS_FILE),
+        "CT_ROOT": str(config.CT_ROOT),
+        "CT_TEST": str(config.CT_TEST),
+        "OUTPUT_DIR": str(config.OUTPUT_DIR),
+        "CHECKPOINT_DIR": str(config.CHECKPOINT_DIR),
+        "TENSORBOARD_DIR": str(config.TENSORBOARD_DIR),
+        "PERSISTENT_DATASET_DIR": str(config.PERSISTENT_DATASET_DIR) if config.PERSISTENT_DATASET_DIR else None,
+        "STATS_DIR": str(config.STATS_DIR) if config.STATS_DIR else None,
+        "LOG_DIR": str(config.LOG_DIR),
+        "LOG_LEVEL_CONSOLE": config.LOG_LEVEL_CONSOLE,
+        "LOG_LEVEL_FILE": config.LOG_LEVEL_FILE,
+        "SPLIT_DIR": str(config.SPLIT_DIR),
+        "TRAIN_STATS_DIR": str(config.TRAIN_STATS_DIR),
+        "PER_CASE_TRAIN_STATS_FILE": str(config.PER_CASE_TRAIN_STATS_FILE),
 
         # Notifications (exclude contact details/secrets from persisted config snapshots)
-        "ENABLE_EMAIL_NOTIFICATIONS": ENABLE_EMAIL_NOTIFICATIONS,
-        "ENABLE_TELEGRAM_NOTIFICATIONS": ENABLE_TELEGRAM_NOTIFICATIONS,
+        "ENABLE_EMAIL_NOTIFICATIONS": config.ENABLE_EMAIL_NOTIFICATIONS,
+        "ENABLE_TELEGRAM_NOTIFICATIONS": config.ENABLE_TELEGRAM_NOTIFICATIONS,
     }
