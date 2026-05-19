@@ -1,4 +1,6 @@
 print("[main.py] Importing torch... (This may take a moment)")
+import os
+
 import torch
 from monai.utils import set_determinism
 
@@ -29,8 +31,12 @@ def log_environment_info(config_obj: config.Config) -> None:
         logger.info("CUDA device count: %d", torch.cuda.device_count())
         for i in range(torch.cuda.device_count()):
             logger.info("CUDA device %d: %s", i, torch.cuda.get_device_name(i))
+        logger.info("Available GPU memory (MB): %d", torch.cuda.get_device_properties(0).total_memory // (1024 * 1024))
     else:
         logger.info("No CUDA devices available.")
+
+    logger.info("Available CPU cores: %d", torch.get_num_threads())
+    logger.info("Available CPU memory (GB): %.2f", os.sysconf('SC_PHYS_PAGES') * os.sysconf('SC_PAGE_SIZE') / (1024**3))
 
     logger.info("Device: %s", config_obj.DEVICE)
     logger.info("Batch Size: %d", config_obj.BATCH_SIZE)
