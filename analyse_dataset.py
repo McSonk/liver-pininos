@@ -42,13 +42,15 @@ def main():
      - Provides terminal output unless --no-verbose is set
     '''
 
-    if config.STATS_DIR is None:
+    cfg = config.init()
+
+    if cfg.STATS_DIR is None:
         logger.error("STATS_DIR is not configured. Please set the 'STATS_DIR' "
                      "environment variable to enable statistics export.")
         return
 
-    per_case_csv_path = config.PER_CASE_TRAIN_STATS_FILE
-    aggregate_csv_path = config.STATS_DIR / "aggregate_stats.csv"
+    per_case_csv_path = cfg.PER_CASE_TRAIN_STATS_FILE
+    aggregate_csv_path = cfg.STATS_DIR / "aggregate_stats.csv"
 
     per_case_csv_path.parent.mkdir(parents=True, exist_ok=True)
     aggregate_csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -67,12 +69,12 @@ def main():
     logger.debug("=" * 80)
     logger.info("LiTS Dataset-Wide Analysis")
     logger.debug("=" * 80)
-    logger.info("Data root: %s\n", config.CT_ROOT)
+    logger.info("Data root: %s\n", cfg.CT_ROOT)
 
     # Load and pair data
     logger.info("Discovering and pairing image-label volumes...")
     collector = DataCollector()
-    collector.read_dir(config.CT_ROOT, ds_source='LiTS')
+    collector.read_dir(cfg.CT_ROOT, ds_source='LiTS')
     collector.extract_images_and_labels()
 
     logger.info("Found %d paired volumes.\n", len(collector.datasources))

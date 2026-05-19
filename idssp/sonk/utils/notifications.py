@@ -140,12 +140,13 @@ def send_alert(title: str, message: str, sync: bool = False, file_path: str = No
         file_path: Optional path to attach a file (e.g., training log).
         timeout: Maximum time to wait for the request to complete.
     """
-    if not config.ENABLE_TELEGRAM_NOTIFICATIONS:
+    cfg = config.get()
+    if not cfg.ENABLE_TELEGRAM_NOTIFICATIONS:
         logger.debug("Telegram notifications are disabled. Skipping alert.")
         return
 
-    bot_token = config.TELEGRAM_BOT_TOKEN
-    chat_id = config.TELEGRAM_CHAT_ID
+    bot_token = cfg.TELEGRAM_BOT_TOKEN
+    chat_id = cfg.TELEGRAM_CHAT_ID
     base_url = f"https://api.telegram.org/bot{bot_token}"
 
     def _send_file(title, message):

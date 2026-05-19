@@ -41,24 +41,25 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 def _main(args: argparse.Namespace):
+    cfg = config.init()
     checkpoint = Path(args.checkpoint)
     if not checkpoint.exists():
         logger.error("Checkpoint file not found: %s", checkpoint)
         return 1
     logger.info("[Validation] Reading directories...")
     loader = DataCollector()
-    loader.read_dir(config.CT_TEST, ds_source='LiTS')
+    loader.read_dir(cfg.CT_TEST, ds_source='LiTS')
     test_files = loader.extract_images_and_labels()
     if not test_files:
         logger.error(
             "No valid test image/label pairs were found in %s. "
             "Check the test dataset configuration and contents before running evaluation.",
-            config.CT_TEST,
+            cfg.CT_TEST,
         )
         return 1
     logger.debug("Done! Some information about the environment:")
-    logger.debug("ISO spacing: %s", config.ISO_SPACING)
-    logger.debug("Training patch size: %s", config.TRAIN_PATCH_SIZE)
+    logger.debug("ISO spacing: %s", cfg.ISO_SPACING)
+    logger.debug("Training patch size: %s", cfg.TRAIN_PATCH_SIZE)
 
     logger.info("%d test files", len(test_files))
     for file in test_files:

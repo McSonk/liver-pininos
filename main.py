@@ -19,19 +19,46 @@ logger = get_logger(__name__)
 # Install global hooks (for logging unhandled exceptions)
 install_global_exception_handlers(logger)
 
+def log_environment_info(config_obj: config.Config) -> None:
+    '''Logs detailed information about the training environment, including PyTorch version,
+    CUDA availability and devices, and key configuration parameters.'''
+    logger.info("Environment Information:")
+    logger.info("PyTorch version: %s", torch.__version__)
+    logger.info("CUDA available: %s", torch.cuda.is_available())
+    if torch.cuda.is_available():
+        logger.info("CUDA device count: %d", torch.cuda.device_count())
+        for i in range(torch.cuda.device_count()):
+            logger.info("CUDA device %d: %s", i, torch.cuda.get_device_name(i))
+    else:
+        logger.info("No CUDA devices available.")
+
+    logger.info("Device: %s", config_obj.DEVICE)
+    logger.info("Batch Size: %d", config_obj.BATCH_SIZE)
+    logger.info("RAND_CROP_NUM_SAMPLES: %d (Effective Batch Size: %d)",
+                    config_obj.RAND_CROP_NUM_SAMPLES,
+                    config_obj.BATCH_SIZE * config_obj.RAND_CROP_NUM_SAMPLES)
+    logger.info("Val Batch Size: %d", config_obj.VAL_BATCH_SIZE)
+    logger.info("Workers: %d", config_obj.NUM_WORKERS)
+    logger.info("Data Root: %s", config_obj.CT_ROOT)
+    logger.info("Checkpoint Dir: %s", config_obj.CHECKPOINT_DIR)
+    logger.info("Log Dir: %s", config_obj.LOG_DIR)
+    logger.info("Persistent Dataset Dir: %s", config_obj.PERSISTENT_DATASET_DIR)
+
 if __name__ == "__main__":
+    cfg = config.init()
+    log_environment_info(cfg)
     logger.info("Reading directories...")
     loader = DataCollector()
-    loader.read_dir(config.CT_ROOT, ds_source='LiTS')
+    loader.read_dir(cfg.CT_ROOT, ds_source='LiTS')
     loader.extract_images_and_labels()
     logger.debug("Done! Some information about the environment:")
-    logger.debug("ISO spacing: %s", config.ISO_SPACING)
-    logger.debug("Training patch size: %s", config.TRAIN_PATCH_SIZE)
-    val_patch_size = getattr(config, "VAL_PATCH_SIZE", None)
+    logger.debug("ISO spacing: %s", cfg.ISO_SPACING)
+    logger.debug("Training patch size: %s", cfg.TRAIN_PATCH_SIZE)
+    val_patch_size = getattr(cfg, "VAL_PATCH_SIZE", None)
     if val_patch_size is not None:
         logger.debug("Validation patch size: %s", val_patch_size)
-    logger.debug("Batch size: %d", config.BATCH_SIZE)
-    logger.debug("Number of epochs: %d", config.NUM_EPOCHS)
+    logger.debug("Batch size: %d", cfg.BATCH_SIZE)
+    logger.debug("Number of epochs: %d", cfg.NUM_EPOCHS)
     log_memory_usage(logger, prefix="At program start: ")
     logger.debug("Splitting data into train and val sets...")
     train_files, val_files = loader.get_stratified_split()
@@ -53,17 +80,18 @@ if __name__ == "__main__":
     INIT_TITLE = "[Thesis] Training Pipeline Starting"
     init_body = (
         f"Training has commenced.\n"
-        f"Environment: {config.ENV}\n"
-        f"Device: {config.DEVICE}\n"
-        f"ISO Spacing: {config.ISO_SPACING}\n"
-        f"Patch Size: {config.TRAIN_PATCH_SIZE}\n"
-        f"Expected Epochs: {config.NUM_EPOCHS}"
+        f"Environment: {cfg.ENV}\n"
+        f"Device: {cfg.DEVICE}\n"
+        f"ISO Spacing: {cfg.ISO_SPACING}\n"
+        f"Patch Size: {cfg.TRAIN_PATCH_SIZE}\n"
+        f"Expected Epochs: {cfg.NUM_EPOCHS}"
     )
 
     send_training_email(subject=INIT_TITLE, body=init_body)
     send_alert(INIT_TITLE, init_body)
 
     try:
+        cfg.CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
         builder = ModelBuilder()
         builder.init_data_loaders(train_files, val_files)
 
