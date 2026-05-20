@@ -7,8 +7,10 @@ import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import psutil
 import torch
 from dotenv import load_dotenv
+
 
 @dataclass(frozen=True)
 class Config:
@@ -20,6 +22,7 @@ class Config:
     '''HC_GPU is a flag to indicate if we are on the High-Compute GPU.
     Note that this only means the GPU has more than 30GB of VRAM'''
     RANDOM_SEED: int = 42
+    cpu_memory: float = -1.0
 
     # Preprocessing
     HU_WINDOW_MIN: int = -175
@@ -70,7 +73,7 @@ class Config:
     this should be 2 if the classes are ordered as [background, liver, tumour].'''
 
     # Early Stopping
-    EARLY_STOPPING_PATIENCE: int = 20
+    EARLY_STOPPING_PATIENCE: int = 30
     '''Number of epochs with no improvement after which training will be stopped.'''
     EARLY_STOPPING_MIN_DELTA: float = 0.005
     '''Minimum change in the monitored metric to qualify as an improvement.'''
@@ -118,6 +121,8 @@ def init() -> Config:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     hc_gpu = False
+    cpu_memory = psutil.virtual_memory().total / (1024 ** 3)  # GB
+    lots_of_ram = cpu_memory >= 100
 
     if device == "cuda":
         if torch.cuda.is_available():
@@ -153,7 +158,7 @@ def init() -> Config:
         "num_workers": min(gpu_num_workers, cpu_count),
         "pin_memory": True,
         "batch_size": 4 if hc_gpu else 2,
-        "num_epochs": 150 if hc_gpu else 5,
+        "num_epochs": 200 if hc_gpu else 5,
         "train_patch_size": (96, 96, 96),
         "val_patch_size": (96, 96, 96),  # Not used but kept for config/logging consistency
         # TODO: Tune. Both options sound valid, so decide which is better based on experiments.
@@ -281,6 +286,11 @@ def init() -> Config:
             "Defaulting to 'ram'.")
         cache_source = "ram"
 
+    if cache_source == "ram" and not lots_of_ram:
+        print("[Config] Warning: CACHE_SOURCE is set to 'ram' but not enough CPU "
+              "RAM is available. Defaulting to 'disk'.")
+        cache_source = "disk"
+
     use_cache_dataset = cache_source == "ram"
 
     # -------------------
@@ -396,6 +406,7 @@ def init() -> Config:
     print("=" * 80)
 
     _config = Config(
+        cpu_memory=cpu_memory,
         RUN_ID=run_id,
         ENV=env,
         DEVICE=device,

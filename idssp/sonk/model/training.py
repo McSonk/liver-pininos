@@ -241,7 +241,7 @@ class ModelBuilder:
                 keys=["image", "label"],
                 label_key="label",
                 spatial_size=self.config.TRAIN_PATCH_SIZE,
-                pos=2,
+                pos=3,
                 neg=1,
                 # number of samples to generate per volume
                 num_samples=self.config.RAND_CROP_NUM_SAMPLES,
@@ -432,7 +432,6 @@ class ModelBuilder:
 
         # Cross entropy: voxel-wise classification (smooth gradients)
         # Dice: measures the overlap between predicted and true segmentation masks.
-        # TODO: consider adding ce_weight=[0.0, 1.0, 3.0]
         self.loss_fn = DiceCELoss(
             to_onehot_y=True,
             softmax=True,
@@ -441,7 +440,10 @@ class ModelBuilder:
             # dice weight
             lambda_dice=1.0,
             # CE weight
-            lambda_ce=1.0
+            lambda_ce=1.0,
+            # ce_weight is vector penalisation (how aggresive the penalisation)
+            # is for that class. [background_weight, liver_weight, tumour_weight]
+            ce_weight=torch.tensor([0.0, 1.0, 3.0], device=self.device)
         )
         self.optimizer = optim.AdamW(
             # weights and biases

@@ -37,7 +37,7 @@ def log_environment_info(config_obj: config.Config) -> None:
 
     logger.info("Available CPU cores: %s", os.cpu_count())
     logger.info("PyTorch intra-op threads: %d", torch.get_num_threads())
-    logger.info("Available CPU memory (GB): %.2f", os.sysconf('SC_PHYS_PAGES') * os.sysconf('SC_PAGE_SIZE') / (1024**3))
+    logger.info("Available CPU memory (GB): %.2f", config_obj.cpu_memory)
 
     logger.info("Device: %s", config_obj.DEVICE)
     logger.info("Batch Size: %d", config_obj.BATCH_SIZE)
