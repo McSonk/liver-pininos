@@ -828,9 +828,6 @@ class ModelBuilder:
         avg_train_loss = self._train_epoch()
         avg_val_loss, epoch_dice = self._validate(epoch)
 
-        # Clean up GPU memory after epoch to prevent potential OOM errors in future epochs
-        if self.config.DEVICE == "cuda":
-            torch.cuda.empty_cache()
 
         # Get current learning rate for logging
         current_lr = self.optimizer.param_groups[0]['lr']
