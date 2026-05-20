@@ -33,12 +33,9 @@ def get_logger(
     ------
     `name`: str
         Name of the logger (usually __name__).
-    `log_dir`: Optional[Path]
-         Directory where log files will be saved. If None, file logging is disabled.
     `console_level`: Optional[int]
-        Logging level for console output (e.g., logging.INFO). If None, defaults to logging.INFO.
-    `file_level`: Optional[int]
-        Logging level for file output (e.g., logging.DEBUG). If None, defaults to logging.DEBUG.
+        Logging level for console output (e.g., logging.INFO). If None, defaults to 
+        `config.LOG_LEVEL_CONSOLE`.
 
     Returns
     -------

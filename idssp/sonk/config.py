@@ -69,8 +69,16 @@ class Config:
     TUMOUR_CLASS_INDEX: int = -1
     '''The index of the tumour class in the model's output channels.
     For binary segmentation (NUM_CLASSES=2), this should be 1 if the
-    classes are ordered as [background, tumour]. For multi-class segmentation (NUM_CLASSES=3),
-    this should be 2 if the classes are ordered as [background, liver, tumour].'''
+    classes are ordered as [background, tumour]. For multi-class segmentation
+    (NUM_CLASSES=3), this should be 2 if the classes are ordered as [background,
+    liver, tumour].'''
+    DICE_CE_WEIGHTS: list = None
+    '''The weights for the combined Dice + Cross-Entropy loss.
+    This should be a list of length `NUM_CLASSES`, where the value at `TUMOUR_CLASS_INDEX`
+    is higher to emphasise learning the tumour class. For example, for `NUM_CLASSES=3`
+    and `TUMOUR_CLASS_INDEX=2`,  a good choice is `[0.0, 1.0, 3.0]` to ignore the
+    background, give some weight to the liver, and more weight to the tumour.
+    '''
 
     # Early Stopping
     EARLY_STOPPING_PATIENCE: int = 30
@@ -142,6 +150,7 @@ def init() -> Config:
     # num_classes = 2 or 3
     num_classes = 3
     tumour_class_index = 2 if num_classes == 3 else 1
+    dice_ce_weights = [0.0, 1.0, 3.0] if num_classes == 3 else [1.0, 3.0]
     gpu_num_workers = 12 if hc_gpu else 2
 
     local_specific = {
@@ -414,6 +423,7 @@ def init() -> Config:
         CT_ROOT=ct_root,
         CT_TEST=ct_test,
         NUM_CLASSES=num_classes,
+        DICE_CE_WEIGHTS=dice_ce_weights,
         OUTPUT_DIR=output_dir,
         CHECKPOINT_DIR=checkpoint_dir,
         LOG_DIR=log_dir,
@@ -479,6 +489,7 @@ def to_dict() -> dict:
     config = get()
     return {
         "RUN_ID": config.RUN_ID,
+        "cpu_memory": config.cpu_memory,
         # Environment & Device
         "ENV": config.ENV,
         "DEVICE": config.DEVICE,
@@ -502,6 +513,7 @@ def to_dict() -> dict:
         "PIN_MEMORY": config.PIN_MEMORY,
         "NUM_EPOCHS": config.NUM_EPOCHS,
         "NUM_CLASSES": config.NUM_CLASSES,
+        "DICE_CE_WEIGHTS": config.DICE_CE_WEIGHTS,
         "TUMOUR_CLASS_INDEX": config.TUMOUR_CLASS_INDEX,
 
         # Early Stopping

@@ -236,7 +236,9 @@ class ModelBuilder:
         random_transforms = [
             # Sample patches with a 2:1 ratio of positive (tumor/liver) and
             # negative (background) examples.
-            # This is because of voxel imbalance.
+            # This is because of voxel imbalance. (we want to maximise the likelihood
+            # of sampling tumour voxels, which are the most important to learn, while still including
+            # some negative samples to learn the background)
             RandCropByPosNegLabeld(
                 keys=["image", "label"],
                 label_key="label",
@@ -441,9 +443,9 @@ class ModelBuilder:
             lambda_dice=1.0,
             # CE weight
             lambda_ce=1.0,
-            # ce_weight is vector penalisation (how aggresive the penalisation)
+            # ce_weight is vector penalisation (how aggressive the penalisation)
             # is for that class. [background_weight, liver_weight, tumour_weight]
-            ce_weight=torch.tensor([0.0, 1.0, 3.0], device=self.device)
+            ce_weight=torch.tensor(self.config.DICE_CE_WEIGHTS, device=self.device)
         )
         self.optimizer = optim.AdamW(
             # weights and biases
