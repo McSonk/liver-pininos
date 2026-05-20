@@ -607,7 +607,7 @@ class ModelBuilder:
             self.back_propagate(loss)
 
             train_loss += loss.item()
-            # logger.debug("  Batch Loss: %f | Cumulative Loss: %f", loss.item(), train_loss)
+            logger.debug("  Batch Loss: %f | Cumulative Loss: %f", loss.item(), train_loss)
 
         return train_loss / len(self.train_dl)
 
@@ -703,7 +703,7 @@ class ModelBuilder:
             # Accumulate validation loss for the epoch
             # (This works for model learning, as opposed to `dice_metric`)
             val_loss += batch_loss
-            # logger.debug("  Batch Loss: %f | Cumulative Loss: %f", batch_loss, val_loss)
+            logger.debug("  Batch Loss: %f | Cumulative Loss: %f", batch_loss, val_loss)
 
             # MONAI best practice: decollate batch before applying per-sample transforms
             # (Creates a view of the batch tensors as lists of individual samples)
