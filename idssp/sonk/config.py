@@ -143,7 +143,10 @@ def init() -> Config:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     hc_gpu = False
     cpu_memory = psutil.virtual_memory().total / (1024 ** 3)  # GB
-    container_memory = get_cgroup_memory_limit_bytes() / (1024 ** 3)  # GB
+    container_memory_bytes = get_cgroup_memory_limit_bytes()
+    container_memory = (
+        container_memory_bytes / (1024 ** 3) if container_memory_bytes > 0 else -1.0
+    )  # GB; -1.0 means unknown/unlimited
     process_memory_limit = container_memory if container_memory > 0 else cpu_memory
     lots_of_ram = process_memory_limit >= 60
 
@@ -323,6 +326,11 @@ def init() -> Config:
         print("[Config] Warning: CACHE_TRAIN_SOURCE is set to 'ram' but not enough CPU "
               "RAM is available. Defaulting to 'disk'.")
         cache_train_source = "disk"
+
+    if cache_val_source == "ram" and not lots_of_ram:
+        print("[Config] Warning: CACHE_VAL_SOURCE is set to 'ram' but not enough CPU "
+              "RAM is available. Defaulting to 'disk'.")
+        cache_val_source = "disk"
 
     use_cache_train_dataset = cache_train_source == "ram"
     use_cache_val_dataset = cache_val_source == "ram"
@@ -573,6 +581,7 @@ def to_dict() -> dict:
         "ENABLE_EMAIL_NOTIFICATIONS": config.ENABLE_EMAIL_NOTIFICATIONS,
         "ENABLE_TELEGRAM_NOTIFICATIONS": config.ENABLE_TELEGRAM_NOTIFICATIONS,
     }
+
 
 def get_cgroup_memory_limit_bytes() -> int:
     """Return the memory limit (bytes) for the current cgroup."""
