@@ -23,6 +23,10 @@ class Config:
     Note that this only means the GPU has more than 30GB of VRAM'''
     RANDOM_SEED: int = 42
     cpu_memory: float = -1.0
+    container_memory: float = -1.0
+    '''The total memory available to the process, in GB. This takes into account
+       cgroup limits, so if the process is running in a container with limited memory,
+       this will reflect that limit rather than the total RAM of the host machine.'''
 
     # Preprocessing
     HU_WINDOW_MIN: int = -175
@@ -39,7 +43,12 @@ class Config:
     VAL_PATCH_SIZE: tuple = (96, 96, 96)
     '''The size of the 3D patches to be extracted from the volumes for training and validation.
        (Only used in local env). NOT TO BE CONFUSED WITH `VAL_BATCH_SIZE`'''
-    USE_CACHE_DATASET: bool = True
+    USE_CACHE_TRAIN_DATASET: bool = True
+    '''Whether to use a caching dataset that keeps preprocessed volumes in memory.
+    This can speed up training but requires more RAM.
+    If False, PersistentDataset will be used instead
+    '''
+    USE_CACHE_VAL_DATASET: bool = True
     '''Whether to use a caching dataset that keeps preprocessed volumes in memory.
     This can speed up training but requires more RAM.
     If False, PersistentDataset will be used instead
@@ -130,7 +139,9 @@ def init() -> Config:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     hc_gpu = False
     cpu_memory = psutil.virtual_memory().total / (1024 ** 3)  # GB
-    lots_of_ram = cpu_memory >= 100
+    container_memory = get_cgroup_memory_limit_bytes() / (1024 ** 3)  # GB
+    process_memory_limit = container_memory if container_memory > 0 else cpu_memory
+    lots_of_ram = process_memory_limit >= 60
 
     if device == "cuda":
         if torch.cuda.is_available():
@@ -289,18 +300,26 @@ def init() -> Config:
         raise ValueError("[Config] NUM_CLASSES must be either 2 (for binary segmentation) "
                         "or 3 (for multi-class segmentation).")
 
-    cache_source = os.getenv("CACHE_SOURCE", "ram").lower()
-    if cache_source not in {"ram", "disk"}:
-        print(f"[Config] Warning: CACHE_SOURCE '{cache_source}' is not valid. "
+    cache_train_source = os.getenv("CACHE_TRAIN_SOURCE", "ram").lower()
+    cache_val_source = os.getenv("CACHE_VAL_SOURCE", "ram").lower()
+
+    if cache_train_source not in {"ram", "disk"}:
+        print(f"[Config] Warning: CACHE_TRAIN_SOURCE '{cache_train_source}' is not valid. "
             "Defaulting to 'ram'.")
-        cache_source = "ram"
+        cache_train_source = "ram"
 
-    if cache_source == "ram" and not lots_of_ram:
-        print("[Config] Warning: CACHE_SOURCE is set to 'ram' but not enough CPU "
+    if cache_val_source not in {"ram", "disk"}:
+        print(f"[Config] Warning: CACHE_VAL_SOURCE '{cache_val_source}' is not valid. "
+            "Defaulting to 'ram'.")
+        cache_val_source = "ram"
+
+    if cache_train_source == "ram" and not lots_of_ram:
+        print("[Config] Warning: CACHE_TRAIN_SOURCE is set to 'ram' but not enough CPU "
               "RAM is available. Defaulting to 'disk'.")
-        cache_source = "disk"
+        cache_train_source = "disk"
 
-    use_cache_dataset = cache_source == "ram"
+    use_cache_train_dataset = cache_train_source == "ram"
+    use_cache_val_dataset = cache_val_source == "ram"
 
     # -------------------
     # Path resolution
@@ -320,7 +339,7 @@ def init() -> Config:
     log_dir = output_dir / run_id / "logs"
     tensorboard_dir = output_dir / run_id / "tensorboard"
 
-    if device == "cuda" and not use_cache_dataset:
+    if device == "cuda" and (not use_cache_train_dataset or not use_cache_val_dataset):
         if persistent_dataset_dir is None:
             raise ValueError("[Config] Persistent dataset directory must be set when"
                             " using CUDA without cache dataset.")
@@ -416,6 +435,7 @@ def init() -> Config:
 
     _config = Config(
         cpu_memory=cpu_memory,
+        container_memory=container_memory,
         RUN_ID=run_id,
         ENV=env,
         DEVICE=device,
@@ -442,7 +462,8 @@ def init() -> Config:
         TRAIN_PATCH_SIZE=train_patch_size,
         VAL_PATCH_SIZE=val_patch_size,
         ISO_SPACING=iso_spacing,
-        USE_CACHE_DATASET=use_cache_dataset,
+        USE_CACHE_TRAIN_DATASET=use_cache_train_dataset,
+        USE_CACHE_VAL_DATASET=use_cache_val_dataset,
         TUMOUR_CLASS_INDEX=tumour_class_index,
         ENABLE_EMAIL_NOTIFICATIONS=enable_email_notifications,
         SMTP_HOST=smtp_host,
@@ -490,6 +511,7 @@ def to_dict() -> dict:
     return {
         "RUN_ID": config.RUN_ID,
         "cpu_memory": config.cpu_memory,
+        "container_memory": config.container_memory,
         # Environment & Device
         "ENV": config.ENV,
         "DEVICE": config.DEVICE,
@@ -540,3 +562,21 @@ def to_dict() -> dict:
         "ENABLE_EMAIL_NOTIFICATIONS": config.ENABLE_EMAIL_NOTIFICATIONS,
         "ENABLE_TELEGRAM_NOTIFICATIONS": config.ENABLE_TELEGRAM_NOTIFICATIONS,
     }
+
+def get_cgroup_memory_limit_bytes() -> int:
+    """Return the memory limit (bytes) for the current cgroup."""
+    # Try cgroup v2 first
+    try:
+        with open("/sys/fs/cgroup/memory.max", "r") as f:
+            val = f.read().strip()
+            if val != "max":
+                return int(val)
+    except FileNotFoundError:
+        pass
+    # Fallback to cgroup v1
+    try:
+        with open("/sys/fs/cgroup/memory/memory.limit_in_bytes", "r") as f:
+            return int(f.read().strip())
+    except FileNotFoundError:
+        return -1  # Unknown/unlimited
+
