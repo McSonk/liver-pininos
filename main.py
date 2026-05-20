@@ -31,13 +31,14 @@ def log_environment_info(config_obj: config.Config) -> None:
         logger.info("CUDA device count: %d", torch.cuda.device_count())
         for i in range(torch.cuda.device_count()):
             logger.info("CUDA device %d: %s", i, torch.cuda.get_device_name(i))
-        logger.info("Available GPU memory (MB): %d", torch.cuda.get_device_properties(0).total_memory // (1024 * 1024))
+        logger.info("Available GPU memory (GB): %d", torch.cuda.get_device_properties(0).total_memory // (1024 ** 3))
     else:
         logger.info("No CUDA devices available.")
 
     logger.info("Available CPU cores: %s", os.cpu_count())
     logger.info("PyTorch intra-op threads: %d", torch.get_num_threads())
     logger.info("Available CPU memory (GB): %.2f", config_obj.cpu_memory)
+    logger.info("Available container memory (GB): %.2f", config_obj.container_memory)
 
     logger.info("Device: %s", config_obj.DEVICE)
     logger.info("Batch Size: %d", config_obj.BATCH_SIZE)
@@ -45,7 +46,9 @@ def log_environment_info(config_obj: config.Config) -> None:
                     config_obj.RAND_CROP_NUM_SAMPLES,
                     config_obj.BATCH_SIZE * config_obj.RAND_CROP_NUM_SAMPLES)
     logger.info("Val Batch Size: %d", config_obj.VAL_BATCH_SIZE)
-    logger.info("Workers: %d", config_obj.NUM_WORKERS)
+    if config_obj.USE_CACHE_TRAIN_DATASET or config_obj.USE_CACHE_VAL_DATASET:
+        logger.info("Cache Num Workers: %d", config_obj.CACHE_NUM_WORKERS)
+    logger.info("Data Loader Workers: %d", config_obj.DL_NUM_WORKERS)
     logger.info("Data Root: %s", config_obj.CT_ROOT)
     logger.info("Checkpoint Dir: %s", config_obj.CHECKPOINT_DIR)
     logger.info("Log Dir: %s", config_obj.LOG_DIR)

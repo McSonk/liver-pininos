@@ -23,6 +23,10 @@ class Config:
     Note that this only means the GPU has more than 30GB of VRAM'''
     RANDOM_SEED: int = 42
     cpu_memory: float = -1.0
+    container_memory: float = -1.0
+    '''The total memory available to the process, in GB. This takes into account
+       cgroup limits, so if the process is running in a container with limited memory,
+       this will reflect that limit rather than the total RAM of the host machine.'''
 
     # Preprocessing
     HU_WINDOW_MIN: int = -175
@@ -39,7 +43,12 @@ class Config:
     VAL_PATCH_SIZE: tuple = (96, 96, 96)
     '''The size of the 3D patches to be extracted from the volumes for training and validation.
        (Only used in local env). NOT TO BE CONFUSED WITH `VAL_BATCH_SIZE`'''
-    USE_CACHE_DATASET: bool = True
+    USE_CACHE_TRAIN_DATASET: bool = True
+    '''Whether to use a caching dataset that keeps preprocessed volumes in memory.
+    This can speed up training but requires more RAM.
+    If False, PersistentDataset will be used instead
+    '''
+    USE_CACHE_VAL_DATASET: bool = True
     '''Whether to use a caching dataset that keeps preprocessed volumes in memory.
     This can speed up training but requires more RAM.
     If False, PersistentDataset will be used instead
@@ -58,8 +67,12 @@ class Config:
     '''Number of random crops to extract from each volume during training.
     Note that the final batch size will be `BATCH_SIZE` * `RAND_CROP_NUM_SAMPLES`
     '''
-    NUM_WORKERS: int = 4
-    '''Number of parallel processes for data loading (CacheDataset or DataLoader)'''
+    CACHE_NUM_WORKERS: int = -1
+    '''Number of parallel processes for data loading (Only useful if using CacheDataset).'''
+    DL_NUM_WORKERS: int = -1
+    '''Number of parallel processes for data loading in the DataLoader. Set to 0
+    for debugging or if you encounter issues with multiprocessing. A good default
+    is the number of CPU cores minus one.'''
     PIN_MEMORY: bool = True
     NUM_EPOCHS: int = 150
     NUM_CLASSES: int = -1
@@ -130,7 +143,12 @@ def init() -> Config:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     hc_gpu = False
     cpu_memory = psutil.virtual_memory().total / (1024 ** 3)  # GB
-    lots_of_ram = cpu_memory >= 100
+    container_memory_bytes = get_cgroup_memory_limit_bytes()
+    container_memory = (
+        container_memory_bytes / (1024 ** 3) if container_memory_bytes > 0 else -1.0
+    )  # GB; -1.0 means unknown/unlimited
+    process_memory_limit = container_memory if container_memory > 0 else cpu_memory
+    lots_of_ram = process_memory_limit >= 60
 
     if device == "cuda":
         if torch.cuda.is_available():
@@ -151,10 +169,11 @@ def init() -> Config:
     num_classes = 3
     tumour_class_index = 2 if num_classes == 3 else 1
     dice_ce_weights = [0.0, 1.0, 3.0] if num_classes == 3 else [1.0, 3.0]
-    gpu_num_workers = 12 if hc_gpu else 2
+    gpu_num_workers = 8 if hc_gpu else 2
 
     local_specific = {
-        "num_workers": 0,
+        "cache_num_workers": 0,
+        "dl_num_workers": 0,
         "pin_memory": False,
         "batch_size": 1,
         "num_epochs": 5,
@@ -164,7 +183,8 @@ def init() -> Config:
     }
 
     cloud_specific = {
-        "num_workers": min(gpu_num_workers, cpu_count),
+        "cache_num_workers": 4 if lots_of_ram else 2,
+        "dl_num_workers": min(gpu_num_workers, cpu_count),
         "pin_memory": True,
         "batch_size": 4 if hc_gpu else 2,
         "num_epochs": 200 if hc_gpu else 5,
@@ -289,18 +309,31 @@ def init() -> Config:
         raise ValueError("[Config] NUM_CLASSES must be either 2 (for binary segmentation) "
                         "or 3 (for multi-class segmentation).")
 
-    cache_source = os.getenv("CACHE_SOURCE", "ram").lower()
-    if cache_source not in {"ram", "disk"}:
-        print(f"[Config] Warning: CACHE_SOURCE '{cache_source}' is not valid. "
+    cache_train_source = os.getenv("CACHE_TRAIN_SOURCE", "ram").lower()
+    cache_val_source = os.getenv("CACHE_VAL_SOURCE", "ram").lower()
+
+    if cache_train_source not in {"ram", "disk"}:
+        print(f"[Config] Warning: CACHE_TRAIN_SOURCE '{cache_train_source}' is not valid. "
             "Defaulting to 'ram'.")
-        cache_source = "ram"
+        cache_train_source = "ram"
 
-    if cache_source == "ram" and not lots_of_ram:
-        print("[Config] Warning: CACHE_SOURCE is set to 'ram' but not enough CPU "
+    if cache_val_source not in {"ram", "disk"}:
+        print(f"[Config] Warning: CACHE_VAL_SOURCE '{cache_val_source}' is not valid. "
+            "Defaulting to 'ram'.")
+        cache_val_source = "ram"
+
+    if cache_train_source == "ram" and not lots_of_ram:
+        print("[Config] Warning: CACHE_TRAIN_SOURCE is set to 'ram' but not enough CPU "
               "RAM is available. Defaulting to 'disk'.")
-        cache_source = "disk"
+        cache_train_source = "disk"
 
-    use_cache_dataset = cache_source == "ram"
+    if cache_val_source == "ram" and not lots_of_ram:
+        print("[Config] Warning: CACHE_VAL_SOURCE is set to 'ram' but not enough CPU "
+              "RAM is available. Defaulting to 'disk'.")
+        cache_val_source = "disk"
+
+    use_cache_train_dataset = cache_train_source == "ram"
+    use_cache_val_dataset = cache_val_source == "ram"
 
     # -------------------
     # Path resolution
@@ -320,7 +353,7 @@ def init() -> Config:
     log_dir = output_dir / run_id / "logs"
     tensorboard_dir = output_dir / run_id / "tensorboard"
 
-    if device == "cuda" and not use_cache_dataset:
+    if device == "cuda" and (not use_cache_train_dataset or not use_cache_val_dataset):
         if persistent_dataset_dir is None:
             raise ValueError("[Config] Persistent dataset directory must be set when"
                             " using CUDA without cache dataset.")
@@ -332,7 +365,8 @@ def init() -> Config:
 
     if env == "local":
         print("[Config] Running in LOCAL environment.")
-        num_workers = local_specific["num_workers"]
+        cache_num_workers = local_specific["cache_num_workers"]
+        dl_num_workers = local_specific["dl_num_workers"]
         pin_memory = local_specific["pin_memory"]
         batch_size = local_specific["batch_size"]
         num_epochs = local_specific["num_epochs"]
@@ -342,7 +376,8 @@ def init() -> Config:
 
     else:
         print("[Config] Running in CLOUD environment. Using more computing power.")
-        num_workers = cloud_specific["num_workers"]
+        cache_num_workers = cloud_specific["cache_num_workers"]
+        dl_num_workers = cloud_specific["dl_num_workers"]
         pin_memory = cloud_specific["pin_memory"]
         batch_size = cloud_specific["batch_size"]
         num_epochs = cloud_specific["num_epochs"]
@@ -416,6 +451,7 @@ def init() -> Config:
 
     _config = Config(
         cpu_memory=cpu_memory,
+        container_memory=container_memory,
         RUN_ID=run_id,
         ENV=env,
         DEVICE=device,
@@ -435,14 +471,16 @@ def init() -> Config:
         PER_CASE_TRAIN_STATS_FILE=per_case_train_stats_file,
         LOG_LEVEL_CONSOLE=log_level_console,
         LOG_LEVEL_FILE=log_level_file,
-        NUM_WORKERS=num_workers,
+        CACHE_NUM_WORKERS=cache_num_workers,
+        DL_NUM_WORKERS=dl_num_workers,
         PIN_MEMORY=pin_memory,
         BATCH_SIZE=batch_size,
         NUM_EPOCHS=num_epochs,
         TRAIN_PATCH_SIZE=train_patch_size,
         VAL_PATCH_SIZE=val_patch_size,
         ISO_SPACING=iso_spacing,
-        USE_CACHE_DATASET=use_cache_dataset,
+        USE_CACHE_TRAIN_DATASET=use_cache_train_dataset,
+        USE_CACHE_VAL_DATASET=use_cache_val_dataset,
         TUMOUR_CLASS_INDEX=tumour_class_index,
         ENABLE_EMAIL_NOTIFICATIONS=enable_email_notifications,
         SMTP_HOST=smtp_host,
@@ -490,6 +528,7 @@ def to_dict() -> dict:
     return {
         "RUN_ID": config.RUN_ID,
         "cpu_memory": config.cpu_memory,
+        "container_memory": config.container_memory,
         # Environment & Device
         "ENV": config.ENV,
         "DEVICE": config.DEVICE,
@@ -502,14 +541,16 @@ def to_dict() -> dict:
         "ISO_SPACING": list(config.ISO_SPACING),  # tuple → list for JSON/weights compatibility
         "TRAIN_PATCH_SIZE": list(config.TRAIN_PATCH_SIZE),
         "VAL_PATCH_SIZE": list(config.VAL_PATCH_SIZE),
-        "USE_CACHE_DATASET": config.USE_CACHE_DATASET,
+        "USE_CACHE_TRAIN_DATASET": config.USE_CACHE_TRAIN_DATASET,
+        "USE_CACHE_VAL_DATASET": config.USE_CACHE_VAL_DATASET,
 
         # Training Hyperparameters
         "LEARNING_RATE": config.LEARNING_RATE,
         "BATCH_SIZE": config.BATCH_SIZE,
         "VAL_BATCH_SIZE": config.VAL_BATCH_SIZE,
         "RAND_CROP_NUM_SAMPLES": config.RAND_CROP_NUM_SAMPLES,
-        "NUM_WORKERS": config.NUM_WORKERS,
+        "CACHE_NUM_WORKERS": config.CACHE_NUM_WORKERS,
+        "DL_NUM_WORKERS": config.DL_NUM_WORKERS,
         "PIN_MEMORY": config.PIN_MEMORY,
         "NUM_EPOCHS": config.NUM_EPOCHS,
         "NUM_CLASSES": config.NUM_CLASSES,
@@ -540,3 +581,22 @@ def to_dict() -> dict:
         "ENABLE_EMAIL_NOTIFICATIONS": config.ENABLE_EMAIL_NOTIFICATIONS,
         "ENABLE_TELEGRAM_NOTIFICATIONS": config.ENABLE_TELEGRAM_NOTIFICATIONS,
     }
+
+
+def get_cgroup_memory_limit_bytes() -> int:
+    """Return the memory limit (bytes) for the current cgroup."""
+    # Try cgroup v2 first
+    try:
+        with open("/sys/fs/cgroup/memory.max", "r") as f:
+            val = f.read().strip()
+            if val != "max":
+                return int(val)
+    except FileNotFoundError:
+        pass
+    # Fallback to cgroup v1
+    try:
+        with open("/sys/fs/cgroup/memory/memory.limit_in_bytes", "r") as f:
+            return int(f.read().strip())
+    except FileNotFoundError:
+        return -1  # Unknown/unlimited
+
