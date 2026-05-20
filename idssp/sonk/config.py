@@ -368,7 +368,7 @@ def init() -> Config:
     # -----------------------------------------------------------------------------
     smtp_host = os.getenv("SMTP_HOST", "")
     smtp_port_raw = os.getenv("SMTP_PORT", "").strip()
-    smtp_port = None
+    smtp_port = 0
     email_sender = os.getenv("EMAIL_SENDER", "")
     email_password = os.getenv("EMAIL_PASSWORD", "")
     email_recipient = os.getenv("EMAIL_RECIPIENT", "")
