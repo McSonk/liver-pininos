@@ -46,7 +46,9 @@ def log_environment_info(config_obj: config.Config) -> None:
                     config_obj.RAND_CROP_NUM_SAMPLES,
                     config_obj.BATCH_SIZE * config_obj.RAND_CROP_NUM_SAMPLES)
     logger.info("Val Batch Size: %d", config_obj.VAL_BATCH_SIZE)
-    logger.info("Workers: %d", config_obj.NUM_WORKERS)
+    if config_obj.USE_CACHE_TRAIN_DATASET or config_obj.USE_CACHE_VAL_DATASET:
+        logger.info("Cache Num Workers: %d", config_obj.CACHE_NUM_WORKERS)
+    logger.info("Data Loader Workers: %d", config_obj.DL_NUM_WORKERS)
     logger.info("Data Root: %s", config_obj.CT_ROOT)
     logger.info("Checkpoint Dir: %s", config_obj.CHECKPOINT_DIR)
     logger.info("Log Dir: %s", config_obj.LOG_DIR)
