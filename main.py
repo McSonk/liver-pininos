@@ -35,7 +35,8 @@ def log_environment_info(config_obj: config.Config) -> None:
     else:
         logger.info("No CUDA devices available.")
 
-    logger.info("Available CPU cores: %d", torch.get_num_threads())
+    logger.info("Available CPU cores: %s", os.cpu_count())
+    logger.info("PyTorch intra-op threads: %d", torch.get_num_threads())
     logger.info("Available CPU memory (GB): %.2f", os.sysconf('SC_PHYS_PAGES') * os.sysconf('SC_PAGE_SIZE') / (1024**3))
 
     logger.info("Device: %s", config_obj.DEVICE)

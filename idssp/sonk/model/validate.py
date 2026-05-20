@@ -212,7 +212,7 @@ class TestEvaluator:
 
     def generate_report(self, df: pd.DataFrame, output_dir: Optional[str] = None) -> str:
         """Aggregate metrics, print thesis-ready table, and export CSV."""
-        out_path = Path(output_dir) if output_dir else selfconfig.OUTPUT_DIR / "reports"
+        out_path = Path(output_dir) if output_dir else self.config.OUTPUT_DIR / "reports"
         out_path.mkdir(parents=True, exist_ok=True)
 
         # Aggregate statistics (mean ± std)
