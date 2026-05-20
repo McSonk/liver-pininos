@@ -169,7 +169,7 @@ def init() -> Config:
     num_classes = 3
     tumour_class_index = 2 if num_classes == 3 else 1
     dice_ce_weights = [0.0, 1.0, 3.0] if num_classes == 3 else [1.0, 3.0]
-    gpu_num_workers = 4 if hc_gpu else 2
+    gpu_num_workers = 12 if hc_gpu else 2
 
     local_specific = {
         "cache_num_workers": 0,

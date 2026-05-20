@@ -379,6 +379,7 @@ class ModelBuilder:
                 val_ds = CacheDataset(
                     data=val_files,
                     transform=val_transforms,
+                    # TODO: Make this number configurable.
                     cache_rate=0.9,
                     num_workers=self.config.CACHE_NUM_WORKERS,
                 )
