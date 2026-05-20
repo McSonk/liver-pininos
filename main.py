@@ -31,7 +31,7 @@ def log_environment_info(config_obj: config.Config) -> None:
         logger.info("CUDA device count: %d", torch.cuda.device_count())
         for i in range(torch.cuda.device_count()):
             logger.info("CUDA device %d: %s", i, torch.cuda.get_device_name(i))
-        logger.info("Available GPU memory (MB): %d", torch.cuda.get_device_properties(0).total_memory // (1024 * 1024))
+        logger.info("Available GPU memory (GB): %d", torch.cuda.get_device_properties(0).total_memory // (1024 ** 3))
     else:
         logger.info("No CUDA devices available.")
 

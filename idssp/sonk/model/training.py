@@ -443,8 +443,10 @@ class ModelBuilder:
             lambda_dice=1.0,
             # CE weight
             lambda_ce=1.0,
-            # ce_weight is vector penalisation (how aggressive the penalisation)
+            # weight is vector penalisation (how aggressive the penalisation)
             # is for that class. [background_weight, liver_weight, tumour_weight]
+            # NOTE: weight should be ce_weight, but apparently pytorch version 2.11.0
+            # doesn't expose it yet 
             weight=torch.tensor(self.config.DICE_CE_WEIGHTS, device=self.device)
         )
         self.optimizer = optim.AdamW(
