@@ -349,13 +349,14 @@ class ModelBuilder:
             train_ds = Dataset(data=train_files, transform=train_det_trans)
             val_ds = Dataset(data=val_files, transform=val_transforms)
         else:
+            time_at_start = time.time()
             if self.config.USE_CACHE_TRAIN_DATASET:
                 logger.debug("[Train] Sufficient resources detected. Using MONAI CacheDataset.")
                 train_ds = AugmentedDataset(
                     CacheDataset(
                         data=train_files,
                         transform=train_det_trans,
-                        cache_rate=1.0,
+                        cache_rate=0.9,
                         num_workers=self.config.CACHE_NUM_WORKERS,
                     ),
                     train_ran_trans
@@ -378,7 +379,7 @@ class ModelBuilder:
                 val_ds = CacheDataset(
                     data=val_files,
                     transform=val_transforms,
-                    cache_rate=1.0,
+                    cache_rate=0.9,
                     num_workers=self.config.CACHE_NUM_WORKERS,
                 )
             else:
@@ -393,6 +394,7 @@ class ModelBuilder:
                                   f"_hmax_{self.config.HU_WINDOW_MAX}_val_cache")
                 )
             # end if-else for val dataset
+            logger.info("Datasets initialized in %.2f seconds.", time.time() - time_at_start)
         # end if-else for is limited environment
 
         logger.debug("Creating training dataloader...")
@@ -824,6 +826,11 @@ class ModelBuilder:
         # Train and validate one epoch
         avg_train_loss = self._train_epoch()
         avg_val_loss, epoch_dice = self._validate(epoch)
+
+        # Clean up GPU memory after epoch to prevent potential OOM errors in future epochs
+        if self.config.DEVICE == "cuda":
+            torch.cuda.empty_cache()
+            log_memory_usage(logger, prefix="After emptying CUDA cache: ")
 
         # Get current learning rate for logging
         current_lr = self.optimizer.param_groups[0]['lr']
