@@ -445,7 +445,7 @@ class ModelBuilder:
             lambda_ce=1.0,
             # ce_weight is vector penalisation (how aggressive the penalisation)
             # is for that class. [background_weight, liver_weight, tumour_weight]
-            ce_weight=torch.tensor(self.config.DICE_CE_WEIGHTS, device=self.device)
+            weight=torch.tensor(self.config.DICE_CE_WEIGHTS, device=self.device)
         )
         self.optimizer = optim.AdamW(
             # weights and biases
