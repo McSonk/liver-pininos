@@ -129,7 +129,7 @@ def log_memory_usage(logger: logging.Logger, prefix: str = ""):
         cpu_memory = psutil.virtual_memory()
         cpu_memory_used = cpu_memory.used / (1024 ** 3)  # GB
         cpu_memory_total = cpu_memory.total / (1024 ** 3)  # GB
-        logger.info("%sCPU Memory - Used: %.2f GB, Total: %.2f GB",
+        logger.info("%sCPU (total) Memory - Used: %.2f GB, Total: %.2f GB",
                     prefix, cpu_memory_used, cpu_memory_total)
     except ImportError:
         logger.info("%spsutil not installed. CPU memory usage not logged.", prefix)
