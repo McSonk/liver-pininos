@@ -67,8 +67,12 @@ class Config:
     '''Number of random crops to extract from each volume during training.
     Note that the final batch size will be `BATCH_SIZE` * `RAND_CROP_NUM_SAMPLES`
     '''
-    NUM_WORKERS: int = 4
-    '''Number of parallel processes for data loading (CacheDataset or DataLoader)'''
+    CACHE_NUM_WORKERS: int = -1
+    '''Number of parallel processes for data loading (Only useful if using CacheDataset).'''
+    DL_NUM_WORKERS: int = -1
+    '''Number of parallel processes for data loading in the DataLoader. Set to 0
+    for debugging or if you encounter issues with multiprocessing. A good default
+    is the number of CPU cores minus one.'''
     PIN_MEMORY: bool = True
     NUM_EPOCHS: int = 150
     NUM_CLASSES: int = -1
@@ -162,10 +166,11 @@ def init() -> Config:
     num_classes = 3
     tumour_class_index = 2 if num_classes == 3 else 1
     dice_ce_weights = [0.0, 1.0, 3.0] if num_classes == 3 else [1.0, 3.0]
-    gpu_num_workers = 12 if hc_gpu else 2
+    gpu_num_workers = 8 if hc_gpu else 2
 
     local_specific = {
-        "num_workers": 0,
+        "cache_num_workers": 0,
+        "dl_num_workers": 0,
         "pin_memory": False,
         "batch_size": 1,
         "num_epochs": 5,
@@ -175,7 +180,8 @@ def init() -> Config:
     }
 
     cloud_specific = {
-        "num_workers": min(gpu_num_workers, cpu_count),
+        "cache_num_workers": 4 if lots_of_ram else 2,
+        "dl_num_workers": min(gpu_num_workers, cpu_count),
         "pin_memory": True,
         "batch_size": 4 if hc_gpu else 2,
         "num_epochs": 200 if hc_gpu else 5,
@@ -351,7 +357,8 @@ def init() -> Config:
 
     if env == "local":
         print("[Config] Running in LOCAL environment.")
-        num_workers = local_specific["num_workers"]
+        cache_num_workers = local_specific["cache_num_workers"]
+        dl_num_workers = local_specific["dl_num_workers"]
         pin_memory = local_specific["pin_memory"]
         batch_size = local_specific["batch_size"]
         num_epochs = local_specific["num_epochs"]
@@ -361,7 +368,8 @@ def init() -> Config:
 
     else:
         print("[Config] Running in CLOUD environment. Using more computing power.")
-        num_workers = cloud_specific["num_workers"]
+        cache_num_workers = cloud_specific["cache_num_workers"]
+        dl_num_workers = cloud_specific["dl_num_workers"]
         pin_memory = cloud_specific["pin_memory"]
         batch_size = cloud_specific["batch_size"]
         num_epochs = cloud_specific["num_epochs"]
@@ -455,7 +463,8 @@ def init() -> Config:
         PER_CASE_TRAIN_STATS_FILE=per_case_train_stats_file,
         LOG_LEVEL_CONSOLE=log_level_console,
         LOG_LEVEL_FILE=log_level_file,
-        NUM_WORKERS=num_workers,
+        CACHE_NUM_WORKERS=cache_num_workers,
+        DL_NUM_WORKERS=dl_num_workers,
         PIN_MEMORY=pin_memory,
         BATCH_SIZE=batch_size,
         NUM_EPOCHS=num_epochs,
@@ -524,14 +533,16 @@ def to_dict() -> dict:
         "ISO_SPACING": list(config.ISO_SPACING),  # tuple → list for JSON/weights compatibility
         "TRAIN_PATCH_SIZE": list(config.TRAIN_PATCH_SIZE),
         "VAL_PATCH_SIZE": list(config.VAL_PATCH_SIZE),
-        "USE_CACHE_DATASET": config.USE_CACHE_DATASET,
+        "USE_CACHE_TRAIN_DATASET": config.USE_CACHE_TRAIN_DATASET,
+        "USE_CACHE_VAL_DATASET": config.USE_CACHE_VAL_DATASET,
 
         # Training Hyperparameters
         "LEARNING_RATE": config.LEARNING_RATE,
         "BATCH_SIZE": config.BATCH_SIZE,
         "VAL_BATCH_SIZE": config.VAL_BATCH_SIZE,
         "RAND_CROP_NUM_SAMPLES": config.RAND_CROP_NUM_SAMPLES,
-        "NUM_WORKERS": config.NUM_WORKERS,
+        "CACHE_NUM_WORKERS": config.CACHE_NUM_WORKERS,
+        "DL_NUM_WORKERS": config.DL_NUM_WORKERS,
         "PIN_MEMORY": config.PIN_MEMORY,
         "NUM_EPOCHS": config.NUM_EPOCHS,
         "NUM_CLASSES": config.NUM_CLASSES,

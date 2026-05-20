@@ -356,7 +356,7 @@ class ModelBuilder:
                         data=train_files,
                         transform=train_det_trans,
                         cache_rate=1.0,
-                        num_workers=self.config.NUM_WORKERS,
+                        num_workers=self.config.CACHE_NUM_WORKERS,
                     ),
                     train_ran_trans
                 )
@@ -379,7 +379,7 @@ class ModelBuilder:
                     data=val_files,
                     transform=val_transforms,
                     cache_rate=1.0,
-                    num_workers=self.config.NUM_WORKERS,
+                    num_workers=self.config.CACHE_NUM_WORKERS,
                 )
             else:
                 # TODO: implement a hashing mechanism to detect changes in transforms
@@ -400,7 +400,7 @@ class ModelBuilder:
             train_ds,
             batch_size=self.config.BATCH_SIZE,
             shuffle=True,
-            num_workers=self.config.NUM_WORKERS,
+            num_workers=self.config.DL_NUM_WORKERS,
             pin_memory=self.config.PIN_MEMORY,
         )
 
@@ -409,7 +409,7 @@ class ModelBuilder:
             val_ds,
             batch_size=self.config.VAL_BATCH_SIZE,
             shuffle=False,
-            num_workers=self.config.NUM_WORKERS,
+            num_workers=self.config.DL_NUM_WORKERS,
             pin_memory=self.config.PIN_MEMORY,
         )
 
