@@ -2,28 +2,18 @@ import faulthandler
 import logging
 import sys
 import threading
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 import psutil
 import torch
 
+from idssp.sonk import config
+
 # -----------------------------------------------------------------------------
 # Module-level variable to ensure consistent timestamp across all loggers
 # -----------------------------------------------------------------------------
-_RUN_TIMESTAMP: Optional[str] = None
 _RUN_LOG_FILE: Optional[Path] = None
-
-def _get_run_timestamp() -> str:
-    """
-    Returns a consistent timestamp for the entire Python process run.
-    Generated once on first call, then cached.
-    """
-    global _RUN_TIMESTAMP
-    if _RUN_TIMESTAMP is None:
-        _RUN_TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return _RUN_TIMESTAMP
 
 def get_active_log_file() -> Optional[Path]:
     """
@@ -34,9 +24,7 @@ def get_active_log_file() -> Optional[Path]:
 
 def get_logger(
         name: str,
-        log_dir: Optional[Path] = None,
-        console_level: Optional[int] = None,
-        file_level: Optional[int] = None
+        console_level: Optional[int] = None
     ) -> logging.Logger:
     """
     Creates a logger that outputs to both Console and File.
@@ -45,28 +33,20 @@ def get_logger(
     ------
     `name`: str
         Name of the logger (usually __name__).
-    `log_dir`: Optional[Path]
-         Directory where log files will be saved. If None, file logging is disabled.
     `console_level`: Optional[int]
-        Logging level for console output (e.g., logging.INFO). If None, defaults to logging.INFO.
-    `file_level`: Optional[int]
-        Logging level for file output (e.g., logging.DEBUG). If None, defaults to logging.DEBUG.
+        Logging level for console output (e.g., logging.INFO). If None, defaults to 
+        `config.LOG_LEVEL_CONSOLE`.
 
     Returns
     -------
     logging.Logger
         Configured logger instance.
     """
-    # Lazy import to avoid circular dependencies (such as config.py importing this logger)
-    from idssp.sonk import config
-
-    # Use config defaults if not provided
-    if log_dir is None:
-        log_dir = config.LOG_DIR
+    cfg = config.init()
     if console_level is None:
-        console_level = config.LOG_LEVEL_CONSOLE
-    if file_level is None:
-        file_level = config.LOG_LEVEL_FILE
+        console_level = cfg.LOG_LEVEL_CONSOLE
+    log_dir = cfg.LOG_DIR
+    file_level = cfg.LOG_LEVEL_FILE
 
     logger = logging.getLogger(name)
     # CRITICAL: Set the logger itself to the LOWEST level (DEBUG)
@@ -95,8 +75,7 @@ def get_logger(
     # 2. File Handler (if log_dir is provided)
     if log_dir:
         log_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = _get_run_timestamp()
-        log_file = log_dir / f"training_{timestamp}.log"
+        log_file = log_dir / "training.log"
         global _RUN_LOG_FILE
         if _RUN_LOG_FILE is None:  # Only set once per process run
             _RUN_LOG_FILE = log_file

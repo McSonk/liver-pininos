@@ -14,9 +14,10 @@ from monai.data import DataLoader, Dataset, decollate_batch
 from monai.inferers import SlidingWindowInferer
 from monai.metrics import DiceMetric, HausdorffDistanceMetric
 from monai.networks.nets import UNet
-from monai.transforms import (Activations, AsDiscrete, Compose, EnsureTyped,
-                              LoadImaged, Orientationd, ScaleIntensityRanged,
-                              Spacingd)
+from monai.transforms import (Activations, AsDiscrete, Compose,
+                              CropForegroundd, EnsureTyped, LoadImaged,
+                              Orientationd, ScaleIntensityRanged, Spacingd,
+                              SpatialPadd)
 from monai.utils import set_determinism
 
 from idssp.sonk import config
@@ -30,7 +31,8 @@ class TestEvaluator:
     and result export for test datasets.
     """
     def __init__(self, checkpoint_path: str):
-        self.device = torch.device(config.DEVICE)
+        self.config = config.init()
+        self.device = torch.device(self.config.DEVICE)
         self.checkpoint_path = Path(checkpoint_path)
         self.model = None
         self.inferer = None
@@ -40,9 +42,9 @@ class TestEvaluator:
          # EXACT post-processing used in training.py
         self.pred_transform = Compose([
             Activations(softmax=True),
-            AsDiscrete(argmax=True, to_onehot=config.NUM_CLASSES)
+            AsDiscrete(argmax=True, to_onehot=self.config.NUM_CLASSES)
         ])
-        self.label_transform = AsDiscrete(to_onehot=config.NUM_CLASSES)
+        self.label_transform = AsDiscrete(to_onehot=self.config.NUM_CLASSES)
 
         # Metrics expect decollated lists of tensors
         self.dice_metric = DiceMetric(include_background=False, reduction="none")
@@ -50,7 +52,7 @@ class TestEvaluator:
             include_background=False, reduction="none", percentile=95.0, distance_metric="euclidean"
         )
 
-        set_determinism(seed=config.RANDOM_SEED)
+        set_determinism(seed=self.config.RANDOM_SEED)
         logger.info("TestEvaluator initialised. Device: %s", self.device)
 
     def load_checkpoint(self):
@@ -63,16 +65,16 @@ class TestEvaluator:
 
         if "config_snapshot" in checkpoint:
             for key in ["NUM_CLASSES", "ISO_SPACING", "HU_WINDOW_MIN", "HU_WINDOW_MAX"]:
-                if checkpoint["config_snapshot"].get(key) != getattr(config, key):
+                if checkpoint["config_snapshot"].get(key) != getattr(self.config, key):
                     logger.warning("Config mismatch: %s (ckpt=%s, current=%s)",
-                                key, checkpoint["config_snapshot"].get(key), getattr(config, key))
+                                key, checkpoint["config_snapshot"].get(key), getattr(self.config, key))
 
 
         # Initialise model architecture matching training
         self.model = UNet(
             spatial_dims=3,
             in_channels=1,
-            out_channels=config.NUM_CLASSES,
+            out_channels=self.config.NUM_CLASSES,
             channels=(32, 64, 128, 256),
             strides=(2, 2, 2),
             num_res_units=1 if config.is_limited_env() else 2,
@@ -86,7 +88,7 @@ class TestEvaluator:
 
         # Sliding window inferer (must match training patch size)
         self.inferer = SlidingWindowInferer(
-            roi_size=config.TRAIN_PATCH_SIZE,
+            roi_size=self.config.TRAIN_PATCH_SIZE,
             sw_batch_size=16,
             overlap=0.5,
             mode="gaussian",
@@ -104,17 +106,31 @@ class TestEvaluator:
             Orientationd(keys=["image", "label"], axcodes="LAS"),
             Spacingd(
                 keys=["image", "label"],
-                pixdim=config.ISO_SPACING,
+                pixdim=self.config.ISO_SPACING,
                 mode=("bilinear", "nearest"),
                 recompute_affine=True,  # Ensure output affines are updated
             ),
             ScaleIntensityRanged(
                 keys=["image"],
-                a_min=config.HU_WINDOW_MIN,
-                a_max=config.HU_WINDOW_MAX,
+                a_min=self.config.HU_WINDOW_MIN,
+                a_max=self.config.HU_WINDOW_MAX,
                 b_min=0.0,
                 b_max=1.0,
                 clip=True
+            ),
+            CropForegroundd(
+                keys=["image", "label"],
+                source_key="image",
+                # Background is 0
+                select_fn=lambda x: x > 0,
+                margin=10,
+                allow_smaller=True
+            ),
+            SpatialPadd(
+                keys=["image", "label"],
+                spatial_size=self.config.TRAIN_PATCH_SIZE,
+                mode="constant",
+                value=0
             ),
             EnsureTyped(keys=["image", "label"])
         ])
@@ -129,19 +145,24 @@ class TestEvaluator:
         test_dl = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=0)
 
         results = []
-        save_path = config.OUTPUT_DIR / "test_predictions"
+        save_path = self.config.OUTPUT_DIR / "test_predictions"
         save_path.mkdir(parents=True, exist_ok=True)
 
         logger.info("Starting full-volume inference on %d test volumes...", len(test_files))
         start_time = time.time()
 
-        with torch.no_grad():
+        with torch.inference_mode():
             for batch_idx, batch in enumerate(test_dl):
                 case_name = Path(batch["image"].meta["filename_or_obj"][0]).stem
                 logger.info("[%d/%d] Processing: %s", batch_idx + 1, len(test_dl), case_name)
 
+                if batch_idx % 5 == 0:
+                    logger.debug("Information of batch %d:", batch_idx)
+                    logger.debug("Batch image shape: %s", batch["image"].shape)
+                    logger.debug("MONAI meta affine shape:%s", batch["image"].meta["affine"].shape)
+                    logger.debug("MONAI meta affine:\n%s", batch["image"].meta["affine"][0])
+
                 images = batch["image"].to(self.device)
-                labels = batch["label"].to(self.device)
 
                 # Full-volume sliding window inference
                 with torch.amp.autocast(device_type="cuda", enabled=self.device.type == "cuda"):
@@ -191,7 +212,7 @@ class TestEvaluator:
 
                 # --- FIX: Collect per-case results ---
                 row = {"case_name": case_name}
-                if config.NUM_CLASSES == 3:
+                if self.config.NUM_CLASSES == 3:
                     row["dice_liver"] = float(case_dice[0]) if not np.isnan(case_dice[0]) else None
                     row["dice_tumour"] = float(case_dice[1]) if not np.isnan(case_dice[1]) else None
                     row["hd95_liver_mm"] = float(case_hd95[0]) if not np.isnan(case_hd95[0]) else None
@@ -211,15 +232,15 @@ class TestEvaluator:
 
     def generate_report(self, df: pd.DataFrame, output_dir: Optional[str] = None) -> str:
         """Aggregate metrics, print thesis-ready table, and export CSV."""
-        out_path = Path(output_dir) if output_dir else config.OUTPUT_DIR / "reports"
+        out_path = Path(output_dir) if output_dir else self.config.OUTPUT_DIR / "reports"
         out_path.mkdir(parents=True, exist_ok=True)
 
         # Aggregate statistics (mean ± std)
         agg_metrics = []
-        class_names = ["liver", "tumour"] if config.NUM_CLASSES == 3 else ["tumour"]
+        class_names = ["liver", "tumour"] if self.config.NUM_CLASSES == 3 else ["tumour"]
         for name in class_names:
             d_dice = df[f"dice_{name}"].dropna()
-            d_hd = df[f"hd95_{name}_mm"].dropna()
+            d_hd = df[f"hd95_{name}_mm"].replace([np.inf, -np.inf], np.nan).dropna()
             agg_metrics.append({
                 "structure": name.capitalize(),
                 "dice_mean": d_dice.mean(),

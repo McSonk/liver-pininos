@@ -37,18 +37,19 @@ def send_training_email(
     `timeout`: float, default 20.0
         Maximum seconds to wait for the email thread to complete (only used if wait_for_completion=True).
     """
+    cfg = config.get()
     def _send_async():
-        if not config.ENABLE_EMAIL_NOTIFICATIONS:
+        if not cfg.ENABLE_EMAIL_NOTIFICATIONS:
             return
 
-        creds = [config.EMAIL_SENDER, config.EMAIL_PASSWORD, config.EMAIL_RECIPIENT]
+        creds = [cfg.EMAIL_SENDER, cfg.EMAIL_PASSWORD, cfg.EMAIL_RECIPIENT]
         if not all(creds):
             logger.warning("Missing credentials. Skipping notification.")
             return
 
         msg = MIMEMultipart()
-        msg['From'] = config.EMAIL_SENDER
-        msg['To'] = config.EMAIL_RECIPIENT
+        msg['From'] = cfg.EMAIL_SENDER
+        msg['To'] = cfg.EMAIL_RECIPIENT
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
 
@@ -61,9 +62,9 @@ def send_training_email(
             elif log_file is not None:
                 logger.warning("Log file not found: %s", log_file)
 
-            with smtplib.SMTP(config.SMTP_HOST, config.SMTP_PORT, timeout=15) as server:
+            with smtplib.SMTP(cfg.SMTP_HOST, cfg.SMTP_PORT, timeout=15) as server:
                 server.starttls()
-                server.login(config.EMAIL_SENDER, config.EMAIL_PASSWORD)
+                server.login(cfg.EMAIL_SENDER, cfg.EMAIL_PASSWORD)
                 server.send_message(msg)
 
             logger.info("Notification sent: %s", subject)

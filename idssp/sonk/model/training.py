@@ -69,8 +69,9 @@ class ModelBuilder:
         self.optimizer = None
         self.scheduler = None
         self.inferer: SlidingWindowInferer = None
-        self.device = torch.device(config.DEVICE)
-        self._overlay_batch = None 
+        self.config = config.get()
+        self.device = torch.device(self.config.DEVICE)
+        self._overlay_batch = None
         '''This will store a fixed validation image for logging to tensorboard'''
 
         # Post-processing & Metrics
@@ -79,7 +80,7 @@ class ModelBuilder:
             Activations(softmax=True),
             # Select the class with the highest probability for each voxel
             # and convert to one-hot encoding
-            AsDiscrete(argmax=True, to_onehot=config.NUM_CLASSES)
+            AsDiscrete(argmax=True, to_onehot=self.config.NUM_CLASSES)
         ])
         '''`Compose` of transforms applied to model predictions so we have
         a probability distribution [0-1] for each voxel per class (`config.NUM_CLASSES`).
@@ -88,16 +89,16 @@ class ModelBuilder:
         1. `Activations(softmax=True)`: Applies the softmax function to the raw model
            outputs (logits) to convert them into class probabilities for each voxel.
         
-        2. `AsDiscrete(argmax=True, to_onehot=config.NUM_CLASSES)`: This transform
+        2. `AsDiscrete(argmax=True, to_onehot=self.config.NUM_CLASSES)`: This transform
            first applies argmax to select the class with the highest probability
            for each voxel, then it converts these class labels into one-hot
            encoding format.
         '''
 
-        self.label_trans = AsDiscrete(to_onehot=config.NUM_CLASSES)
+        self.label_trans = AsDiscrete(to_onehot=self.config.NUM_CLASSES)
         '''Transform applied to ground truth labels so they're represented as one-hot
            encoded tensors to each class before metric calculation.
-           It only contains `AsDiscrete(to_onehot=config.NUM_CLASSES)`, which converts
+           It only contains `AsDiscrete(to_onehot=self.config.NUM_CLASSES)`, which converts
            the integer class labels into one-hot encoding format.
            
            To be used in validation step.'''
@@ -111,7 +112,7 @@ class ModelBuilder:
            is called, it returns unreduced Dice values rather than a single global
            mean. The aggregated result contains per-sample/per-class foreground
            scores (typically one value for each validation item and non-background
-           class, e.g. shape `[batch_size, config.NUM_CLASSES - 1]`).
+           class, e.g. shape `[batch_size, self.config.NUM_CLASSES - 1]`).
 
            To be used in validation step.'''
 
@@ -120,16 +121,16 @@ class ModelBuilder:
         # So we can use float16 mixed precision on CUDA
         # (Multiplies loss by a scale factor to prevent underflow, and unscales
         # gradients before the optimizer step)
-        self.scaler = GradScaler('cuda') if config.DEVICE == 'cuda' else None
+        self.scaler = GradScaler('cuda') if self.config.DEVICE == 'cuda' else None
         '''Mixed precision training scaler, enabled only on CUDA for potential speed up.'''
 
         # tensorboard writer for logging training metrics
-        self.writer = SummaryWriter(log_dir=str(config.TENSORBOARD_DIR))
+        self.writer = SummaryWriter(log_dir=str(self.config.TENSORBOARD_DIR))
         self.writer.add_hparams(
             { # h param dict
-                "environment": config.ENV,
-                "batch_size": config.BATCH_SIZE,
-                "num_classes": config.NUM_CLASSES,
+                "environment": self.config.ENV,
+                "batch_size": self.config.BATCH_SIZE,
+                "num_classes": self.config.NUM_CLASSES,
                 "precision": "float16" if self.scaler is not None else "float32",
             }, { # metric dict
                 "val/dice_mean": 0.0,
@@ -161,7 +162,7 @@ class ModelBuilder:
             # voxel size appears at the same scale regardless of the original scan resolution.
             Spacingd(
                 keys=["image", "label"],
-                pixdim=config.ISO_SPACING,
+                pixdim=self.config.ISO_SPACING,
                 # bilinear (average) interpolation for CT
                 # nearest for labels to avoid creating non-integer class values
                 mode=("bilinear", "nearest")
@@ -171,7 +172,7 @@ class ModelBuilder:
             ScaleIntensityRanged(
                 keys=["image"],
                 # We clip the HU values to the defined liver/tumour range
-                a_min=config.HU_WINDOW_MIN, a_max=config.HU_WINDOW_MAX,
+                a_min=self.config.HU_WINDOW_MIN, a_max=self.config.HU_WINDOW_MAX,
                 # We then scale that range to [0, 1] for better training stability.
                 b_min=0.0,  b_max=1.0,
                 # Values outside liver/tumour range are clipped.
@@ -200,7 +201,7 @@ class ModelBuilder:
             # (it is conceptually just adding air)
             SpatialPadd(
                 keys=["image", "label"],
-                spatial_size=config.TRAIN_PATCH_SIZE,
+                spatial_size=self.config.TRAIN_PATCH_SIZE,
                 mode="constant",
                 value=0
             )
@@ -235,15 +236,17 @@ class ModelBuilder:
         random_transforms = [
             # Sample patches with a 2:1 ratio of positive (tumor/liver) and
             # negative (background) examples.
-            # This is because of voxel imbalance.
+            # This is because of voxel imbalance. (we want to maximise the likelihood
+            # of sampling tumour voxels, which are the most important to learn, while still including
+            # some negative samples to learn the background)
             RandCropByPosNegLabeld(
                 keys=["image", "label"],
                 label_key="label",
-                spatial_size=config.TRAIN_PATCH_SIZE,
-                pos=2,
+                spatial_size=self.config.TRAIN_PATCH_SIZE,
+                pos=3,
                 neg=1,
                 # number of samples to generate per volume
-                num_samples=config.RAND_CROP_NUM_SAMPLES,
+                num_samples=self.config.RAND_CROP_NUM_SAMPLES,
                 image_key="image",
                 # Negative samples are taken on tissue ( HU > 0). Used with image_key
                 image_threshold=0,
@@ -286,7 +289,7 @@ class ModelBuilder:
                 RandCropByPosNegLabeld(
                     keys=["image", "label"],
                     label_key="label",
-                    spatial_size=config.VAL_PATCH_SIZE,
+                    spatial_size=self.config.VAL_PATCH_SIZE,
                     pos=1,
                     neg=0,
                     num_samples=1,
@@ -346,14 +349,14 @@ class ModelBuilder:
             train_ds = Dataset(data=train_files, transform=train_det_trans)
             val_ds = Dataset(data=val_files, transform=val_transforms)
         else:
-            if config.USE_CACHE_DATASET:
+            if self.config.USE_CACHE_DATASET:
                 logger.debug("Sufficient resources detected. Using MONAI CacheDataset.")
                 train_ds = AugmentedDataset(
                     CacheDataset(
                         data=train_files,
                         transform=train_det_trans,
                         cache_rate=1.0,
-                        num_workers=config.NUM_WORKERS,
+                        num_workers=self.config.NUM_WORKERS,
                     ),
                     train_ran_trans
                 )
@@ -361,7 +364,7 @@ class ModelBuilder:
                     data=val_files,
                     transform=val_transforms,
                     cache_rate=1.0,
-                    num_workers=config.NUM_WORKERS,
+                    num_workers=self.config.NUM_WORKERS,
                 )
             else:
                 # TODO: implement a hashing mechanism to detect changes in transforms
@@ -371,36 +374,36 @@ class ModelBuilder:
                     PersistentDataset(
                         data=train_files,
                         transform=train_det_trans,
-                        cache_dir=str(config.PERSISTENT_DATASET_DIR /
-                                      f"hmin_{config.HU_WINDOW_MIN}"
-                                      f"_hmax_{config.HU_WINDOW_MAX}_train_cache")
+                        cache_dir=str(self.config.PERSISTENT_DATASET_DIR /
+                                      f"hmin_{self.config.HU_WINDOW_MIN}"
+                                      f"_hmax_{self.config.HU_WINDOW_MAX}_train_cache")
                     ),
                     train_ran_trans
                 )
                 val_ds = PersistentDataset(
                     data=val_files,
                     transform=val_transforms,
-                    cache_dir=str(config.PERSISTENT_DATASET_DIR /
-                                  f"hmin_{config.HU_WINDOW_MIN}"
-                                  f"_hmax_{config.HU_WINDOW_MAX}_val_cache")
+                    cache_dir=str(self.config.PERSISTENT_DATASET_DIR /
+                                  f"hmin_{self.config.HU_WINDOW_MIN}"
+                                  f"_hmax_{self.config.HU_WINDOW_MAX}_val_cache")
                 )
 
         logger.debug("Creating training dataloader...")
         self.train_dl = DataLoader(
             train_ds,
-            batch_size=config.BATCH_SIZE,
+            batch_size=self.config.BATCH_SIZE,
             shuffle=True,
-            num_workers=config.NUM_WORKERS,
-            pin_memory=config.PIN_MEMORY,
+            num_workers=self.config.NUM_WORKERS,
+            pin_memory=self.config.PIN_MEMORY,
         )
 
         logger.debug("Creating validation dataloader...")
         self.val_dl = DataLoader(
             val_ds,
-            batch_size=config.VAL_BATCH_SIZE,
+            batch_size=self.config.VAL_BATCH_SIZE,
             shuffle=False,
-            num_workers=config.NUM_WORKERS,
-            pin_memory=config.PIN_MEMORY,
+            num_workers=self.config.NUM_WORKERS,
+            pin_memory=self.config.PIN_MEMORY,
         )
 
         # Initialise a fixed validation batch for logging overlays during training
@@ -416,7 +419,7 @@ class ModelBuilder:
             spatial_dims=3,
             # Just 1 channel for the grayscale CT image.
             in_channels=1,
-            out_channels=config.NUM_CLASSES,
+            out_channels=self.config.NUM_CLASSES,
             # channels=(64, 128, 256, 512)
             channels=(32, 64, 128, 256),
             # One stride per downsampling transition: len(strides) == len(channels) - 1
@@ -431,7 +434,6 @@ class ModelBuilder:
 
         # Cross entropy: voxel-wise classification (smooth gradients)
         # Dice: measures the overlap between predicted and true segmentation masks.
-        # TODO: consider adding ce_weight=[0.0, 1.0, 3.0]
         self.loss_fn = DiceCELoss(
             to_onehot_y=True,
             softmax=True,
@@ -440,12 +442,15 @@ class ModelBuilder:
             # dice weight
             lambda_dice=1.0,
             # CE weight
-            lambda_ce=1.0
+            lambda_ce=1.0,
+            # ce_weight is vector penalisation (how aggressive the penalisation)
+            # is for that class. [background_weight, liver_weight, tumour_weight]
+            ce_weight=torch.tensor(self.config.DICE_CE_WEIGHTS, device=self.device)
         )
         self.optimizer = optim.AdamW(
             # weights and biases
             self.model.parameters(),
-            lr=config.LEARNING_RATE,
+            lr=self.config.LEARNING_RATE,
             weight_decay=1e-5
         )
 
@@ -454,7 +459,7 @@ class ModelBuilder:
             # via sliding window patches)
             self.inferer = SlidingWindowInferer(
                 # MUST be the same as the training patch size
-                roi_size=config.TRAIN_PATCH_SIZE,
+                roi_size=self.config.TRAIN_PATCH_SIZE,
                 # Process 16 patches in parallel
                 sw_batch_size=16,
                 # Generate overlapping patches (reduces the step size)
@@ -473,12 +478,12 @@ class ModelBuilder:
             logger.debug("Using SlidingWindowInferer for full-volume inference")
 
         logger.info("Model initialized on %s", self.device)
-        logger.info("Optimizer: AdamW | LR: %f | Weight Decay: 1e-5", config.LEARNING_RATE)
+        logger.info("Optimizer: AdamW | LR: %f | Weight Decay: 1e-5", self.config.LEARNING_RATE)
 
 
         # During training scheduler follows a cosine curve between LEARNING_RATE
         # and eta_min (1e-6) over NUM_EPOCHS epochs
-        warm_epochs = config.WARMUP_EPOCHS
+        warm_epochs = self.config.WARMUP_EPOCHS
         if warm_epochs <= 0:
             warm_epochs = 1  # Avoid invalid total_iters for LinearLR
 
@@ -489,10 +494,10 @@ class ModelBuilder:
             total_iters=warm_epochs - 1
         )
         # TODO: UNDERSTAND THIS
-        t_max = config.NUM_EPOCHS - config.WARMUP_EPOCHS
+        t_max = self.config.NUM_EPOCHS - self.config.WARMUP_EPOCHS
         if t_max <= 0:
             logger.info("WARMUP_EPOCHS (%d) is greater than or equal to NUM_EPOCHS (%d). "
-            "Cosine annealing will not be applied.", config.WARMUP_EPOCHS, config.NUM_EPOCHS)
+            "Cosine annealing will not be applied.", self.config.WARMUP_EPOCHS, self.config.NUM_EPOCHS)
             t_max = 1  # Avoid invalid T_max for CosineAnnealingLR
         cosine = CosineAnnealingLR(
             self.optimizer,
@@ -502,7 +507,7 @@ class ModelBuilder:
         self.scheduler = SequentialLR(
             self.optimizer,
             schedulers=[warmup, cosine],
-            milestones=[config.WARMUP_EPOCHS]
+            milestones=[self.config.WARMUP_EPOCHS]
         )
 
         logger.info("Scheduler initialized: CosineAnnealingLR (T_max=%d, eta_min=%e)",
@@ -583,7 +588,7 @@ class ModelBuilder:
             self.optimizer.zero_grad(set_to_none=True)
 
             # Mixed precision training for potential speed up on CUDA
-            with autocast(device_type="cuda", enabled=config.DEVICE == "cuda"):
+            with autocast(device_type="cuda", enabled=self.config.DEVICE == "cuda"):
                 predictions = self.model(images)
                 loss = self.loss_fn(predictions, labels)
 
@@ -627,7 +632,7 @@ class ModelBuilder:
         """Run full-volume sliding window inference on a single batch.
         Called from within torch.inference_mode() and autocast contexts in _validate.
         """
-        with autocast(device_type="cuda", enabled=config.DEVICE == "cuda"):
+        with autocast(device_type="cuda", enabled=self.config.DEVICE == "cuda"):
             if self.inferer is not None:
                 return self.inferer(inputs=image, network=self.model)
             else:
@@ -648,7 +653,7 @@ class ModelBuilder:
                         batch_idx + 1, len(self.val_dl),
                         batch["image"].shape)
 
-            with autocast(device_type="cuda", enabled=config.DEVICE == "cuda"):
+            with autocast(device_type="cuda", enabled=self.config.DEVICE == "cuda"):
                 if self.inferer is not None:
                     try:
                         # GPU: Process full volume via sliding window
@@ -658,7 +663,7 @@ class ModelBuilder:
                         logger.warning("OOM during validation, falling back to sw_batch_size=1")
                         # Fallback on low memory
                         fallback = SlidingWindowInferer(
-                            roi_size=config.TRAIN_PATCH_SIZE,
+                            roi_size=self.config.TRAIN_PATCH_SIZE,
                             sw_batch_size=1, # (original: 4)
                             overlap=0.25, # (original: 0.5)
                             mode="gaussian",
@@ -751,9 +756,9 @@ class ModelBuilder:
         # mean_dice = float(torch.nanmean(torch.tensor(per_class_dice)).item())
 
         # Map foreground indices to names based on current config
-        if config.NUM_CLASSES == 3:
+        if self.config.NUM_CLASSES == 3:
             class_map = {0: "liver", 1: "tumour"}
-        else:  # config.NUM_CLASSES == 2
+        else:  # self.config.NUM_CLASSES == 2
             class_map = {0: "tumour"}
 
         log_parts = []
@@ -770,7 +775,7 @@ class ModelBuilder:
 
         if self._should_notify(epoch):
             send_alert(
-                title=f"Epoch {epoch+1}/{config.NUM_EPOCHS} completed",
+                title=f"Epoch {epoch+1}/{self.config.NUM_EPOCHS} completed",
                 message="\n".join([
                     f"Validation loss: {avg_val_loss:.4f}",
                     f"Mean Dice: {mean_dice:.4f}",
@@ -804,7 +809,7 @@ class ModelBuilder:
         """
         epoch_start_time = time.time()
 
-        logger.info("======Starting epoch %d/%d ======", epoch+1, config.NUM_EPOCHS)
+        logger.info("======Starting epoch %d/%d ======", epoch+1, self.config.NUM_EPOCHS)
         log_memory_usage(logger)
 
         # Train and validate one epoch
@@ -844,14 +849,14 @@ class ModelBuilder:
         early_stopper = EarlyStopper(self)
 
         total_start_time = time.time()
-        logger.info("Starting training for %d epochs...", config.NUM_EPOCHS)
+        logger.info("Starting training for %d epochs...", self.config.NUM_EPOCHS)
 
         try:
-            for epoch in range(config.NUM_EPOCHS):
+            for epoch in range(self.config.NUM_EPOCHS):
                 epoch_dice = self._run_epoch(epoch)
 
                 # Returns true if the model hasn't improved for
-                # `config.EARLY_STOPPING_PATIENCE` epochs
+                # `self.config.EARLY_STOPPING_PATIENCE` epochs
                 if early_stopper(epoch, epoch_dice):
                     break
             # End epoch loop
@@ -884,11 +889,12 @@ class ModelBuilder:
 class EarlyStopper:
     '''Helper class to manage early stopping logic and checkpoint saving.'''
     def __init__(self, builder: ModelBuilder):
+        self.config = config.get()
         self.best_dice = -1.0
         self.best_epoch = -1
         self.epochs_no_improve = 0
         self.builder = builder
-        self.checkpoint_path = config.CHECKPOINT_DIR / "best_model.pth"
+        self.checkpoint_path = self.config.CHECKPOINT_DIR / "best_model.pth"
 
     def __call__(self, epoch: int, epoch_dice: float) -> bool:
         '''Checks if the current epoch's Dice score shows an improvement over
@@ -902,19 +908,19 @@ class EarlyStopper:
         Returns
         -----
         `bool`
-            True if the model hasn't improved for at least `config.EARLY_STOPPING_PATIENCE` epochs
+            True if the model hasn't improved for at least `self.config.EARLY_STOPPING_PATIENCE` epochs
         '''
-        if epoch_dice > self.best_dice + config.EARLY_STOPPING_MIN_DELTA:
+        if epoch_dice > self.best_dice + self.config.EARLY_STOPPING_MIN_DELTA:
             self.best_dice = epoch_dice
             self.best_epoch = epoch
             self.epochs_no_improve = 0
             self.save_checkpoint()
             return False  # Indicates improvement
 
-        if self.epochs_no_improve < config.EARLY_STOPPING_PATIENCE:
+        if self.epochs_no_improve < self.config.EARLY_STOPPING_PATIENCE:
             self.epochs_no_improve += 1
             logger.info("  -> No improvement (%d/%d epochs)",
-                        self.epochs_no_improve, config.EARLY_STOPPING_PATIENCE)
+                        self.epochs_no_improve, self.config.EARLY_STOPPING_PATIENCE)
             return False
 
         logger.info("  -> Early stopping triggered at epoch %d", epoch + 1)
@@ -926,7 +932,7 @@ class EarlyStopper:
         if is_best:
             path = self.checkpoint_path
         else:
-            path = config.CHECKPOINT_DIR / "last_epoch.pth"
+            path = self.config.CHECKPOINT_DIR / "last_epoch.pth"
 
         before_save_time = time.time()
         torch.save({

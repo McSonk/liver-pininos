@@ -126,6 +126,7 @@ class DataCollector:
     different specified directories.
     '''
     def __init__(self):
+        self.config = config.get()
         self.d_sets: list[CustomDataset] = []
         '''The plain paths for the dataset'''
         self.datasources: list[dict[str, str]] = []
@@ -210,14 +211,14 @@ class DataCollector:
             data=self.datasources,
             ratios=[train_ratio, 1.0 - train_ratio],
             shuffle=True,
-            seed=config.RANDOM_SEED
+            seed=self.config.RANDOM_SEED
         )
 
         logger.info("Split dataset into %d training and %d validation samples.",
                     len(train_files), len(val_files))
 
         # Log split for thesis appendix
-        log_path = config.SPLIT_DIR / f"{self.d_sets[0].ds_source}_split_seed{config.RANDOM_SEED}.json"
+        log_path = self.config.SPLIT_DIR / f"{self.d_sets[0].ds_source}_split_seed{self.config.RANDOM_SEED}.json"
         log_path.write_text(
             json.dumps(
                 {
@@ -256,15 +257,15 @@ class DataCollector:
     def _calc_and_write(self, file_path: Path, train_ratio: float=0.8) -> tuple[list, list]:
         '''Calculates the stratified split based on the stats and writes
         the split log to disk.'''
-        if not config.PER_CASE_TRAIN_STATS_FILE.exists():
+        if not self.config.PER_CASE_TRAIN_STATS_FILE.exists():
             raise FileNotFoundError(
-                f"per_case_summary.csv not found at {config.PER_CASE_TRAIN_STATS_FILE}. "
+                f"per_case_summary.csv not found at {self.config.PER_CASE_TRAIN_STATS_FILE}. "
                 "Run analyse_dataset.py first."
             )
 
         logger.info("No existing split log found. Calculating new stratified split...")
 
-        stats = pd.read_csv(config.PER_CASE_TRAIN_STATS_FILE)
+        stats = pd.read_csv(self.config.PER_CASE_TRAIN_STATS_FILE)
 
         # add classification
         stats["burden_bin"] = stats.apply(self._assign_bin, axis=1)
@@ -296,7 +297,7 @@ class DataCollector:
                 data=group,
                 ratios=[train_ratio, 1.0 - train_ratio],
                 shuffle=True,
-                seed=config.RANDOM_SEED
+                seed=self.config.RANDOM_SEED
             )
             train_files.extend(t)
             val_files.extend(v)
@@ -365,8 +366,8 @@ class DataCollector:
         if not self.datasources:
             raise ValueError("No data loaded. Call read_dir() first.")
 
-        json_file_name = f"{self.d_sets[0].ds_source}_split_seed{config.RANDOM_SEED}.json"
-        json_file_path = config.SPLIT_DIR / json_file_name
+        json_file_name = f"{self.d_sets[0].ds_source}_split_seed{self.config.RANDOM_SEED}.json"
+        json_file_path = self.config.SPLIT_DIR / json_file_name
         if json_file_path.exists():
             train_files, val_files = self._load_split(json_file_path)
         else:

@@ -34,11 +34,12 @@ def print_image_plot(img_data, slice_index, include_axis=False, ax=None,
         If True, uses the training window (HU: -175 to 250).
         If False, uses general abdominal window (default: True)
     '''
+    cfg = config.get()
 
     if use_training_window:
         # Window matching ScaleIntensityRanged preprocessing
-        vmin = config.HU_WINDOW_MIN
-        vmax = config.HU_WINDOW_MAX
+        vmin = cfg.HU_WINDOW_MIN
+        vmax = cfg.HU_WINDOW_MAX
         title_suffix = "(Training Window)"
     else:
         # General abdominal CT presets
@@ -236,6 +237,7 @@ def log_segmentation_overlay(
         slice_axis: Axis to slice along (0=sagittal, 1=coronal, 2=axial).
         slice_idx:  Override automatic slice selection if provided.
     """
+    cfg = config.get()
     image = image.detach().cpu()
     label = label.detach().cpu()
     pred  = pred.detach().cpu()
@@ -251,7 +253,7 @@ def log_segmentation_overlay(
         # tumour voxel count per slice along slice_axis
         all_dims = {0, 1, 2}
         sum_dims = tuple(all_dims - {slice_axis})
-        tumour_per_slice = (label_vol == config.TUMOUR_CLASS_INDEX).sum(dim=sum_dims)
+        tumour_per_slice = (label_vol == cfg.TUMOUR_CLASS_INDEX).sum(dim=sum_dims)
         if tumour_per_slice.max() > 0:
             slice_idx = tumour_per_slice.argmax().item()
             logger.debug("Overlay: using tumour-centred slice %d (axis %d)",
@@ -273,8 +275,8 @@ def log_segmentation_overlay(
     img_norm = img_norm.unsqueeze(0)                                # [1, H, W]
 
     # --- Extract tumour masks ---
-    gt_tumour_mask   = (gt_slice   == config.TUMOUR_CLASS_INDEX).float()  # [H, W]
-    pred_tumour_mask = (pred_slice == config.TUMOUR_CLASS_INDEX).float()  # [H, W]
+    gt_tumour_mask   = (gt_slice   == cfg.TUMOUR_CLASS_INDEX).float()  # [H, W]
+    pred_tumour_mask = (pred_slice == cfg.TUMOUR_CLASS_INDEX).float()  # [H, W]
 
     # --- Spatial mismatch guard & resize ---
     img_spatial = img_norm.shape[1:]
