@@ -148,7 +148,7 @@ def init() -> Config:
         container_memory_bytes / (1024 ** 3) if container_memory_bytes > 0 else -1.0
     )  # GB; -1.0 means unknown/unlimited
     process_memory_limit = container_memory if container_memory > 0 else cpu_memory
-    lots_of_ram = process_memory_limit >= 60
+    lots_of_ram = process_memory_limit >= 50
 
     if device == "cuda":
         if torch.cuda.is_available():
