@@ -9,6 +9,7 @@ import psutil
 import torch
 
 from idssp.sonk import config
+from idssp.sonk.config import get_container_usage
 
 # -----------------------------------------------------------------------------
 # Module-level variable to ensure consistent timestamp across all loggers
@@ -126,13 +127,19 @@ def log_memory_usage(logger: logging.Logger, prefix: str = ""):
 
     # CPU Memory Usage (using psutil if available)
     try:
-        cpu_memory = psutil.virtual_memory()
-        cpu_memory_used = cpu_memory.used / (1024 ** 3)  # GB
-        cpu_memory_total = cpu_memory.total / (1024 ** 3)  # GB
-        logger.info("%sCPU (total) Memory - Used: %.2f GB, Total: %.2f GB",
-                    prefix, cpu_memory_used, cpu_memory_total)
-    except ImportError:
-        logger.info("%spsutil not installed. CPU memory usage not logged.", prefix)
+        limit, usage, free, percentage = get_container_usage()
+        if limit <= 0:
+            cpu_memory = psutil.virtual_memory()
+            cpu_memory_used = cpu_memory.used / (1024 ** 3)  # GB
+            cpu_memory_total = cpu_memory.total / (1024 ** 3)  # GB
+            logger.info("%sCPU (total) Memory - Used: %.2f GB, Total: %.2f GB",
+                        prefix, cpu_memory_used, cpu_memory_total)
+        else:
+            logger.info("%sCPU (container) Memory - Used: %.2f GB, Limit: %.2f GB, "
+                        "Free: %.2f GB (%.1f%% of limit used)",
+                        prefix, usage, limit, free, percentage)
+    except Exception as e:
+        logger.warning("%sCould not retrieve CPU memory usage: %s", prefix, str(e))
 
 def install_global_exception_handlers(logger: logging.Logger) -> None:
     """

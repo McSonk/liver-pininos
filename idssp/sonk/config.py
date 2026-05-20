@@ -169,7 +169,7 @@ def init() -> Config:
     num_classes = 3
     tumour_class_index = 2 if num_classes == 3 else 1
     dice_ce_weights = [0.0, 1.0, 3.0] if num_classes == 3 else [1.0, 3.0]
-    gpu_num_workers = 12 if hc_gpu else 2
+    gpu_num_workers = 4 if hc_gpu else 2
 
     local_specific = {
         "cache_num_workers": 0,
@@ -600,3 +600,38 @@ def get_cgroup_memory_limit_bytes() -> int:
     except FileNotFoundError:
         return -1  # Unknown/unlimited
 
+def get_container_usage():
+    try:
+        # Try cgroup v2 first (modern systems)
+        limit_path = "/sys/fs/cgroup/memory.max"
+        usage_path = "/sys/fs/cgroup/memory.current"
+        
+        if not os.path.exists(limit_path):
+            # Fallback to cgroup v1 (older systems)
+            limit_path = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
+            usage_path = "/sys/fs/cgroup/memory/memory.usage_in_bytes"
+        
+        if os.path.exists(limit_path) and os.path.exists(usage_path):
+            with open(limit_path, "r") as f:
+                limit_val = f.read().strip()
+                # cgroup v2 uses "max" for unlimited; v1 uses a large number
+                if limit_val == "max":
+                    # Unlimited container – fall back to psutil
+                    raise FileNotFoundError("Unlimited cgroup")
+                limit_bytes = int(limit_val)
+            
+            with open(usage_path, "r") as f:
+                usage_bytes = int(f.read().strip())
+            
+            # Convert to GB
+            limit_gb = limit_bytes / (1024 ** 3)
+            usage_gb = usage_bytes / (1024 ** 3)
+            free_gb = limit_gb - usage_gb
+            usage_pct = (usage_bytes / limit_bytes) * 100 if limit_bytes > 0 else 0.0
+            return free_gb, usage_gb, limit_gb, usage_pct
+        else:
+            # cgroup files not accessible – fall back to host stats
+            raise FileNotFoundError("cgroup files not found")
+            
+    except (FileNotFoundError, PermissionError, ValueError):
+        return -1, -1, -1, -1  # Indicate unknown/unlimited with -1

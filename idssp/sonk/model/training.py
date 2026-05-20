@@ -831,7 +831,6 @@ class ModelBuilder:
         # Clean up GPU memory after epoch to prevent potential OOM errors in future epochs
         if self.config.DEVICE == "cuda":
             torch.cuda.empty_cache()
-            log_memory_usage(logger, prefix="After emptying CUDA cache: ")
 
         # Get current learning rate for logging
         current_lr = self.optimizer.param_groups[0]['lr']
