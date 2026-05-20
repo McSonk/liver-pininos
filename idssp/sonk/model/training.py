@@ -212,7 +212,7 @@ class ModelBuilder:
         Returns the transforms for the training data. Note that the result will
         differ based on the environment:
         - In a limited environment (e.g. CPU) or when using CacheDataset
-          (`config.USE_CACHE_DATASET`), all transforms (including random cropping)
+          (`config.USE_CACHE_(TRAIN/VAL)_DATASET`), all transforms (including random cropping)
           are included in the main deterministic pipeline
         - In a GPU environment with PersistentDataset, the random cropping is separated into
             a second Compose that is applied on-the-fly. This due to the fact that
@@ -349,8 +349,8 @@ class ModelBuilder:
             train_ds = Dataset(data=train_files, transform=train_det_trans)
             val_ds = Dataset(data=val_files, transform=val_transforms)
         else:
-            if self.config.USE_CACHE_DATASET:
-                logger.debug("Sufficient resources detected. Using MONAI CacheDataset.")
+            if self.config.USE_CACHE_TRAIN_DATASET:
+                logger.debug("[Train] Sufficient resources detected. Using MONAI CacheDataset.")
                 train_ds = AugmentedDataset(
                     CacheDataset(
                         data=train_files,
@@ -360,16 +360,8 @@ class ModelBuilder:
                     ),
                     train_ran_trans
                 )
-                val_ds = CacheDataset(
-                    data=val_files,
-                    transform=val_transforms,
-                    cache_rate=1.0,
-                    num_workers=self.config.NUM_WORKERS,
-                )
             else:
-                # TODO: implement a hashing mechanism to detect changes in transforms
-                # (use the hash as dir name)
-                logger.info("Sufficient resources detected. Using PersistentDataset.")
+                logger.info("[Train] Sufficient resources detected. Using PersistentDataset.")
                 train_ds = AugmentedDataset(
                     PersistentDataset(
                         data=train_files,
@@ -380,6 +372,19 @@ class ModelBuilder:
                     ),
                     train_ran_trans
                 )
+            # end if-else for train dataset
+            if self.config.USE_CACHE_VAL_DATASET:
+                logger.debug("[Val] Using MONAI CacheDataset.")
+                val_ds = CacheDataset(
+                    data=val_files,
+                    transform=val_transforms,
+                    cache_rate=1.0,
+                    num_workers=self.config.NUM_WORKERS,
+                )
+            else:
+                # TODO: implement a hashing mechanism to detect changes in transforms
+                # (use the hash as dir name)
+                logger.info("[Val] Sufficient resources detected. Using PersistentDataset.")
                 val_ds = PersistentDataset(
                     data=val_files,
                     transform=val_transforms,
@@ -387,6 +392,8 @@ class ModelBuilder:
                                   f"hmin_{self.config.HU_WINDOW_MIN}"
                                   f"_hmax_{self.config.HU_WINDOW_MAX}_val_cache")
                 )
+            # end if-else for val dataset
+        # end if-else for is limited environment
 
         logger.debug("Creating training dataloader...")
         self.train_dl = DataLoader(
