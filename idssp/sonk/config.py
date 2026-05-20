@@ -600,7 +600,21 @@ def get_cgroup_memory_limit_bytes() -> int:
     except FileNotFoundError:
         return -1  # Unknown/unlimited
 
-def get_container_usage():
+def get_container_usage() -> tuple:
+    ''' Calculate the memory usage of the current process within its cgroup limits.
+    (Useful when running in a container with limited resources.)
+
+    Returns
+    -------
+    limit_gb : float
+        The total memory limit of the cgroup in GB. -1 if unknown/unlimited.
+    usage_gb : float
+        The current memory usage of the process in GB. -1 if unknown/unlimited.
+    free_gb : float
+        The free memory available to the process within the cgroup limits in GB. -1 if unknown/unlimited.
+    usage_pct : float
+        The percentage of the cgroup memory limit currently used by the process. -1 if unknown/unlimited.
+    '''
     try:
         # Try cgroup v2 first (modern systems)
         limit_path = "/sys/fs/cgroup/memory.max"
