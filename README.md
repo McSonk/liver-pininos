@@ -240,6 +240,18 @@ scp lits_checksums_local.md5 user@server_address:/remote/path/to/lits_data/
 md5sum -c lits_checksums_local.md5
 ```
 
+For monitoring ram consumption:
+
+```bash
+# At cache dataset creation phase:
+watch -n 5 'cat /sys/fs/cgroup/memory/memory.usage_in_bytes | numfmt --to=iec'
+
+# At training phase:
+
+nvidia-smi -l 1
+
+```
+
 ## License
 
 This project is part of a master's thesis at NTU (Taiwan). Please refer to the university's policies regarding code usage and distribution.

@@ -183,7 +183,7 @@ def init() -> Config:
     }
 
     cloud_specific = {
-        "cache_num_workers": 4 if process_memory_limit > 60 else 2,
+        "cache_num_workers": 4 if process_memory_limit > 60 else 1,
         "dl_num_workers": min(gpu_num_workers, cpu_count),
         "pin_memory": True,
         "batch_size": 4 if hc_gpu else 2,
