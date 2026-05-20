@@ -628,7 +628,7 @@ def get_container_usage():
             usage_gb = usage_bytes / (1024 ** 3)
             free_gb = limit_gb - usage_gb
             usage_pct = (usage_bytes / limit_bytes) * 100 if limit_bytes > 0 else 0.0
-            return free_gb, usage_gb, limit_gb, usage_pct
+            return limit_gb, usage_gb, free_gb, usage_pct
         else:
             # cgroup files not accessible – fall back to host stats
             raise FileNotFoundError("cgroup files not found")
