@@ -14,9 +14,10 @@ from monai.data import DataLoader, Dataset, decollate_batch
 from monai.inferers import SlidingWindowInferer
 from monai.metrics import DiceMetric, HausdorffDistanceMetric
 from monai.networks.nets import UNet
-from monai.transforms import (Activations, AsDiscrete, Compose, EnsureTyped,
-                              LoadImaged, Orientationd, ScaleIntensityRanged,
-                              Spacingd)
+from monai.transforms import (Activations, AsDiscrete, Compose,
+                              CropForegroundd, EnsureTyped, LoadImaged,
+                              Orientationd, ScaleIntensityRanged, Spacingd,
+                              SpatialPadd)
 from monai.utils import set_determinism
 
 from idssp.sonk import config
@@ -117,6 +118,20 @@ class TestEvaluator:
                 b_max=1.0,
                 clip=True
             ),
+            CropForegroundd(
+                keys=["image", "label"],
+                source_key="image",
+                # Background is 0
+                select_fn=lambda x: x > 0,
+                margin=10,
+                allow_smaller=True
+            ),
+            SpatialPadd(
+                keys=["image", "label"],
+                spatial_size=self.config.TRAIN_PATCH_SIZE,
+                mode="constant",
+                value=0
+            ),
             EnsureTyped(keys=["image", "label"])
         ])
 
@@ -136,13 +151,18 @@ class TestEvaluator:
         logger.info("Starting full-volume inference on %d test volumes...", len(test_files))
         start_time = time.time()
 
-        with torch.no_grad():
+        with torch.inference_mode():
             for batch_idx, batch in enumerate(test_dl):
                 case_name = Path(batch["image"].meta["filename_or_obj"][0]).stem
                 logger.info("[%d/%d] Processing: %s", batch_idx + 1, len(test_dl), case_name)
 
+                if batch_idx % 5 == 0:
+                    logger.debug("Information of batch %d:", batch_idx)
+                    logger.debug("Batch image shape: %s", batch["image"].shape)
+                    logger.debug("MONAI meta affine shape:%s", batch["image"].meta["affine"].shape)
+                    logger.debug("MONAI meta affine:\n%s", batch["image"].meta["affine"][0])
+
                 images = batch["image"].to(self.device)
-                labels = batch["label"].to(self.device)
 
                 # Full-volume sliding window inference
                 with torch.amp.autocast(device_type="cuda", enabled=self.device.type == "cuda"):
@@ -220,7 +240,7 @@ class TestEvaluator:
         class_names = ["liver", "tumour"] if self.config.NUM_CLASSES == 3 else ["tumour"]
         for name in class_names:
             d_dice = df[f"dice_{name}"].dropna()
-            d_hd = df[f"hd95_{name}_mm"].dropna()
+            d_hd = df[f"hd95_{name}_mm"].replace([np.inf, -np.inf], np.nan).dropna()
             agg_metrics.append({
                 "structure": name.capitalize(),
                 "dice_mean": d_dice.mean(),
