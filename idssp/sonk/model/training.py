@@ -426,6 +426,9 @@ class ModelBuilder:
                 )
                 break
 
+        if self._overlay_batch is None:
+            raise ValueError("No validation sample with tumour voxels was found")
+
         logger.debug("Data loaders initialized successfully.")
         logger.info(
             "Training DataLoader: %d batches | effective batch shape: torch.Size([%d, 1, %s])",
