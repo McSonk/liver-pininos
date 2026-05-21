@@ -93,11 +93,9 @@ class Config:
     liver, tumour].'''
     DICE_CE_WEIGHTS: list = None
     '''The weights for the combined Dice + Cross-Entropy loss.
-    This should be a list of length `NUM_CLASSES`, where the value at `TUMOUR_CLASS_INDEX`
-    is higher to emphasise learning the tumour class. For example, for `NUM_CLASSES=3`
-    and `TUMOUR_CLASS_INDEX=2`,  a good choice is `[0.0, 1.0, 3.0]` to ignore the
-    background, give some weight to the liver, and more weight to the tumour.
-    '''
+       This should be a list of length `NUM_CLASSES`, where the value at `TUMOUR_CLASS_INDEX`
+       is higher to emphasise learning the tumour class. For example, for `NUM_CLASSES=3`
+       and `TUMOUR_CLASS_INDEX=2`'''
 
     # Early Stopping
     EARLY_STOPPING_PATIENCE: int = 30
