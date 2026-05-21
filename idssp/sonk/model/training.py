@@ -421,8 +421,9 @@ class ModelBuilder:
             if (batch["label"] == self.config.TUMOUR_CLASS_INDEX).any():
                 self._overlay_batch = batch
                 logger.debug(
-                    "Overlay volume selected: %s. You can watch this on TensorBoard",
-                    batch["image"].meta["filename_or_obj"][0]
+                    "Overlay volume selected — label shape: %s, tumour voxels: %d",
+                    batch["label"].shape,
+                    (batch["label"] == 2).sum().item()
                 )
                 break
 
