@@ -43,6 +43,8 @@ class Config:
     VAL_PATCH_SIZE: tuple = (96, 96, 96)
     '''The size of the 3D patches to be extracted from the volumes for training and validation.
        (Only used in local env). NOT TO BE CONFUSED WITH `VAL_BATCH_SIZE`'''
+
+    # ----Cache dataset
     USE_CACHE_TRAIN_DATASET: bool = True
     '''Whether to use a caching dataset that keeps preprocessed volumes in memory.
     This can speed up training but requires more RAM.
@@ -53,6 +55,10 @@ class Config:
     This can speed up training but requires more RAM.
     If False, PersistentDataset will be used instead
     '''
+    CACHE_DATASET_RATE: float = 1.0
+    '''The proportion of the dataset to cache in memory when using CacheDataset.
+       Set to 1.0 to cache the entire dataset, or a lower value (e.g., 0.5) to cache
+       only a portion of it for memory safety.'''
 
     # Training
     LEARNING_RATE: float = 1e-4
@@ -87,11 +93,9 @@ class Config:
     liver, tumour].'''
     DICE_CE_WEIGHTS: list = None
     '''The weights for the combined Dice + Cross-Entropy loss.
-    This should be a list of length `NUM_CLASSES`, where the value at `TUMOUR_CLASS_INDEX`
-    is higher to emphasise learning the tumour class. For example, for `NUM_CLASSES=3`
-    and `TUMOUR_CLASS_INDEX=2`,  a good choice is `[0.0, 1.0, 3.0]` to ignore the
-    background, give some weight to the liver, and more weight to the tumour.
-    '''
+       This should be a list of length `NUM_CLASSES`, where the value at `TUMOUR_CLASS_INDEX`
+       is higher to emphasise learning the tumour class. For example, for `NUM_CLASSES=3`
+       and `TUMOUR_CLASS_INDEX=2`'''
 
     # Early Stopping
     EARLY_STOPPING_PATIENCE: int = 30
@@ -148,7 +152,7 @@ def init() -> Config:
         container_memory_bytes / (1024 ** 3) if container_memory_bytes > 0 else -1.0
     )  # GB; -1.0 means unknown/unlimited
     process_memory_limit = container_memory if container_memory > 0 else cpu_memory
-    lots_of_ram = process_memory_limit >= 50
+    lots_of_ram = process_memory_limit >= 100
 
     if device == "cuda":
         if torch.cuda.is_available():
@@ -168,8 +172,8 @@ def init() -> Config:
     # num_classes = 2 or 3
     num_classes = 3
     tumour_class_index = 2 if num_classes == 3 else 1
-    dice_ce_weights = [0.0, 1.0, 3.0] if num_classes == 3 else [1.0, 3.0]
-    gpu_num_workers = 8 if hc_gpu else 2
+    dice_ce_weights = [0.5, 1.0, 2.0] if num_classes == 3 else [1.0, 2.0]
+    gpu_num_workers = 4 if hc_gpu else 2
 
     local_specific = {
         "cache_num_workers": 0,
@@ -493,6 +497,18 @@ def init() -> Config:
         TELEGRAM_CHAT_ID=telegram_chat_id,
     )
 
+    # Final validation to catch any issues with the combined configuration
+    if not isinstance(_config.CACHE_DATASET_RATE, (int, float)):
+        raise TypeError(
+            "CACHE_DATASET_RATE must be a float in the range [0.0, 1.0], "
+            f"got {type(_config.CACHE_DATASET_RATE).__name__}."
+        )
+    if not 0.0 <= float(_config.CACHE_DATASET_RATE) <= 1.0:
+        raise ValueError(
+            "CACHE_DATASET_RATE must be between 0.0 and 1.0 inclusive, "
+            f"got {_config.CACHE_DATASET_RATE}."
+        )
+
     return _config
 
 def get() -> Config:
@@ -541,8 +557,11 @@ def to_dict() -> dict:
         "ISO_SPACING": list(config.ISO_SPACING),  # tuple → list for JSON/weights compatibility
         "TRAIN_PATCH_SIZE": list(config.TRAIN_PATCH_SIZE),
         "VAL_PATCH_SIZE": list(config.VAL_PATCH_SIZE),
+
+        # cache
         "USE_CACHE_TRAIN_DATASET": config.USE_CACHE_TRAIN_DATASET,
         "USE_CACHE_VAL_DATASET": config.USE_CACHE_VAL_DATASET,
+        "CACHE_DATASET_RATE": config.CACHE_DATASET_RATE,
 
         # Training Hyperparameters
         "LEARNING_RATE": config.LEARNING_RATE,
@@ -600,3 +619,65 @@ def get_cgroup_memory_limit_bytes() -> int:
     except FileNotFoundError:
         return -1  # Unknown/unlimited
 
+def get_container_usage() -> tuple[float, float, float, float]:
+    '''Calculate memory usage for the current cgroup within its memory limits.
+    (Useful when running in a container with limited resources.)
+
+    Returns
+    -------
+    limit_gb : float
+        The total memory limit of the current cgroup in GB. -1 if unknown/unlimited.
+    usage_gb : float
+        The current memory usage reported for the current cgroup in GB.
+        -1 if unknown/unlimited.
+    free_gb : float
+        The remaining memory available within the current cgroup limit in GB.
+        -1 if unknown/unlimited.
+    usage_pct : float
+        The percentage of the current cgroup memory limit currently in use.
+        -1 if unknown/unlimited.
+    '''
+
+    # Sentinel threshold for "unlimited" in cgroup v1 (~2^63 - 2^9)
+    _CGROUP_V1_UNLIMITED_SENTINEL = 9223372036854771712
+    _CGROUP_V1_UNLIMITED_THRESHOLD = 2**60  # 1 EiB – any value above this is suspicious
+    try:
+        # Try cgroup v2 first (modern systems)
+        limit_path = "/sys/fs/cgroup/memory.max"
+        usage_path = "/sys/fs/cgroup/memory.current"
+
+        if not os.path.exists(limit_path):
+            # Fallback to cgroup v1 (older systems)
+            limit_path = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
+            usage_path = "/sys/fs/cgroup/memory/memory.usage_in_bytes"
+
+        if os.path.exists(limit_path) and os.path.exists(usage_path):
+            with open(limit_path, "r") as f:
+                limit_val = f.read().strip()
+                # cgroup v2 uses "max" for unlimited; v1 uses a large number
+                if limit_val == "max":
+                    # Unlimited container – fall back to psutil
+                    raise FileNotFoundError("Unlimited cgroup")
+                limit_bytes = int(limit_val)
+
+                # cgroup v1 uses a huge sentinel for unlimited
+                # Detect both exact sentinel and values > 1 EiB
+                if (limit_bytes == _CGROUP_V1_UNLIMITED_SENTINEL or
+                    limit_bytes > _CGROUP_V1_UNLIMITED_THRESHOLD):
+                    raise FileNotFoundError("Unlimited cgroup (v1 sentinel)")
+
+            with open(usage_path, "r") as f:
+                usage_bytes = int(f.read().strip())
+
+            # Convert to GB
+            limit_gb = limit_bytes / (1024 ** 3)
+            usage_gb = usage_bytes / (1024 ** 3)
+            free_gb = limit_gb - usage_gb
+            usage_pct = (usage_bytes / limit_bytes) * 100 if limit_bytes > 0 else 0.0
+            return limit_gb, usage_gb, free_gb, usage_pct
+        else:
+            # cgroup files not accessible – fall back to host stats
+            raise FileNotFoundError("cgroup files not found")
+
+    except (FileNotFoundError, PermissionError, ValueError):
+        return -1, -1, -1, -1  # Indicate unknown/unlimited with -1

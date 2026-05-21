@@ -243,7 +243,7 @@ class ModelBuilder:
                 keys=["image", "label"],
                 label_key="label",
                 spatial_size=self.config.TRAIN_PATCH_SIZE,
-                pos=3,
+                pos=2,
                 neg=1,
                 # number of samples to generate per volume
                 num_samples=self.config.RAND_CROP_NUM_SAMPLES,
@@ -349,13 +349,14 @@ class ModelBuilder:
             train_ds = Dataset(data=train_files, transform=train_det_trans)
             val_ds = Dataset(data=val_files, transform=val_transforms)
         else:
+            time_at_start = time.time()
             if self.config.USE_CACHE_TRAIN_DATASET:
                 logger.debug("[Train] Sufficient resources detected. Using MONAI CacheDataset.")
                 train_ds = AugmentedDataset(
                     CacheDataset(
                         data=train_files,
                         transform=train_det_trans,
-                        cache_rate=1.0,
+                        cache_rate=self.config.CACHE_DATASET_RATE,
                         num_workers=self.config.CACHE_NUM_WORKERS,
                     ),
                     train_ran_trans
@@ -378,7 +379,7 @@ class ModelBuilder:
                 val_ds = CacheDataset(
                     data=val_files,
                     transform=val_transforms,
-                    cache_rate=1.0,
+                    cache_rate=self.config.CACHE_DATASET_RATE,
                     num_workers=self.config.CACHE_NUM_WORKERS,
                 )
             else:
@@ -393,6 +394,7 @@ class ModelBuilder:
                                   f"_hmax_{self.config.HU_WINDOW_MAX}_val_cache")
                 )
             # end if-else for val dataset
+            logger.info("Datasets initialized in %.2f seconds.", time.time() - time_at_start)
         # end if-else for is limited environment
 
         logger.debug("Creating training dataloader...")
@@ -604,7 +606,6 @@ class ModelBuilder:
             self.back_propagate(loss)
 
             train_loss += loss.item()
-            logger.debug("  Batch Loss: %f | Cumulative Loss: %f", loss.item(), train_loss)
 
         return train_loss / len(self.train_dl)
 
@@ -654,13 +655,9 @@ class ModelBuilder:
     def _run_val_epoch(self, epoch: int):
         val_loss = 0
 
-        for batch_idx, batch in enumerate(self.val_dl):
+        for batch in self.val_dl:
             images = batch["image"].to(self.device)
             labels = batch["label"].to(self.device)
-
-            logger.debug("Validation batch: %d/%d. Batch (image) shape: %s",
-                        batch_idx + 1, len(self.val_dl),
-                        batch["image"].shape)
 
             with autocast(device_type="cuda", enabled=self.config.DEVICE == "cuda"):
                 if self.inferer is not None:
@@ -700,7 +697,6 @@ class ModelBuilder:
             # Accumulate validation loss for the epoch
             # (This works for model learning, as opposed to `dice_metric`)
             val_loss += batch_loss
-            logger.debug("  Batch Loss: %f | Cumulative Loss: %f", batch_loss, val_loss)
 
             # MONAI best practice: decollate batch before applying per-sample transforms
             # (Creates a view of the batch tensors as lists of individual samples)
@@ -824,6 +820,7 @@ class ModelBuilder:
         # Train and validate one epoch
         avg_train_loss = self._train_epoch()
         avg_val_loss, epoch_dice = self._validate(epoch)
+
 
         # Get current learning rate for logging
         current_lr = self.optimizer.param_groups[0]['lr']
