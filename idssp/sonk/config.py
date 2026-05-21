@@ -559,8 +559,11 @@ def to_dict() -> dict:
         "ISO_SPACING": list(config.ISO_SPACING),  # tuple → list for JSON/weights compatibility
         "TRAIN_PATCH_SIZE": list(config.TRAIN_PATCH_SIZE),
         "VAL_PATCH_SIZE": list(config.VAL_PATCH_SIZE),
+
+        # cache
         "USE_CACHE_TRAIN_DATASET": config.USE_CACHE_TRAIN_DATASET,
         "USE_CACHE_VAL_DATASET": config.USE_CACHE_VAL_DATASET,
+        "CACHE_DATASET_RATE": config.CACHE_DATASET_RATE,
 
         # Training Hyperparameters
         "LEARNING_RATE": config.LEARNING_RATE,
