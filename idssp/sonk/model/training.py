@@ -418,7 +418,7 @@ class ModelBuilder:
         # Initialise a fixed validation batch for logging overlays during training
         for batch in self.val_dl:
             # Check if current image has tumour voxels (label == 2)
-            if (batch["label"] == 2).any():
+            if (batch["label"] == self.config.TUMOUR_CLASS_INDEX).any():
                 self._overlay_batch = batch
                 logger.debug(
                     "Overlay volume selected: %s. You can watch this on TensorBoard",
