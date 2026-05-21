@@ -606,7 +606,7 @@ def get_cgroup_memory_limit_bytes() -> int:
     except FileNotFoundError:
         return -1  # Unknown/unlimited
 
-def get_container_usage() -> tuple:
+def get_container_usage() -> tuple[float, float, float, float]:
     ''' Calculate the memory usage of the current process within its cgroup limits.
     (Useful when running in a container with limited resources.)
 
@@ -617,10 +617,16 @@ def get_container_usage() -> tuple:
     usage_gb : float
         The current memory usage of the process in GB. -1 if unknown/unlimited.
     free_gb : float
-        The free memory available to the process within the cgroup limits in GB. -1 if unknown/unlimited.
+        The free memory available to the process within the cgroup limits in GB.
+        -1 if unknown/unlimited.
     usage_pct : float
-        The percentage of the cgroup memory limit currently used by the process. -1 if unknown/unlimited.
+        The percentage of the cgroup memory limit currently used by the process.
+        -1 if unknown/unlimited.
     '''
+
+    # Sentinel threshold for "unlimited" in cgroup v1 (~2^63 - 2^9)
+    _CGROUP_V1_UNLIMITED_SENTINEL = 9223372036854771712
+    _CGROUP_V1_UNLIMITED_THRESHOLD = 2**60  # 1 EiB – any value above this is suspicious
     try:
         # Try cgroup v2 first (modern systems)
         limit_path = "/sys/fs/cgroup/memory.max"
@@ -639,6 +645,12 @@ def get_container_usage() -> tuple:
                     # Unlimited container – fall back to psutil
                     raise FileNotFoundError("Unlimited cgroup")
                 limit_bytes = int(limit_val)
+
+                # cgroup v1 uses a huge sentinel for unlimited
+                # Detect both exact sentinel and values > 1 EiB
+                if (limit_bytes == _CGROUP_V1_UNLIMITED_SENTINEL or
+                    limit_bytes > _CGROUP_V1_UNLIMITED_THRESHOLD):
+                    raise FileNotFoundError("Unlimited cgroup (v1 sentinel)")
 
             with open(usage_path, "r") as f:
                 usage_bytes = int(f.read().strip())
