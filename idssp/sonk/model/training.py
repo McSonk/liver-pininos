@@ -243,7 +243,7 @@ class ModelBuilder:
                 keys=["image", "label"],
                 label_key="label",
                 spatial_size=self.config.TRAIN_PATCH_SIZE,
-                pos=3,
+                pos=2,
                 neg=1,
                 # number of samples to generate per volume
                 num_samples=self.config.RAND_CROP_NUM_SAMPLES,
@@ -356,7 +356,7 @@ class ModelBuilder:
                     CacheDataset(
                         data=train_files,
                         transform=train_det_trans,
-                        cache_rate=0.9,
+                        cache_rate=self.config.CACHE_DATASET_RATE,
                         num_workers=self.config.CACHE_NUM_WORKERS,
                     ),
                     train_ran_trans
@@ -379,8 +379,7 @@ class ModelBuilder:
                 val_ds = CacheDataset(
                     data=val_files,
                     transform=val_transforms,
-                    # TODO: Make this number configurable.
-                    cache_rate=0.9,
+                    cache_rate=self.config.CACHE_DATASET_RATE,
                     num_workers=self.config.CACHE_NUM_WORKERS,
                 )
             else:

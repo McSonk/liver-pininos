@@ -43,6 +43,8 @@ class Config:
     VAL_PATCH_SIZE: tuple = (96, 96, 96)
     '''The size of the 3D patches to be extracted from the volumes for training and validation.
        (Only used in local env). NOT TO BE CONFUSED WITH `VAL_BATCH_SIZE`'''
+
+    # ----Cache dataset
     USE_CACHE_TRAIN_DATASET: bool = True
     '''Whether to use a caching dataset that keeps preprocessed volumes in memory.
     This can speed up training but requires more RAM.
@@ -53,6 +55,10 @@ class Config:
     This can speed up training but requires more RAM.
     If False, PersistentDataset will be used instead
     '''
+    CACHE_DATASET_RATE: float = 1.0
+    '''The proportion of the dataset to cache in memory when using CacheDataset.
+       Set to 1.0 to cache the entire dataset, or a lower value (e.g., 0.5) to cache
+       only a portion of it for memory safety.'''
 
     # Training
     LEARNING_RATE: float = 1e-4
@@ -148,7 +154,7 @@ def init() -> Config:
         container_memory_bytes / (1024 ** 3) if container_memory_bytes > 0 else -1.0
     )  # GB; -1.0 means unknown/unlimited
     process_memory_limit = container_memory if container_memory > 0 else cpu_memory
-    lots_of_ram = process_memory_limit >= 50
+    lots_of_ram = process_memory_limit >= 100
 
     if device == "cuda":
         if torch.cuda.is_available():
@@ -168,7 +174,7 @@ def init() -> Config:
     # num_classes = 2 or 3
     num_classes = 3
     tumour_class_index = 2 if num_classes == 3 else 1
-    dice_ce_weights = [0.0, 1.0, 3.0] if num_classes == 3 else [1.0, 3.0]
+    dice_ce_weights = [0.5, 1.0, 2.0] if num_classes == 3 else [1.0, 2.0]
     gpu_num_workers = 4 if hc_gpu else 2
 
     local_specific = {
