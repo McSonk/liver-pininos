@@ -499,6 +499,18 @@ def init() -> Config:
         TELEGRAM_CHAT_ID=telegram_chat_id,
     )
 
+    # Final validation to catch any issues with the combined configuration
+    if not isinstance(_config.CACHE_DATASET_RATE, (int, float)):
+        raise TypeError(
+            "CACHE_DATASET_RATE must be a float in the range [0.0, 1.0], "
+            f"got {type(_config.CACHE_DATASET_RATE).__name__}."
+        )
+    if not 0.0 <= float(_config.CACHE_DATASET_RATE) <= 1.0:
+        raise ValueError(
+            "CACHE_DATASET_RATE must be between 0.0 and 1.0 inclusive, "
+            f"got {_config.CACHE_DATASET_RATE}."
+        )
+
     return _config
 
 def get() -> Config:
@@ -607,7 +619,7 @@ def get_cgroup_memory_limit_bytes() -> int:
         return -1  # Unknown/unlimited
 
 def get_container_usage() -> tuple[float, float, float, float]:
-    ''' Calculate the memory usage of the current process within its cgroup limits.
+    ''' Calculate the memory usage of the current group within its cgroup limits.
     (Useful when running in a container with limited resources.)
 
     Returns
