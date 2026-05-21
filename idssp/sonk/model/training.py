@@ -416,9 +416,26 @@ class ModelBuilder:
         )
 
         # Initialise a fixed validation batch for logging overlays during training
-        self._overlay_batch = next(iter(self.val_dl))
+        for batch in self.val_dl:
+            # Check if current image has tumour voxels (label == 2)
+            if (batch["label"] == self.config.TUMOUR_CLASS_INDEX).any():
+                self._overlay_batch = batch
+                logger.debug(
+                    "Overlay volume selected: %s. You can watch this on TensorBoard",
+                    batch["image"].meta["filename_or_obj"][0]
+                )
+                break
+
+        if self._overlay_batch is None:
+            raise ValueError("No validation sample with tumour voxels was found")
 
         logger.debug("Data loaders initialized successfully.")
+        logger.info(
+            "Training DataLoader: %d batches | effective batch shape: torch.Size([%d, 1, %s])",
+            len(self.train_dl),
+            self.config.BATCH_SIZE * self.config.RAND_CROP_NUM_SAMPLES,
+            ", ".join(str(d) for d in self.config.TRAIN_PATCH_SIZE),
+        )
 
     def init_model(self):
         '''Initializes the model (uNet), loss function, and optimizer.'''
