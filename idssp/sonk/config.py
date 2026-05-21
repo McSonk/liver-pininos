@@ -619,12 +619,12 @@ def get_container_usage() -> tuple:
         # Try cgroup v2 first (modern systems)
         limit_path = "/sys/fs/cgroup/memory.max"
         usage_path = "/sys/fs/cgroup/memory.current"
-        
+
         if not os.path.exists(limit_path):
             # Fallback to cgroup v1 (older systems)
             limit_path = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
             usage_path = "/sys/fs/cgroup/memory/memory.usage_in_bytes"
-        
+
         if os.path.exists(limit_path) and os.path.exists(usage_path):
             with open(limit_path, "r") as f:
                 limit_val = f.read().strip()
@@ -633,10 +633,10 @@ def get_container_usage() -> tuple:
                     # Unlimited container – fall back to psutil
                     raise FileNotFoundError("Unlimited cgroup")
                 limit_bytes = int(limit_val)
-            
+
             with open(usage_path, "r") as f:
                 usage_bytes = int(f.read().strip())
-            
+
             # Convert to GB
             limit_gb = limit_bytes / (1024 ** 3)
             usage_gb = usage_bytes / (1024 ** 3)
@@ -646,6 +646,6 @@ def get_container_usage() -> tuple:
         else:
             # cgroup files not accessible – fall back to host stats
             raise FileNotFoundError("cgroup files not found")
-            
+
     except (FileNotFoundError, PermissionError, ValueError):
         return -1, -1, -1, -1  # Indicate unknown/unlimited with -1
