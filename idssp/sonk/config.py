@@ -98,7 +98,7 @@ class Config:
        and `TUMOUR_CLASS_INDEX=2`'''
 
     # Early Stopping
-    EARLY_STOPPING_PATIENCE: int = 30
+    EARLY_STOPPING_PATIENCE: int = 40
     '''Number of epochs with no improvement after which training will be stopped.'''
     EARLY_STOPPING_MIN_DELTA: float = 0.005
     '''Minimum change in the monitored metric to qualify as an improvement.'''
@@ -172,7 +172,7 @@ def init() -> Config:
     # num_classes = 2 or 3
     num_classes = 3
     tumour_class_index = 2 if num_classes == 3 else 1
-    dice_ce_weights = [0.5, 1.0, 2.0] if num_classes == 3 else [1.0, 2.0]
+    dice_ce_weights = [0.5, 1.0, 3.0] if num_classes == 3 else [1.0, 2.0]
     gpu_num_workers = 4 if hc_gpu else 2
 
     local_specific = {
