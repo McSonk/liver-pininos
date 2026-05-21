@@ -600,16 +600,12 @@ class ModelBuilder:
         self.model.train()
         train_loss = 0
 
-        for i, batch in enumerate(self.train_dl):
+        for batch in self.train_dl:
             # Batch is a dictionary with keys "image" and "label", each containing a tensor of shape
             # (batch_size, channels, depth, height, width).
 
             # "batch" will contain conf.RAND_CROP_NUM_SAMPLES * conf.BATCH_SIZE
             # patches in total (e.g. batch_size=16 if BATCH_SIZE=2 and RAND_CROP_NUM_SAMPLES=8).
-
-            logger.debug("Training batch: %d/%d. Batch (image) shape: %s",
-                         i + 1, len(self.train_dl),
-                         batch["image"].shape)
             images = batch["image"].to(self.device)
             labels = batch["label"].to(self.device)
 
