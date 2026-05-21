@@ -419,6 +419,12 @@ class ModelBuilder:
         self._overlay_batch = next(iter(self.val_dl))
 
         logger.debug("Data loaders initialized successfully.")
+        logger.info(
+            "Training DataLoader: %d batches | effective batch shape: torch.Size([%d, 1, %s])",
+            len(self.train_dl),
+            self.config.BATCH_SIZE * self.config.RAND_CROP_NUM_SAMPLES,
+            ", ".join(str(d) for d in self.config.TRAIN_PATCH_SIZE),
+        )
 
     def init_model(self):
         '''Initializes the model (uNet), loss function, and optimizer.'''
