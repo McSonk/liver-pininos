@@ -622,20 +622,21 @@ def get_cgroup_memory_limit_bytes() -> int:
         return -1  # Unknown/unlimited
 
 def get_container_usage() -> tuple[float, float, float, float]:
-    ''' Calculate the memory usage of the current group within its cgroup limits.
+    '''Calculate memory usage for the current cgroup within its memory limits.
     (Useful when running in a container with limited resources.)
 
     Returns
     -------
     limit_gb : float
-        The total memory limit of the cgroup in GB. -1 if unknown/unlimited.
+        The total memory limit of the current cgroup in GB. -1 if unknown/unlimited.
     usage_gb : float
-        The current memory usage of the process in GB. -1 if unknown/unlimited.
+        The current memory usage reported for the current cgroup in GB.
+        -1 if unknown/unlimited.
     free_gb : float
-        The free memory available to the process within the cgroup limits in GB.
+        The remaining memory available within the current cgroup limit in GB.
         -1 if unknown/unlimited.
     usage_pct : float
-        The percentage of the cgroup memory limit currently used by the process.
+        The percentage of the current cgroup memory limit currently in use.
         -1 if unknown/unlimited.
     '''
 
