@@ -125,7 +125,7 @@ def log_memory_usage(logger: logging.Logger, prefix: str = ""):
                     free_gb,
                     utilization_pct)
 
-    # CPU Memory Usage (using psutil if available)
+    # CPU Memory Usage
     try:
         limit, usage, free, percentage = get_container_usage()
         if limit <= 0:
