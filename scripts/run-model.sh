@@ -4,13 +4,13 @@ set -euo pipefail
 # CHANGE THESE VARIABLES AS NEEDED
 
 # Adjust to your GPU's PCI bus ID (this will limit the script to run on that specific GPU)
-GPU_PCI_BUS=""
+GPU_PCI_BUS="00000000:C2:00.0"
 # The project and auxiliary files are generated in the home dir
-HOME_DIR=""
+HOME_DIR="/home/misael"
 # This is the name of the project directory (where main.py is located)
-PROJECT_NAME=""
+PROJECT_NAME="liver-pininos"
 # Virtual environment dir
-VENV_DIR=""
+VENV_DIR="${HOME_DIR}/denv"
 PROJECT_DIR="${HOME_DIR}/${PROJECT_NAME}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_DIR="${HOME_DIR}/jobs"
