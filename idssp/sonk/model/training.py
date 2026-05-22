@@ -129,7 +129,6 @@ class ModelBuilder:
         self.writer = SummaryWriter(log_dir=str(self.config.TENSORBOARD_DIR))
         self.writer.add_hparams(
             { # h param dict
-                "environment": self.config.ENV,
                 "batch_size": self.config.BATCH_SIZE,
                 "num_classes": self.config.NUM_CLASSES,
                 "precision": "float16" if self.scaler is not None else "float32",
@@ -785,6 +784,11 @@ class ModelBuilder:
         per_class_dice: list = torch.nanmean(per_sample_dice, dim=0).cpu().tolist()
         # Also compute the global mean dice
         mean_dice: float = torch.nanmean(per_sample_dice).item()
+        liver_dice: float = None
+        if self.config.NUM_CLASSES == 3:
+            liver_dice = per_class_dice[self.config.TUMOUR_CLASS_INDEX - 2]
+        # -1 because per_class_dice doesn't include background class
+        tumour_dice: float = per_class_dice[self.config.TUMOUR_CLASS_INDEX - 1]
 
         #    OR macro-average (unweighted across classes, often preferred for tumour papers):
         # mean_dice = float(torch.nanmean(torch.tensor(per_class_dice)).item())
@@ -825,7 +829,7 @@ class ModelBuilder:
 
         self.scheduler.step()
 
-        return avg_val_loss, mean_dice
+        return avg_val_loss, mean_dice, liver_dice, tumour_dice
 
 
     def _run_epoch(self, epoch: int) -> float:
@@ -848,7 +852,7 @@ class ModelBuilder:
 
         # Train and validate one epoch
         avg_train_loss = self._train_epoch()
-        avg_val_loss, epoch_dice = self._validate(epoch)
+        avg_val_loss, epoch_dice, liver_dice, tumour_dice = self._validate(epoch)
 
 
         # Get current learning rate for logging
@@ -874,7 +878,7 @@ class ModelBuilder:
         self.history["val_loss"].append(avg_val_loss)
         self.history["val_dice"].append(epoch_dice)
 
-        return epoch_dice
+        return epoch_dice, liver_dice, tumour_dice
 
     def train(self) -> None:
         '''
@@ -888,12 +892,16 @@ class ModelBuilder:
 
         try:
             for epoch in range(self.config.NUM_EPOCHS):
-                epoch_dice = self._run_epoch(epoch)
+                epoch_dice, liver_dice, tumour_dice = self._run_epoch(epoch)
 
                 # Returns true if the model hasn't improved for
                 # `self.config.EARLY_STOPPING_PATIENCE` epochs
                 if early_stopper(epoch, epoch_dice):
                     break
+                else:
+                    self.writer.add_scalar("Improvement/Best_Dice", epoch_dice, epoch)
+                    self.writer.add_scalar("Improvement/Liver_Dice", liver_dice, epoch)
+                    self.writer.add_scalar("Improvement/Tumour_Dice", tumour_dice, epoch)
             # End epoch loop
         except KeyboardInterrupt:
             logger.warning("Training interrupted by user. Saving current model...")
