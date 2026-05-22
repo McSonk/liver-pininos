@@ -51,8 +51,11 @@ fi
 # 5. Launch with tmux (falls back to nohup if tmux unavailable)
 if command -v tmux &> /dev/null; then
     SESSION="${TMUX_SESSION_PREFIX}_${TIMESTAMP}"
-    tmux new-session -d -s "$SESSION" \
-        "python -u main.py 2>&1 | tee ${LOG_FILE}"
+    # Create session with default shell
+    tmux new-session -d -s "$SESSION"
+    # Send the training command to the active pane
+    tmux send-keys -t "$SESSION" "python -u main.py 2>&1 | tee ${LOG_FILE}" Enter
+
     echo "Training started in tmux session: ${SESSION}"
     echo "Attach to monitor:   tmux attach -t ${SESSION}"
     echo "Follow logs live:    tail -f ${LOG_FILE}"
