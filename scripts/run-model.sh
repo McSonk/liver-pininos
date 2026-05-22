@@ -20,8 +20,7 @@ TMUX_SESSION_PREFIX="thesis_train"
 
 
 # 1. GPU selection
-GPU_EXISTS=$(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader | grep "$GPU_PCI_BUS" | wc -l)
-if [ "$GPU_EXISTS" -eq 0 ]; then
+if ! nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader | grep -q "$GPU_PCI_BUS"; then
     echo "Error: No GPU found with PCI bus ID $GPU_PCI_BUS" >&2
     exit 1
 fi
