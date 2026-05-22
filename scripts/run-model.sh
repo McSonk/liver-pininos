@@ -16,6 +16,8 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_DIR="${HOME_DIR}/jobs"
 LOG_FILE="${LOG_DIR}/train_${TIMESTAMP}.log"
 
+TMUX_SESSION_PREFIX="thesis_train"
+
 
 # 1. GPU selection
 export CUDA_VISIBLE_DEVICES=$(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader | grep "$GPU_PCI_BUS" | wc -l)
@@ -37,9 +39,16 @@ else
     exit 1
 fi
 
-# 4. Launch with tmux (falls back to nohup if tmux unavailable)
+# 4 Cleanup old sessions (Optional but recommended)
+echo "Cleaning up old thesis training sessions..."
+tmux list-sessions -F "#{session_name}" 2>/dev/null | grep "^${TMUX_SESSION_PREFIX}_" | while read -r session; do
+    echo "Killing old session: $session"
+    tmux kill-session -t "$session"
+done
+
+# 5. Launch with tmux (falls back to nohup if tmux unavailable)
 if command -v tmux &> /dev/null; then
-    SESSION="thesis_train_${TIMESTAMP}"
+    SESSION="${TMUX_SESSION_PREFIX}_${TIMESTAMP}"
     tmux new-session -d -s "$SESSION" \
         "python -u main.py 2>&1 | tee ${LOG_FILE}"
     echo "Training started in tmux session: ${SESSION}"
