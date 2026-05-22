@@ -12,7 +12,8 @@ from monai.networks.nets import UNet
 from monai.transforms import (Activations, AsDiscrete, Compose,
                               CropForegroundd, EnsureTyped, LoadImaged,
                               Orientationd, RandCropByPosNegLabeld, RandFlipd,
-                              RandGaussianNoised, RandScaleIntensityd,
+                              RandGaussianNoised, RandRotated,
+                              RandScaleIntensityd, RandZoomd,
                               ScaleIntensityRanged, Spacingd, SpatialPadd,
                               Transform)
 from torch.amp import GradScaler, autocast
@@ -259,6 +260,7 @@ class ModelBuilder:
             # RandFlipd(keys=["image", "label"], spatial_axis=0, prob=0.5),
             RandFlipd(keys=["image", "label"], spatial_axis=1, prob=0.5),
             RandFlipd(keys=["image", "label"], spatial_axis=2, prob=0.5),
+            # TODO: study this
             # Intensity augmentations: simulate CT scanner noise & protocol variations
             # Applied post-normalisation ([0,1] range) to act as implicit regularisers
             # and improve generalisation across heterogeneous clinical scanners.
@@ -272,6 +274,20 @@ class ModelBuilder:
                 keys=["image"],
                 factors=0.05,    # ±5% intensity variation
                 prob=0.10
+            ),
+            RandRotated(
+                keys=["image", "label"],
+                range_x=0.2, range_y=0.2, range_z=0.2,
+                prob=0.3,
+                mode=("bilinear", "nearest"),
+                padding_mode=("zeros", "zeros")
+            ),
+            RandZoomd(
+                keys=["image", "label"], 
+                prob=0.3, 
+                min_zoom=0.9, 
+                max_zoom=1.1,
+                mode=["trilinear", "nearest"]
             ),
             # Converts data to PyTorch tensors
             EnsureTyped(keys=["image"]),
