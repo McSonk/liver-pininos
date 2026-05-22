@@ -526,7 +526,7 @@ class ModelBuilder:
 
 
         # During training scheduler follows a cosine curve between LEARNING_RATE
-        # and eta_min (1e-6) over NUM_EPOCHS epochs
+        # over NUM_EPOCHS epochs
         warm_epochs = self.config.WARMUP_EPOCHS
         if warm_epochs <= 0:
             warm_epochs = 1  # Avoid invalid total_iters for LinearLR

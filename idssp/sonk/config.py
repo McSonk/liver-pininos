@@ -582,6 +582,7 @@ def to_dict() -> dict:
         "EARLY_STOPPING_PATIENCE": config.EARLY_STOPPING_PATIENCE,
         "EARLY_STOPPING_MIN_DELTA": config.EARLY_STOPPING_MIN_DELTA,
         "WARMUP_EPOCHS": config.WARMUP_EPOCHS,
+        "COSINE_ETA_MIN": config.COSINE_ETA_MIN,
 
         # Paths (convert Path objects to strings)
         "CT_ROOT": str(config.CT_ROOT),
