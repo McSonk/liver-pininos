@@ -42,6 +42,10 @@ def _log_gpu_info(cuda_torch_properties) -> None:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     except subprocess.CalledProcessError as e:
         logger.warning("Failed to query nvidia-smi: %s", e.stderr)
+        return
+    except FileNotFoundError:
+        logger.warning("nvidia-smi not found. Cannot map GPU UUID to PCI Bus ID.")
+        return
 
     # Find matching GPU
     active_bus_id = None
