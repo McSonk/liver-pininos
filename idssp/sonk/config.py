@@ -177,7 +177,16 @@ def init() -> Config:
     num_classes = 3
     tumour_class_index = 2 if num_classes == 3 else 1
     dice_ce_weights = [0.5, 1.0, 3.0] if num_classes == 3 else [1.0, 2.0]
-    gpu_num_workers = 4 if hc_gpu else 2
+    if hc_gpu:
+        if lots_of_ram:
+            print("[Config] Detected high-compute GPU and lots of RAM. Using optimal settings.")
+            gpu_num_workers = 12
+        else:
+            print("[Config] Detected high-compute GPU but limited RAM. Using conservative settings.")
+            gpu_num_workers = 4
+    else:
+        print("[Config] No high-compute GPU detected. Using minimal settings for memory safety.")
+        gpu_num_workers = 1
 
     local_specific = {
         "cache_num_workers": 0,
@@ -191,7 +200,7 @@ def init() -> Config:
     }
 
     cloud_specific = {
-        "cache_num_workers": 4 if process_memory_limit > 60 else 1,
+        "cache_num_workers": 8 if lots_of_ram else 1,
         "dl_num_workers": min(gpu_num_workers, cpu_count),
         "pin_memory": True,
         "batch_size": 4 if hc_gpu else 2,
