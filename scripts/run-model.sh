@@ -44,7 +44,7 @@ fi
 # 4 Cleanup old sessions (Optional but recommended)
 echo "Cleaning up old thesis training sessions..."
 if command -v tmux >/dev/null 2>&1; then
-    tmux list-sessions -F "#{session_name}" 2>/dev/null | grep "^${TMUX_SESSION_PREFIX}_" || true | while read -r session; do
+    { tmux list-sessions -F "#{session_name}" 2>/dev/null | grep "^${TMUX_SESSION_PREFIX}_" || true; } | while read -r session; do
         echo "Killing old session: $session"
         tmux kill-session -t "$session"
     done
@@ -53,10 +53,12 @@ fi
 # 5. Launch with tmux (falls back to nohup if tmux unavailable)
 if command -v tmux &> /dev/null; then
     SESSION="${TMUX_SESSION_PREFIX}_${TIMESTAMP}"
-    # Create session with default shell
-    tmux new-session -d -s "$SESSION"
-    # Send the training command to the active pane
-    tmux send-keys -t "$SESSION" "python -u main.py 2>&1 | tee ${LOG_FILE}" Enter
+    # Start the session with an explicit environment so it does not depend on tmux server state
+    tmux new-session -d -s "$SESSION" \
+        "cd \"${PROJECT_DIR}\" && \
+        export CUDA_DEVICE_ORDER=\"${CUDA_DEVICE_ORDER}\" CUDA_VISIBLE_DEVICES=\"${CUDA_VISIBLE_DEVICES}\" && \
+        . \"${VENV_DIR}/bin/activate\" && \
+        python -u main.py 2>&1 | tee \"${LOG_FILE}\""
 
     echo "Training started in tmux session: ${SESSION}"
     echo "Attach to monitor:   tmux attach -t ${SESSION}"

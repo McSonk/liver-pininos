@@ -8,7 +8,8 @@ if ! command -v tmux >/dev/null 2>&1; then
     exit 1
 fi
 
-sessions=$(tmux list-sessions -F "#{session_name}" 2>/dev/null | grep thesis_train || true)
+TMUX_SESSION_PREFIX="${TMUX_SESSION_PREFIX:-thesis_train}"
+sessions=$(tmux list-sessions -F "#{session_name}" 2>/dev/null | grep "^${TMUX_SESSION_PREFIX}_" || true)
 if [ -n "$sessions" ]; then
     printf '%s\n' "$sessions" | tac
 else
