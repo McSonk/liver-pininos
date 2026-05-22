@@ -14,7 +14,9 @@ from dotenv import load_dotenv
 
 @dataclass(frozen=True)
 class Config:
-     # Environment & Device
+    # Environment & Device
+    VERSION: str = "2.1.4"
+    '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
     RUN_ID: str
     ENV: str
     DEVICE: str
@@ -98,7 +100,7 @@ class Config:
     LEARNING_RATE: float = 1e-4
 
     # Early Stopping
-    EARLY_STOPPING_PATIENCE: int = 50
+    EARLY_STOPPING_PATIENCE: int = 35
     '''Number of epochs with no improvement after which training will be stopped.'''
     EARLY_STOPPING_MIN_DELTA: float = 0.005
     '''Minimum change in the monitored metric to qualify as an improvement.'''
@@ -174,7 +176,7 @@ def init() -> Config:
     # num_classes = 2 or 3
     num_classes = 3
     tumour_class_index = 2 if num_classes == 3 else 1
-    dice_ce_weights = [0.0, 1.0, 3.0] if num_classes == 3 else [1.0, 2.0]
+    dice_ce_weights = [0.5, 1.0, 3.0] if num_classes == 3 else [1.0, 2.0]
     gpu_num_workers = 4 if hc_gpu else 2
 
     local_specific = {
@@ -545,6 +547,7 @@ def to_dict() -> dict:
     config = get()
     return {
         "RUN_ID": config.RUN_ID,
+        "VERSION": config.VERSION,
         "cpu_memory": config.cpu_memory,
         "container_memory": config.container_memory,
         # Environment & Device
