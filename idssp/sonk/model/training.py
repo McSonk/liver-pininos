@@ -266,13 +266,13 @@ class ModelBuilder:
             RandGaussianNoised(
                 keys=["image"],
                 mean=0.0,
-                std=0.015,      # ~1.5% of the [0, 1] normalised range
-                prob=0.15
+                std=0.010,      # ~1.0% of the [0, 1] normalised range
+                prob=0.10
             ),
             RandScaleIntensityd(
                 keys=["image"],
-                factors=0.1,    # ±10% intensity variation
-                prob=0.15
+                factors=0.05,    # ±5% intensity variation
+                prob=0.10
             ),
             # Converts data to PyTorch tensors
             EnsureTyped(keys=["image"]),
@@ -526,7 +526,7 @@ class ModelBuilder:
 
 
         # During training scheduler follows a cosine curve between LEARNING_RATE
-        # and eta_min (1e-6) over NUM_EPOCHS epochs
+        # over NUM_EPOCHS epochs
         warm_epochs = self.config.WARMUP_EPOCHS
         if warm_epochs <= 0:
             warm_epochs = 1  # Avoid invalid total_iters for LinearLR
@@ -546,7 +546,7 @@ class ModelBuilder:
         cosine = CosineAnnealingLR(
             self.optimizer,
             T_max=t_max,
-            eta_min=1e-6
+            eta_min=self.config.COSINE_ETA_MIN
         )
         self.scheduler = SequentialLR(
             self.optimizer,
@@ -555,7 +555,7 @@ class ModelBuilder:
         )
 
         logger.info("Scheduler initialized: CosineAnnealingLR (T_max=%d, eta_min=%e)",
-                    t_max, 1e-6)
+                    t_max, self.config.COSINE_ETA_MIN)
 
     def back_propagate(self, loss):
         '''

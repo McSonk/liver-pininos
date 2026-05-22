@@ -61,7 +61,6 @@ class Config:
        only a portion of it for memory safety.'''
 
     # Training
-    LEARNING_RATE: float = 3e-5
     BATCH_SIZE: int = 2
     '''DataLoader's batch size. Set to 1 for memory safety, especially with large 3D volumes.
        (Usually between 1 and 4 depending on GPU VRAM)
@@ -96,14 +95,17 @@ class Config:
        This should be a list of length `NUM_CLASSES`, where the value at `TUMOUR_CLASS_INDEX`
        is higher to emphasise learning the tumour class. For example, for `NUM_CLASSES=3`
        and `TUMOUR_CLASS_INDEX=2`'''
+    LEARNING_RATE: float = 1e-4
 
     # Early Stopping
     EARLY_STOPPING_PATIENCE: int = 40
     '''Number of epochs with no improvement after which training will be stopped.'''
     EARLY_STOPPING_MIN_DELTA: float = 0.005
     '''Minimum change in the monitored metric to qualify as an improvement.'''
-    WARMUP_EPOCHS: int = 5
+    WARMUP_EPOCHS: int = 10
     '''Number of epochs for linear learning rate warmup (CosineSchedule).'''
+    COSINE_ETA_MIN: float = 3e-5
+    '''Minimum learning rate for the cosine annealing scheduler.'''
 
     # Paths (resolved at init)
     CT_ROOT: Path = field(default_factory=Path)
@@ -580,6 +582,7 @@ def to_dict() -> dict:
         "EARLY_STOPPING_PATIENCE": config.EARLY_STOPPING_PATIENCE,
         "EARLY_STOPPING_MIN_DELTA": config.EARLY_STOPPING_MIN_DELTA,
         "WARMUP_EPOCHS": config.WARMUP_EPOCHS,
+        "COSINE_ETA_MIN": config.COSINE_ETA_MIN,
 
         # Paths (convert Path objects to strings)
         "CT_ROOT": str(config.CT_ROOT),
