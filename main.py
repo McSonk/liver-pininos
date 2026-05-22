@@ -1,5 +1,6 @@
 print("[main.py] Importing torch... (This may take a moment)")
 import os
+from asyncio import subprocess
 
 import torch
 from monai.utils import set_determinism
@@ -21,17 +22,51 @@ logger = get_logger(__name__)
 # Install global hooks (for logging unhandled exceptions)
 install_global_exception_handlers(logger)
 
+def _log_gpu_info(cuda_torch_properties) -> None:
+    '''Logs detailed information about the available CUDA devices, including their names,
+       total memory, and the GPU that PyTorch is currently using.'''
+    pytorch_uuid = cuda_torch_properties.uuid
+    logger.info(
+        "PyTorch sees GPU: %s | UUID: %s",
+        cuda_torch_properties.name,
+        pytorch_uuid
+    )
+
+    # Query nvidia-smi to map UUID -> Physical PCI Bus ID
+    cmd = [
+        "nvidia-smi",
+        "--query-gpu=index,uuid,pci.bus_id",
+        "--format=csv,noheader"
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as e:
+        logger.warning("Failed to query nvidia-smi: %s", e.stderr)
+
+    # Find matching GPU
+    active_bus_id = None
+    for line in result.stdout.strip().split("\n"):
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) >= 3 and parts[1] == pytorch_uuid:
+            active_bus_id = parts[2]
+            break
+
+    logger.info("Active physical PCI Bus ID: %s", active_bus_id)
+
 def log_environment_info(config_obj: config.Config) -> None:
     '''Logs detailed information about the training environment, including PyTorch version,
     CUDA availability and devices, and key configuration parameters.'''
+    cuda_properties = None
     logger.info("Environment Information:")
     logger.info("PyTorch version: %s", torch.__version__)
     logger.info("CUDA available: %s", torch.cuda.is_available())
     if torch.cuda.is_available():
+        # 1. Get PyTorch device properties (logical index 0 due to CUDA_VISIBLE_DEVICES)
+        cuda_properties = torch.cuda.get_device_properties(0)
         logger.info("CUDA device count: %d", torch.cuda.device_count())
         for i in range(torch.cuda.device_count()):
             logger.info("CUDA device %d: %s", i, torch.cuda.get_device_name(i))
-        logger.info("Available GPU memory (GB): %d", torch.cuda.get_device_properties(0).total_memory // (1024 ** 3))
+        logger.info("Available GPU memory (GB): %d", cuda_properties.total_memory // (1024 ** 3))
     else:
         logger.info("No CUDA devices available.")
 
@@ -39,6 +74,10 @@ def log_environment_info(config_obj: config.Config) -> None:
     logger.info("PyTorch intra-op threads: %d", torch.get_num_threads())
     logger.info("Available CPU memory (GB): %.2f", config_obj.cpu_memory)
     logger.info("Available container memory (GB): %.2f", config_obj.container_memory)
+
+    if cuda_properties is not None:
+        _log_gpu_info(cuda_properties)
+
 
     logger.info("Device: %s", config_obj.DEVICE)
     logger.info("Batch Size: %d", config_obj.BATCH_SIZE)
