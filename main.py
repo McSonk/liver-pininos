@@ -1,6 +1,6 @@
 print("[main.py] Importing torch... (This may take a moment)")
 import os
-from asyncio import subprocess
+import subprocess
 
 import torch
 from monai.utils import set_determinism
