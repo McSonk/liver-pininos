@@ -557,8 +557,17 @@ class ModelBuilder:
             logger.info("WARMUP_EPOCHS (%d) is greater than or equal to NUM_EPOCHS (%d). "
             "Cosine annealing will not be applied.", self.config.WARMUP_EPOCHS, self.config.NUM_EPOCHS)
             t_max = 1  # Avoid invalid T_max for CosineAnnealingLR
-        logger.info("Cosine annealing will be applied for %d epochs after a warmup of %d epochs.", t_max, self.config.WARMUP_EPOCHS)
-        logger.info("Eta min for cosine annealing: %e", self.config.COSINE_ETA_MIN)
+            logger.info(
+                "Using fallback T_max=%d only to keep CosineAnnealingLR valid.",
+                t_max
+            )
+        else:
+            logger.info(
+                "Cosine annealing will be applied for %d epochs after a warmup of %d epochs.",
+                t_max,
+                self.config.WARMUP_EPOCHS
+            )
+            logger.info("Eta min for cosine annealing: %e", self.config.COSINE_ETA_MIN)
         logger.info("Warmup scheduler: LinearLR (start_factor=0.1, end_factor=1.0, total_iters=%d)", warm_epochs - 1)
         cosine = CosineAnnealingLR(
             self.optimizer,
