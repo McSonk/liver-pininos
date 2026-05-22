@@ -912,12 +912,8 @@ class ModelBuilder:
 
                 # Returns true if the model hasn't improved for
                 # `self.config.EARLY_STOPPING_PATIENCE` epochs
-                if early_stopper(epoch, epoch_dice):
+                if early_stopper(epoch, epoch_dice, liver_dice, tumour_dice):
                     break
-                else:
-                    self.writer.add_scalar("Improvement/Best_Dice", epoch_dice, epoch)
-                    self.writer.add_scalar("Improvement/Liver_Dice", liver_dice, epoch)
-                    self.writer.add_scalar("Improvement/Tumour_Dice", tumour_dice, epoch)
             # End epoch loop
         except KeyboardInterrupt:
             logger.warning("Training interrupted by user. Saving current model...")
@@ -955,7 +951,7 @@ class EarlyStopper:
         self.builder = builder
         self.checkpoint_path = self.config.CHECKPOINT_DIR / "best_model.pth"
 
-    def __call__(self, epoch: int, epoch_dice: float) -> bool:
+    def __call__(self, epoch: int, epoch_dice: float, liver_dice: float, tumour_dice: float) -> bool:
         '''Checks if the current epoch's Dice score shows an improvement over
            the best recorded within a window
 
@@ -973,6 +969,9 @@ class EarlyStopper:
             self.best_dice = epoch_dice
             self.best_epoch = epoch
             self.epochs_no_improve = 0
+            self.builder.writer.add_scalar("Improvement/Best_Dice", epoch_dice, epoch)
+            self.builder.writer.add_scalar("Improvement/Liver_Dice", liver_dice, epoch)
+            self.builder.writer.add_scalar("Improvement/Tumour_Dice", tumour_dice, epoch)
             self.save_checkpoint()
             return False  # Indicates improvement
 
