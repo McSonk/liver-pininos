@@ -15,7 +15,6 @@ from dotenv import load_dotenv
 @dataclass(frozen=True)
 class Config:
     # Environment & Device
-    VERSION: str = "2.1.4"
     '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
     RUN_ID: str
     ENV: str
@@ -29,6 +28,7 @@ class Config:
     '''The total memory available to the process, in GB. This takes into account
        cgroup limits, so if the process is running in a container with limited memory,
        this will reflect that limit rather than the total RAM of the host machine.'''
+    VERSION: str = "2.1.4"
 
     # Preprocessing
     HU_WINDOW_MIN: int = -175
