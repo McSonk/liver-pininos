@@ -61,7 +61,7 @@ class Config:
        only a portion of it for memory safety.'''
 
     # Training
-    LEARNING_RATE: float = 1e-4
+    LEARNING_RATE: float = 3e-5
     BATCH_SIZE: int = 2
     '''DataLoader's batch size. Set to 1 for memory safety, especially with large 3D volumes.
        (Usually between 1 and 4 depending on GPU VRAM)
