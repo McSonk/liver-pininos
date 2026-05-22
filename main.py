@@ -25,12 +25,19 @@ install_global_exception_handlers(logger)
 def _log_gpu_info(cuda_torch_properties) -> None:
     '''Logs detailed information about the available CUDA devices, including their names,
        total memory, and the GPU that PyTorch is currently using.'''
-    pytorch_uuid = cuda_torch_properties.uuid
+    pytorch_uuid = getattr(cuda_torch_properties, "uuid", None)
     logger.info(
         "PyTorch sees GPU: %s | UUID: %s",
         cuda_torch_properties.name,
         pytorch_uuid
     )
+
+    if pytorch_uuid is None:
+        logger.info(
+            "PyTorch CUDA device properties do not expose a UUID on this build; "
+            "skipping PCI Bus ID mapping via nvidia-smi."
+        )
+        return
 
     # Query nvidia-smi to map UUID -> Physical PCI Bus ID
     cmd = [
