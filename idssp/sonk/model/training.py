@@ -12,6 +12,7 @@ from monai.networks.nets import UNet
 from monai.transforms import (Activations, AsDiscrete, Compose,
                               CropForegroundd, EnsureTyped, LoadImaged,
                               Orientationd, RandCropByPosNegLabeld, RandFlipd,
+                              RandGaussianNoised, RandScaleIntensityd,
                               ScaleIntensityRanged, Spacingd, SpatialPadd,
                               Transform)
 from torch.amp import GradScaler, autocast
@@ -234,11 +235,11 @@ class ModelBuilder:
         deterministic_transforms = self._get_deterministic_transforms()
 
         random_transforms = [
-            # Sample patches with a 2:1 ratio of positive (tumor/liver) and
+            # Sample patches with a given ratio of positive (tumor/liver) and
             # negative (background) examples.
             # This is because of voxel imbalance. (we want to maximise the likelihood
-            # of sampling tumour voxels, which are the most important to learn, while still including
-            # some negative samples to learn the background)
+            # of sampling tumour voxels, which are the most important to learn,
+            # while still including some negative samples to learn the background)
             RandCropByPosNegLabeld(
                 keys=["image", "label"],
                 label_key="label",
@@ -254,11 +255,25 @@ class ModelBuilder:
 
             # Randomly flip the image and label horizontally, vertically and
             # depth-wise with a 50% chance each to augment the data and improve generalization.
-            # NOTE: Liver sits always on the left side of the image. 
+            # NOTE: Liver sits always on the left side of the image.
             # Flipping along x-axis would create unrealistic samples.
             # RandFlipd(keys=["image", "label"], spatial_axis=0, prob=0.5),
             RandFlipd(keys=["image", "label"], spatial_axis=1, prob=0.5),
             RandFlipd(keys=["image", "label"], spatial_axis=2, prob=0.5),
+            # Intensity augmentations: simulate CT scanner noise & protocol variations
+            # Applied post-normalisation ([0,1] range) to act as implicit regularisers
+            # and improve generalisation across heterogeneous clinical scanners.
+            RandGaussianNoised(
+                keys=["image"],
+                mean=0.0,
+                std=0.015,      # ~1.5% of the [0, 1] normalised range
+                prob=0.15
+            ),
+            RandScaleIntensityd(
+                keys=["image"],
+                factors=0.1,    # ±10% intensity variation
+                prob=0.15
+            ),
             # Converts data to PyTorch tensors
             EnsureTyped(keys=["image"]),
             # Labels must be long for the loss function
