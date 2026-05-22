@@ -95,9 +95,9 @@ class Config:
        This should be a list of length `NUM_CLASSES`, where the value at `TUMOUR_CLASS_INDEX`
        is higher to emphasise learning the tumour class. For example, for `NUM_CLASSES=3`
        and `TUMOUR_CLASS_INDEX=2`'''
+    LEARNING_RATE: float = 1e-4
 
     # Early Stopping
-    LEARNING_RATE: float = 1e-4
     EARLY_STOPPING_PATIENCE: int = 40
     '''Number of epochs with no improvement after which training will be stopped.'''
     EARLY_STOPPING_MIN_DELTA: float = 0.005
