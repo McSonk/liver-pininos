@@ -14,7 +14,8 @@ from dotenv import load_dotenv
 
 @dataclass(frozen=True)
 class Config:
-     # Environment & Device
+    # Environment & Device
+    '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
     RUN_ID: str
     ENV: str
     DEVICE: str
@@ -27,6 +28,7 @@ class Config:
     '''The total memory available to the process, in GB. This takes into account
        cgroup limits, so if the process is running in a container with limited memory,
        this will reflect that limit rather than the total RAM of the host machine.'''
+    VERSION: str = "2.1.4"
 
     # Preprocessing
     HU_WINDOW_MIN: int = -175
@@ -98,7 +100,7 @@ class Config:
     LEARNING_RATE: float = 1e-4
 
     # Early Stopping
-    EARLY_STOPPING_PATIENCE: int = 50
+    EARLY_STOPPING_PATIENCE: int = 35
     '''Number of epochs with no improvement after which training will be stopped.'''
     EARLY_STOPPING_MIN_DELTA: float = 0.005
     '''Minimum change in the monitored metric to qualify as an improvement.'''
@@ -174,8 +176,17 @@ def init() -> Config:
     # num_classes = 2 or 3
     num_classes = 3
     tumour_class_index = 2 if num_classes == 3 else 1
-    dice_ce_weights = [0.0, 1.0, 3.0] if num_classes == 3 else [1.0, 2.0]
-    gpu_num_workers = 4 if hc_gpu else 2
+    dice_ce_weights = [0.5, 1.0, 3.0] if num_classes == 3 else [1.0, 2.0]
+    if hc_gpu:
+        if lots_of_ram:
+            print("[Config] Detected high-compute GPU and lots of RAM. Using optimal settings.")
+            gpu_num_workers = 12
+        else:
+            print("[Config] Detected high-compute GPU but limited RAM. Using conservative settings.")
+            gpu_num_workers = 4
+    else:
+        print("[Config] No high-compute GPU detected. Using minimal settings for memory safety.")
+        gpu_num_workers = 1
 
     local_specific = {
         "cache_num_workers": 0,
@@ -189,7 +200,7 @@ def init() -> Config:
     }
 
     cloud_specific = {
-        "cache_num_workers": 4 if process_memory_limit > 60 else 1,
+        "cache_num_workers": 8 if lots_of_ram else 1,
         "dl_num_workers": min(gpu_num_workers, cpu_count),
         "pin_memory": True,
         "batch_size": 4 if hc_gpu else 2,
@@ -545,6 +556,7 @@ def to_dict() -> dict:
     config = get()
     return {
         "RUN_ID": config.RUN_ID,
+        "VERSION": config.VERSION,
         "cpu_memory": config.cpu_memory,
         "container_memory": config.container_memory,
         # Environment & Device
@@ -603,6 +615,42 @@ def to_dict() -> dict:
         "ENABLE_EMAIL_NOTIFICATIONS": config.ENABLE_EMAIL_NOTIFICATIONS,
         "ENABLE_TELEGRAM_NOTIFICATIONS": config.ENABLE_TELEGRAM_NOTIFICATIONS,
     }
+
+def to_param_dict() -> dict:
+    """Returns a dictionary of hyperparameters for logging in TensorBoard or Weights & Biases."""
+    all_params = to_dict()
+    # Convert non-scalars to strings and drop None values
+    safe_params = {
+        k: (str(v) if isinstance(v, (list, tuple)) else v)
+        for k, v in all_params.items()
+        if v is not None and isinstance(v, (int, float, bool, str, list, tuple))
+    }
+
+    # Exclude noisy keys that don't affect model behaviour
+    keys_to_ignore = {
+        "RUN_ID",
+        "ENV",
+        "DEVICE",
+        "CT_ROOT",
+        "OUTPUT_DIR",
+        "CHECKPOINT_DIR",
+        "TENSORBOARD_DIR",
+        "PERSISTENT_DATASET_DIR",
+        "STATS_DIR",
+        "LOG_DIR",
+        "SPLIT_DIR",
+        "TRAIN_STATS_DIR",
+        "PER_CASE_TRAIN_STATS_FILE",
+        "USE_CACHE_TRAIN_DATASET",
+        "USE_CACHE_VAL_DATASET",
+        "PIN_MEMORY",
+        "CACHE_DATASET_RATE",
+        "CACHE_NUM_WORKERS",
+        "ENABLE_EMAIL_NOTIFICATIONS",
+        "ENABLE_TELEGRAM_NOTIFICATIONS",
+    }
+    safe_params = {k: v for k, v in safe_params.items() if k not in keys_to_ignore}
+    return safe_params
 
 
 def get_cgroup_memory_limit_bytes() -> int:
