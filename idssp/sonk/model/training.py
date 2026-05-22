@@ -266,13 +266,13 @@ class ModelBuilder:
             RandGaussianNoised(
                 keys=["image"],
                 mean=0.0,
-                std=0.015,      # ~1.5% of the [0, 1] normalised range
-                prob=0.15
+                std=0.010,      # ~1.0% of the [0, 1] normalised range
+                prob=0.10
             ),
             RandScaleIntensityd(
                 keys=["image"],
-                factors=0.1,    # ±10% intensity variation
-                prob=0.15
+                factors=0.05,    # ±5% intensity variation
+                prob=0.10
             ),
             # Converts data to PyTorch tensors
             EnsureTyped(keys=["image"]),
