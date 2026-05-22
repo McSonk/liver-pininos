@@ -650,6 +650,7 @@ def to_param_dict() -> dict:
         "ENABLE_TELEGRAM_NOTIFICATIONS",
     }
     safe_params = {k: v for k, v in safe_params.items() if k not in keys_to_ignore}
+    return safe_params
 
 
 def get_cgroup_memory_limit_bytes() -> int:
