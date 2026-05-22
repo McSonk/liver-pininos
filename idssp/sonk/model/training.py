@@ -546,7 +546,7 @@ class ModelBuilder:
         cosine = CosineAnnealingLR(
             self.optimizer,
             T_max=t_max,
-            eta_min=3e-5
+            eta_min=self.config.COSINE_ETA_MIN
         )
         self.scheduler = SequentialLR(
             self.optimizer,
@@ -555,7 +555,7 @@ class ModelBuilder:
         )
 
         logger.info("Scheduler initialized: CosineAnnealingLR (T_max=%d, eta_min=%e)",
-                    t_max, 1e-6)
+                    t_max, self.config.COSINE_ETA_MIN)
 
     def back_propagate(self, loss):
         '''

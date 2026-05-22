@@ -104,6 +104,8 @@ class Config:
     '''Minimum change in the monitored metric to qualify as an improvement.'''
     WARMUP_EPOCHS: int = 10
     '''Number of epochs for linear learning rate warmup (CosineSchedule).'''
+    COSINE_ETA_MIN: float = 3e-5
+    '''Minimum learning rate for the cosine annealing scheduler.'''
 
     # Paths (resolved at init)
     CT_ROOT: Path = field(default_factory=Path)
