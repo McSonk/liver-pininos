@@ -546,7 +546,7 @@ class ModelBuilder:
         cosine = CosineAnnealingLR(
             self.optimizer,
             T_max=t_max,
-            eta_min=1e-6
+            eta_min=3e-5
         )
         self.scheduler = SequentialLR(
             self.optimizer,

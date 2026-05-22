@@ -61,7 +61,6 @@ class Config:
        only a portion of it for memory safety.'''
 
     # Training
-    LEARNING_RATE: float = 3e-5
     BATCH_SIZE: int = 2
     '''DataLoader's batch size. Set to 1 for memory safety, especially with large 3D volumes.
        (Usually between 1 and 4 depending on GPU VRAM)
@@ -98,11 +97,12 @@ class Config:
        and `TUMOUR_CLASS_INDEX=2`'''
 
     # Early Stopping
+    LEARNING_RATE: float = 1e-4
     EARLY_STOPPING_PATIENCE: int = 40
     '''Number of epochs with no improvement after which training will be stopped.'''
     EARLY_STOPPING_MIN_DELTA: float = 0.005
     '''Minimum change in the monitored metric to qualify as an improvement.'''
-    WARMUP_EPOCHS: int = 5
+    WARMUP_EPOCHS: int = 10
     '''Number of epochs for linear learning rate warmup (CosineSchedule).'''
 
     # Paths (resolved at init)
