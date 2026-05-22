@@ -607,6 +607,41 @@ def to_dict() -> dict:
         "ENABLE_TELEGRAM_NOTIFICATIONS": config.ENABLE_TELEGRAM_NOTIFICATIONS,
     }
 
+def to_param_dict() -> dict:
+    """Returns a dictionary of hyperparameters for logging in TensorBoard or Weights & Biases."""
+    all_params = to_dict()
+    # Convert non-scalars to strings and drop None values
+    safe_params = {
+        k: (str(v) if isinstance(v, (list, tuple)) else v)
+        for k, v in all_params.items()
+        if v is not None and isinstance(v, (int, float, bool, str, list, tuple))
+    }
+
+    # Exclude noisy keys that don't affect model behaviour
+    keys_to_ignore = {
+        "RUN_ID",
+        "ENV",
+        "DEVICE",
+        "CT_ROOT",
+        "OUTPUT_DIR",
+        "CHECKPOINT_DIR",
+        "TENSORBOARD_DIR",
+        "PERSISTENT_DATASET_DIR",
+        "STATS_DIR",
+        "LOG_DIR",
+        "SPLIT_DIR",
+        "TRAIN_STATS_DIR",
+        "PER_CASE_TRAIN_STATS_FILE",
+        "USE_CACHE_TRAIN_DATASET",
+        "USE_CACHE_VAL_DATASET",
+        "PIN_MEMORY",
+        "CACHE_DATASET_RATE",
+        "CACHE_NUM_WORKERS",
+        "ENABLE_EMAIL_NOTIFICATIONS",
+        "ENABLE_TELEGRAM_NOTIFICATIONS",
+    }
+    safe_params = {k: v for k, v in safe_params.items() if k not in keys_to_ignore}
+
 
 def get_cgroup_memory_limit_bytes() -> int:
     """Return the memory limit (bytes) for the current cgroup."""

@@ -129,15 +129,12 @@ class ModelBuilder:
         # tensorboard writer for logging training metrics
         self.writer = SummaryWriter(log_dir=str(self.config.TENSORBOARD_DIR))
         self.writer.add_hparams(
-            { # h param dict
-                "batch_size": self.config.BATCH_SIZE,
-                "num_classes": self.config.NUM_CLASSES,
-                "precision": "float16" if self.scaler is not None else "float32",
-            }, { # metric dict
-                "val/dice_mean": 0.0,
+            config.to_param_dict(),
+            { # metric dict
+                 "Metrics/Dice": 0.0,
                 "val/dice_liver": 0.0,
                 "val/dice_tumour": 0.0,
-                "train/loss": 0.0,
+                "Loss/Train": 0.0,
             }
         )
         logger.info("TensorBoard writer initialised at: %s", self.writer.log_dir)
@@ -968,7 +965,8 @@ class EarlyStopper:
         Returns
         -----
         `bool`
-            True if the model hasn't improved for at least `self.config.EARLY_STOPPING_PATIENCE` epochs
+            True if the model hasn't improved for at least
+            `self.config.EARLY_STOPPING_PATIENCE` epochs
         '''
         if epoch_dice > self.best_dice + self.config.EARLY_STOPPING_MIN_DELTA:
             self.best_dice = epoch_dice
