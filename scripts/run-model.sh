@@ -42,10 +42,12 @@ fi
 
 # 4 Cleanup old sessions (Optional but recommended)
 echo "Cleaning up old thesis training sessions..."
-tmux list-sessions -F "#{session_name}" 2>/dev/null | grep "^${TMUX_SESSION_PREFIX}_" | while read -r session; do
-    echo "Killing old session: $session"
-    tmux kill-session -t "$session"
-done
+if command -v tmux >/dev/null 2>&1; then
+    tmux list-sessions -F "#{session_name}" 2>/dev/null | grep "^${TMUX_SESSION_PREFIX}_" || true | while read -r session; do
+        echo "Killing old session: $session"
+        tmux kill-session -t "$session"
+    done
+fi
 
 # 5. Launch with tmux (falls back to nohup if tmux unavailable)
 if command -v tmux &> /dev/null; then
