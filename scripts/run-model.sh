@@ -20,12 +20,14 @@ TMUX_SESSION_PREFIX="thesis_train"
 
 
 # 1. GPU selection
-if ! nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader | grep -q "$GPU_PCI_BUS"; then
+GPU_INDEX=$(nvidia-smi --query-gpu=index,pci.bus_id --format=csv,noheader | awk -F', ' -v bus_id="$GPU_PCI_BUS" '$2 == bus_id { print $1; exit }')
+if [ -z "$GPU_INDEX" ]; then
     echo "Error: No GPU found with PCI bus ID $GPU_PCI_BUS" >&2
     exit 1
 fi
-export CUDA_VISIBLE_DEVICES=$GPU_PCI_BUS
-echo "Using GPU with PCI bus ID: $GPU_PCI_BUS"
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+export CUDA_VISIBLE_DEVICES="$GPU_INDEX"
+echo "Using GPU with PCI bus ID: $GPU_PCI_BUS (CUDA index: $GPU_INDEX)"
 
 # 2. Paths & Environment
 mkdir -p "$LOG_DIR"
