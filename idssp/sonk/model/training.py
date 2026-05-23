@@ -788,7 +788,7 @@ class ModelBuilder:
         return avg_val_loss
 
 
-    def _validate(self, epoch: int):
+    def _validate(self, epoch: int, best_dice: float = None) -> tuple[float, float, float, float]:
         # Activate inference mode
         self.model.eval()
         # Reset metric from previous epochs
@@ -844,6 +844,7 @@ class ModelBuilder:
                 message="\n".join([
                     f"Validation loss: {avg_val_loss:.4f}",
                     f"Mean Dice: {mean_dice:.4f}",
+                    f"Best tumour Dice: {best_dice:.4f}",
                     *log_parts,
                 ])
             )
@@ -859,7 +860,7 @@ class ModelBuilder:
         return avg_val_loss, mean_dice, liver_dice, tumour_dice
 
 
-    def _run_epoch(self, epoch: int) -> float:
+    def _run_epoch(self, epoch: int, best_dice: float = None) -> float:
         """Runs one full training + validation epoch.
 
         Params
@@ -879,7 +880,7 @@ class ModelBuilder:
 
         # Train and validate one epoch
         avg_train_loss = self._train_epoch()
-        avg_val_loss, epoch_dice, liver_dice, tumour_dice = self._validate(epoch)
+        avg_val_loss, epoch_dice, liver_dice, tumour_dice = self._validate(epoch, best_dice)
 
 
         # Get current learning rate for logging
@@ -919,7 +920,7 @@ class ModelBuilder:
 
         try:
             for epoch in range(self.config.NUM_EPOCHS):
-                epoch_dice, liver_dice, tumour_dice = self._run_epoch(epoch)
+                epoch_dice, liver_dice, tumour_dice = self._run_epoch(epoch, early_stopper.best_dice)
 
                 # Returns true if the model hasn't improved for
                 # `self.config.EARLY_STOPPING_PATIENCE` epochs
