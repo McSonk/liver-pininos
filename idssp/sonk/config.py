@@ -15,7 +15,6 @@ from dotenv import load_dotenv
 @dataclass(frozen=True)
 class Config:
     # Environment & Device
-    '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
     RUN_ID: str
     ENV: str
     DEVICE: str
@@ -28,7 +27,8 @@ class Config:
     '''The total memory available to the process, in GB. This takes into account
        cgroup limits, so if the process is running in a container with limited memory,
        this will reflect that limit rather than the total RAM of the host machine.'''
-    VERSION: str = "2.1.4"
+    VERSION: str = "2.1.6"
+    '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
 
     # Preprocessing
     HU_WINDOW_MIN: int = -175
@@ -102,7 +102,7 @@ class Config:
     # Early Stopping
     EARLY_STOPPING_PATIENCE: int = 35
     '''Number of epochs with no improvement after which training will be stopped.'''
-    EARLY_STOPPING_MIN_DELTA: float = 0.005
+    EARLY_STOPPING_MIN_DELTA: float = 0.001
     '''Minimum change in the monitored metric to qualify as an improvement.'''
     WARMUP_EPOCHS: int = 10
     '''Number of epochs for linear learning rate warmup (CosineSchedule).'''
