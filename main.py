@@ -12,7 +12,7 @@ from idssp.sonk.utils.logger import (get_active_log_file, get_logger,
                                      install_global_exception_handlers,
                                      log_memory_usage)
 from idssp.sonk.utils.mail import send_training_email
-from idssp.sonk.utils.notifications import send_alert
+from idssp.sonk.utils.notifications import send_alert, send_final_alert
 
 # For reproducibility
 set_determinism(seed=42)
@@ -218,9 +218,7 @@ if __name__ == "__main__":
         wait_for_completion=True,
         timeout=20.0
     )
-    send_alert(
+    send_final_alert(
         success_title,
-        success_body,
-        file_path=get_active_log_file(),
-        sync=True,
-        timeout=30.0)
+        success_body
+    )
