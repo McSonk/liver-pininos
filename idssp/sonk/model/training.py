@@ -845,8 +845,8 @@ class ModelBuilder:
                 message="\n".join([
                     f"Validation loss: {avg_val_loss:.4f}",
                     f"Mean Dice: {mean_dice:.4f}",
-                    f"Best tumour Dice: {best_dice:.4f}",
                     *log_parts,
+                    f"Best tumour Dice: {best_dice:.4f}",
                 ])
             )
 
