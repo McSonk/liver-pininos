@@ -307,7 +307,7 @@ def _create_run_archive(config_object: config.Config) -> Path:
         )
 
     archive_root = run_dir
-    archive_name_base = f"run_{run_id}"
+    archive_name_base = run_id
 
     # Choose archive format based on platform
     # gztar on POSIX, zip on Windows for portability
