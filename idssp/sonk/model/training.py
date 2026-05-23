@@ -127,6 +127,7 @@ class ModelBuilder:
         '''Mixed precision training scaler, enabled only on CUDA for potential speed up.'''
 
         # tensorboard writer for logging training metrics
+        logger.debug("Writing initial hyperparameters to TensorBoard: \n%s", config.to_param_dict())
         self.writer = SummaryWriter(log_dir=str(self.config.TENSORBOARD_DIR))
         self.writer.add_hparams(
             config.to_param_dict(),
