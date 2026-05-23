@@ -68,6 +68,7 @@ def log_environment_info(config_obj: config.Config) -> None:
     '''Logs detailed information about the training environment, including PyTorch version,
     CUDA availability and devices, and key configuration parameters.'''
     cuda_properties = None
+    logger.info("Model (code) Version: %s", config_obj.VERSION)
     logger.info("Environment Information:")
     logger.info("PyTorch version: %s", torch.__version__)
     logger.info("CUDA available: %s", torch.cuda.is_available())
@@ -125,6 +126,7 @@ if __name__ == "__main__":
     logger.debug("Initializing model builder...")
 
     if config.is_limited_env(include_vram=True):
+        # TODO: Include arg to config to control this behaviour for quick local testing
         logger.info("Limited environment detected. Using a subset of the data for quick testing.")
         train_files = train_files[:4]  # Use only 4 samples for training
         val_files = val_files[:2]      # Use only 2 samples for validation

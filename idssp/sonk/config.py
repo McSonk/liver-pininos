@@ -27,7 +27,7 @@ class Config:
     '''The total memory available to the process, in GB. This takes into account
        cgroup limits, so if the process is running in a container with limited memory,
        this will reflect that limit rather than the total RAM of the host machine.'''
-    VERSION: str = "2.1.6"
+    VERSION: str = "2.1.7"
     '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
 
     # Preprocessing
@@ -106,7 +106,7 @@ class Config:
     '''Minimum change in the monitored metric to qualify as an improvement.'''
     WARMUP_EPOCHS: int = 10
     '''Number of epochs for linear learning rate warmup (CosineSchedule).'''
-    COSINE_ETA_MIN: float = 3e-5
+    COSINE_ETA_MIN: float = 1e-6
     '''Minimum learning rate for the cosine annealing scheduler.'''
 
     # Paths (resolved at init)
@@ -205,8 +205,9 @@ def init() -> Config:
         "pin_memory": True,
         "batch_size": 4 if hc_gpu else 2,
         "num_epochs": 200 if hc_gpu else 5,
-        "train_patch_size": (96, 96, 96),
-        "val_patch_size": (96, 96, 96),  # Not used but kept for config/logging consistency
+        "train_patch_size": (128, 128, 128) if hc_gpu else (64, 64, 64),
+        # Not used but kept for config/logging consistency
+        "val_patch_size": (128, 128, 128),
         # TODO: Tune. Both options sound valid, so decide which is better based on experiments.
         "iso_spacing": (1.0, 1.0, 1.0) if hc_gpu else (1.5, 1.5, 1.5),
     }
