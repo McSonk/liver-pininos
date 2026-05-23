@@ -68,7 +68,7 @@ def log_environment_info(config_obj: config.Config) -> None:
     '''Logs detailed information about the training environment, including PyTorch version,
     CUDA availability and devices, and key configuration parameters.'''
     cuda_properties = None
-    logger.info("Code Version: %s", config_obj.VERSION)
+    logger.info("Model (code) Version: %s", config_obj.VERSION)
     logger.info("Environment Information:")
     logger.info("PyTorch version: %s", torch.__version__)
     logger.info("CUDA available: %s", torch.cuda.is_available())

@@ -206,7 +206,8 @@ def init() -> Config:
         "batch_size": 4 if hc_gpu else 2,
         "num_epochs": 200 if hc_gpu else 5,
         "train_patch_size": (128, 128, 128) if hc_gpu else (64, 64, 64),
-        "val_patch_size": (96, 96, 96),  # Not used but kept for config/logging consistency
+        # Not used but kept for config/logging consistency
+        "val_patch_size": (128, 128, 128),
         # TODO: Tune. Both options sound valid, so decide which is better based on experiments.
         "iso_spacing": (1.0, 1.0, 1.0) if hc_gpu else (1.5, 1.5, 1.5),
     }
