@@ -961,6 +961,8 @@ class EarlyStopper:
         self.epochs_no_improve = 0
         self.builder = builder
         self.checkpoint_path = self.config.CHECKPOINT_DIR / "best_model.pth"
+        logger.info("EarlyStopper initialized with patience=%d and min_delta=%.4f",
+                    self.config.EARLY_STOPPING_PATIENCE, self.config.EARLY_STOPPING_MIN_DELTA)
 
     def __call__(self, epoch: int, epoch_dice: float, liver_dice: float, tumour_dice: float) -> bool:
         '''Checks if the current epoch's Dice score shows an improvement over
@@ -977,8 +979,8 @@ class EarlyStopper:
             True if the model hasn't improved for at least
             `self.config.EARLY_STOPPING_PATIENCE` epochs
         '''
-        if epoch_dice > self.best_dice + self.config.EARLY_STOPPING_MIN_DELTA:
-            self.best_dice = epoch_dice
+        if tumour_dice > self.best_dice + self.config.EARLY_STOPPING_MIN_DELTA:
+            self.best_dice = tumour_dice
             self.best_epoch = epoch
             self.epochs_no_improve = 0
             self.builder.writer.add_scalar("Improvement/Best_Dice", epoch_dice, epoch)
