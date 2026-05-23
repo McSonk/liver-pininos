@@ -947,7 +947,7 @@ class ModelBuilder:
 
         logger.info("\n%s", "="*40)
         logger.info("Training Complete!")
-        logger.info("Best Validation Dice: %f", early_stopper.best_dice)
+        logger.info("Best Validation Tumour Dice: %f", early_stopper.best_dice)
         logger.info("Total Training Time: %dh %dm %ds", int(hours), int(minutes), seconds)
         logger.info("Checkpoint saved to: %s", early_stopper.checkpoint_path)
         logger.info("\n%s", "="*40)
@@ -965,13 +965,17 @@ class EarlyStopper:
                     self.config.EARLY_STOPPING_PATIENCE, self.config.EARLY_STOPPING_MIN_DELTA)
 
     def __call__(self, epoch: int, epoch_dice: float, liver_dice: float, tumour_dice: float) -> bool:
-        '''Checks if the current epoch's Dice score shows an improvement over
-           the best recorded within a window
+        '''Checks if the current epoch's tumour dice score shows an improvement over
+           the best recorded within a window.
 
         Params
         -----
         `epoch_dice`: float
             The mean Dice score for the current epoch.
+        `liver_dice`: float
+            The liver Dice score for the current epoch (if applicable).
+        `tumour_dice`: float
+            The tumour Dice score for the current epoch.
 
         Returns
         -----
