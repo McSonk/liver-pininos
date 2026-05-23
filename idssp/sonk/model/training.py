@@ -921,7 +921,7 @@ class ModelBuilder:
 
         try:
             for epoch in range(self.config.NUM_EPOCHS):
-                epoch_dice, liver_dice, tumour_dice = self._run_epoch(epoch, early_stopper.best_dice)
+                epoch_dice, liver_dice, tumour_dice = self._run_epoch(epoch, early_stopper.best_tumour_dice)
 
                 # Returns true if the model hasn't improved for
                 # `self.config.EARLY_STOPPING_PATIENCE` epochs
@@ -942,14 +942,18 @@ class ModelBuilder:
         hours, rem = divmod(total_duration, 3600)
         minutes, seconds = divmod(rem, 60)
 
-        self.writer.add_scalar("Final/Best_Dice", early_stopper.best_dice, 0)
+        self.writer.add_scalar("Final/Best_Mean_Dice", early_stopper.best_mean_dice, 0)
+        self.writer.add_scalar("Final/Best_Liver_Dice", early_stopper.best_liver_dice, 0)
+        self.writer.add_scalar("Final/Best_Tumour_Dice", early_stopper.best_tumour_dice, 0)
         self.writer.add_scalar("Final/Total_Duration_Hours", total_duration / 3600, 0)
 
         self.writer.close()
 
         logger.info("\n%s", "="*40)
         logger.info("Training Complete!")
-        logger.info("Best Validation Tumour Dice: %f", early_stopper.best_dice)
+        logger.info("Best Validation Tumour Dice: %f", early_stopper.best_tumour_dice)
+        logger.info("Best Validation Liver Dice: %f", early_stopper.best_liver_dice)
+        logger.info("Best Validation Mean Dice: %f", early_stopper.best_mean_dice)
         logger.info("Total Training Time: %dh %dm %ds", int(hours), int(minutes), seconds)
         logger.info("Checkpoint saved to: %s", early_stopper.checkpoint_path)
         logger.info("\n%s", "="*40)
@@ -958,7 +962,9 @@ class EarlyStopper:
     '''Helper class to manage early stopping logic and checkpoint saving.'''
     def __init__(self, builder: ModelBuilder):
         self.config = config.get()
-        self.best_dice = -1.0
+        self.best_mean_dice = -1.0
+        self.best_liver_dice = -1.0
+        self.best_tumour_dice = -1.0
         self.best_epoch = -1
         self.epochs_no_improve = 0
         self.builder = builder
@@ -966,7 +972,7 @@ class EarlyStopper:
         logger.info("EarlyStopper initialized with patience=%d and min_delta=%.4f",
                     self.config.EARLY_STOPPING_PATIENCE, self.config.EARLY_STOPPING_MIN_DELTA)
 
-    def __call__(self, epoch: int, epoch_dice: float, liver_dice: float, tumour_dice: float) -> bool:
+    def __call__(self, epoch: int, mean_dice: float, liver_dice: float, tumour_dice: float) -> bool:
         '''Checks if the current epoch's tumour dice score shows an improvement over
            the best recorded within a window.
 
@@ -985,11 +991,13 @@ class EarlyStopper:
             True if the model hasn't improved for at least
             `self.config.EARLY_STOPPING_PATIENCE` epochs
         '''
-        if tumour_dice > self.best_dice + self.config.EARLY_STOPPING_MIN_DELTA:
-            self.best_dice = tumour_dice
+        if tumour_dice > self.best_tumour_dice + self.config.EARLY_STOPPING_MIN_DELTA:
+            self.best_tumour_dice = tumour_dice
+            self.best_mean_dice = mean_dice
+            self.best_liver_dice = liver_dice
             self.best_epoch = epoch
             self.epochs_no_improve = 0
-            self.builder.writer.add_scalar("Improvement/Best_Dice", epoch_dice, epoch)
+            self.builder.writer.add_scalar("Improvement/Mean_Dice", mean_dice, epoch)
             self.builder.writer.add_scalar("Improvement/Liver_Dice", liver_dice, epoch)
             self.builder.writer.add_scalar("Improvement/Tumour_Dice", tumour_dice, epoch)
             self.save_checkpoint()
@@ -1014,12 +1022,15 @@ class EarlyStopper:
 
         before_save_time = time.time()
         torch.save({
+            "version": self.config.VERSION,
             "epoch": self.best_epoch if is_best else current_epoch,
             # Weights and biases
             "model_state_dict": self.builder.model.state_dict(),
             # Variance, step counters, etc
             "optimizer_state_dict": self.builder.optimizer.state_dict(),
-            "best_dice": self.best_dice,
+            "best_dice": self.best_mean_dice,
+            "best_liver_dice": self.best_liver_dice,
+            "best_tumour_dice": self.best_tumour_dice,
             # Counters and others for AMP
             "scaler_state_dict":
                 self.builder.scaler.state_dict() if self.builder.scaler is not None else None,
@@ -1031,6 +1042,12 @@ class EarlyStopper:
         after_save_time = time.time()
         save_duration = after_save_time - before_save_time
         if is_best:
-            logger.info("  -> New Best Model Saved (Dice: %.4f) in %s (%.2f seconds)", self.best_dice, path, save_duration)
+            logger.info(
+                "  -> New Best Model Saved (Dice: %.4f, Liver: %.4f, Tumour: %.4f) in %s (%.2f seconds)",
+                self.best_mean_dice,
+                self.best_liver_dice,
+                self.best_tumour_dice,
+                path,
+                save_duration)
         else:
             logger.info("  -> Last Epoch Model Saved in %s (%.2f seconds)", path, save_duration)
