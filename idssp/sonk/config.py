@@ -140,7 +140,7 @@ class Config:
 # Module-level singleton (lazy)
 _config: Config = None
 
-def init() -> Config:
+def init(verbose: bool = False) -> Config:
     global _config
     if _config is not None:
         return _config
@@ -278,13 +278,14 @@ def init() -> Config:
     ct_root_str = os.getenv("LITS_CT_ROOT")
     ct_test_str = os.getenv("LITS_CT_TEST")
     output_dir_str = os.getenv("OUTPUT_DIR")
-    # CHECKPOINT_DIR_STR = os.getenv("CHECKPOINT_DIR")
     persistent_dataset_dir_str = os.getenv("PERSISTENT_DATASET_DIR")
     stats_dir_str = os.getenv("STATS_DIR")
     split_dir_str = os.getenv("SPLIT_DIR")
 
-    # LOG_DIR_STR = os.getenv("LOG_DIR")
-    log_level_console = os.getenv("LOG_LEVEL_CONSOLE", "INFO").upper()
+    if verbose:
+        log_level_console = "DEBUG"
+    else:
+        log_level_console = os.getenv("LOG_LEVEL_CONSOLE", "INFO").upper()
     log_level_file = os.getenv("LOG_LEVEL_FILE", "DEBUG").upper()
 
     #  File validations

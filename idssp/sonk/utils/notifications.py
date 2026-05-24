@@ -5,6 +5,8 @@ Supports text-only or text+file attachment with safe truncation.
 """
 import html
 import re
+import shutil
+import sys
 import threading
 from pathlib import Path
 
@@ -235,3 +237,102 @@ def send_alert(title: str, message: str, sync: bool = False, file_path: str = No
         _post()
     else:
         threading.Thread(target=_post, daemon=True, name="alert-dispatcher").start()
+
+def send_final_alert(title: str, message: str) -> None:
+    """
+    Wrapper around send_alert for final notifications at the end of training.
+    Ensures that any exceptions are logged and re-raised after alerting.
+    """
+    cfg = config.get()
+    if not cfg.ENABLE_TELEGRAM_NOTIFICATIONS:
+        logger.debug("Telegram notifications are disabled. Skipping alert.")
+        return
+    try:
+        # Create archive of the run output after training completes
+        archive_path = _create_run_archive(cfg)
+        archive_size_mb = archive_path.stat().st_size / (1024 * 1024)
+        # Telegram file size limit is ~45 MB (we use 45 MB as safe threshold)
+        telegram_file_limit_mb = 45.0
+        if archive_size_mb <= telegram_file_limit_mb:
+            # Attach archive to Telegram alert
+            send_alert(
+                title,
+                message,
+                file_path=archive_path,
+                sync=True,
+                timeout=30.0
+            )
+        else:
+            # Archive too large for Telegram
+            logger.warning(
+                "Archive (%.2f MB) exceeds Telegram limit (%.2f MB). "
+                "Sending log file instead.", archive_size_mb, telegram_file_limit_mb)
+            success_body_with_note = (
+                f"{message}\n\n"
+                f"Note: Run archive created ({archive_size_mb:.2f} MB) but exceeds "
+                f"Telegram's {telegram_file_limit_mb} MB limit. The full archive is "
+                f"available at: {archive_path}"
+            )
+            send_alert(
+                title,
+                success_body_with_note,
+                sync=True,
+                timeout=30.0
+            )
+        # End if-else archive size
+    except Exception as e:
+        logger.error("Failed to create or send archive: %s", e)
+
+def _create_run_archive(config_object: config.Config) -> Path:
+    """
+    Create an archive of the current run's output directory.
+
+    Params
+    -------
+    `config_object`: `config.Config`
+        Configuration object containing OUTPUT_DIR and RUN_ID.
+
+    Returns
+    -------
+    `str`
+        Path to the created archive.
+    """
+    output_dir = config_object.OUTPUT_DIR
+    run_id = config_object.RUN_ID
+    run_dir = output_dir / run_id
+
+    if not run_dir.exists() and not output_dir.exists():
+        raise FileNotFoundError(
+            f"Run directory ({run_dir}) doesn't exist."
+        )
+
+    archive_root = run_dir
+    archive_name_base = run_id
+
+    # Choose archive format based on platform
+    # gztar on POSIX, zip on Windows for portability
+    if sys.platform == "win32":
+        archive_format = "zip"
+    else:
+        archive_format = "gztar"
+
+    archive_base_path = output_dir / archive_name_base
+
+    # Ensure parent directory exists
+    archive_base_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Create the archive
+    created_path = shutil.make_archive(
+        str(archive_base_path),  # Base name (extension added by make_archive)
+        archive_format,
+        root_dir=str(archive_root),
+    )
+
+    final_path = Path(created_path)
+
+    # Check archive size
+    archive_size_mb = final_path.stat().st_size / (1024 * 1024)
+    logger.info("Archive created: %s (%.2f MB)", final_path, archive_size_mb)
+
+    return final_path
+

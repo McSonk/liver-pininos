@@ -1,4 +1,5 @@
 print("[main.py] Importing torch... (This may take a moment)")
+import argparse
 import os
 import subprocess
 
@@ -12,7 +13,7 @@ from idssp.sonk.utils.logger import (get_active_log_file, get_logger,
                                      install_global_exception_handlers,
                                      log_memory_usage)
 from idssp.sonk.utils.mail import send_training_email
-from idssp.sonk.utils.notifications import send_alert
+from idssp.sonk.utils.notifications import send_alert, send_final_alert
 
 # For reproducibility
 set_determinism(seed=42)
@@ -105,8 +106,29 @@ def log_environment_info(config_obj: config.Config) -> None:
     logger.info("Log Dir: %s", config_obj.LOG_DIR)
     logger.info("Persistent Dataset Dir: %s", config_obj.PERSISTENT_DATASET_DIR)
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run training for tumour segmentation",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable verbose logging for debugging purposes",
+    )
+
+    parser.add_argument(
+        "-fr", "--fast-run",
+        action="store_true",
+        help="Enable fast run mode with a smaller subset of the data for quick testing",
+    )
+    return parser.parse_args()
+
 if __name__ == "__main__":
-    cfg = config.init()
+    args = _parse_args()
+    verbose = args.verbose
+    fast_run = args.fast_run
+    cfg = config.init(verbose=verbose)
     log_environment_info(cfg)
     logger.info("Reading directories...")
     loader = DataCollector()
@@ -125,8 +147,7 @@ if __name__ == "__main__":
     train_files, val_files = loader.get_stratified_split()
     logger.debug("Initializing model builder...")
 
-    if config.is_limited_env(include_vram=True):
-        # TODO: Include arg to config to control this behaviour for quick local testing
+    if fast_run or config.is_limited_env(include_vram=True):
         logger.info("Limited environment detected. Using a subset of the data for quick testing.")
         train_files = train_files[:4]  # Use only 4 samples for training
         val_files = val_files[:2]      # Use only 2 samples for validation
@@ -218,9 +239,7 @@ if __name__ == "__main__":
         wait_for_completion=True,
         timeout=20.0
     )
-    send_alert(
+    send_final_alert(
         success_title,
-        success_body,
-        file_path=get_active_log_file(),
-        sync=True,
-        timeout=30.0)
+        success_body
+    )
