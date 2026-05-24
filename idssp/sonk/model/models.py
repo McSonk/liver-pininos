@@ -49,13 +49,14 @@ def get_seg_res_net(config_obj: config.Config) -> SegResNet:
     init_filters = 32
     blocks_down = [1, 2, 2, 4]
     blocks_up = [1, 1, 1]
-    norm = 'GROUP'
+    norm = ('GROUP', {'num_groups': 8})
     act = 'RELU'
     logger.debug("SegResNet architecture parameters: Spatial Dims: %d, In Channels: %d, "
                  "Out Channels: %d, Blocks Down: %s, Blocks Up: %s, Norm: %s, "
                  "Act: %s, Init Filters: %d",
                  s_dims, in_channels, out_channels, blocks_down, blocks_up,
                  norm, act, init_filters)
+    # TODO: Study this
     return SegResNet(
         spatial_dims=s_dims,
         in_channels=in_channels,

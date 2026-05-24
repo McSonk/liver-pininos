@@ -149,7 +149,7 @@ if __name__ == "__main__":
 
     if fast_run or config.is_limited_env(include_vram=True):
         logger.info("Limited environment detected. Using a subset of the data for quick testing.")
-        train_files = train_files[:4]  # Use only 4 samples for training
+        train_files = train_files[:2]  # Use only 2 samples for training
         val_files = val_files[:2]      # Use only 2 samples for validation
 
     logger.info("%d training files", len(train_files))
