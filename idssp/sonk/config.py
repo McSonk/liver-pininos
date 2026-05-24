@@ -11,7 +11,8 @@ import psutil
 import torch
 from dotenv import load_dotenv
 
-
+VERSION_STR = "2.1.7"
+'''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
 @dataclass(frozen=True)
 class Config:
     # Environment & Device
@@ -27,7 +28,7 @@ class Config:
     '''The total memory available to the process, in GB. This takes into account
        cgroup limits, so if the process is running in a container with limited memory,
        this will reflect that limit rather than the total RAM of the host machine.'''
-    VERSION: str = "2.1.7"
+    VERSION: str = VERSION_STR
     '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
 
     # Preprocessing
@@ -359,7 +360,7 @@ def init(verbose: bool = False) -> Config:
 
     ct_root = Path(ct_root_str)
     ct_test = Path(ct_test_str)
-    output_dir = Path(output_dir_str)
+    output_dir = Path(f"{VERSION_STR}-{output_dir_str}")
     stats_dir = Path(stats_dir_str)
     split_dir = Path(split_dir_str)
     train_stats_dir = stats_dir / "train"
