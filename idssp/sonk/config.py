@@ -208,7 +208,6 @@ def init(verbose: bool = False) -> Config:
         "train_patch_size": (128, 128, 128) if hc_gpu else (64, 64, 64),
         # Not used but kept for config/logging consistency
         "val_patch_size": (128, 128, 128),
-        # TODO: Tune. Both options sound valid, so decide which is better based on experiments.
         "iso_spacing": (1.0, 1.0, 1.0) if hc_gpu else (1.5, 1.5, 1.5),
     }
 

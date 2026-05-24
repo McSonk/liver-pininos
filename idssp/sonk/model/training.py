@@ -128,6 +128,7 @@ class ModelBuilder:
 
         # tensorboard writer for logging training metrics
         logger.debug("Writing initial hyperparameters to TensorBoard: \n%s", config.to_param_dict())
+        # TODO: review the use of all writers to tensorboard
         self.writer = SummaryWriter(log_dir=str(self.config.TENSORBOARD_DIR))
         self.writer.add_hparams(
             config.to_param_dict(),
@@ -183,7 +184,6 @@ class ModelBuilder:
             # liver + tumour region, with a margin of 10 voxels.)
             # THIS WILL CHANGE THE SHAPE OF THE INPUT DATA
             # Remove on inference if fixed-size validation is needed
-            # TODO: Consider using "image" as source_key (edge case: small peripheral tumours)
             CropForegroundd(
                 keys=["image", "label"],
                 source_key="image",
