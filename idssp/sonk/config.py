@@ -371,7 +371,7 @@ def init(verbose: bool = False) -> Config:
 
     ct_root = Path(ct_root_str)
     ct_test = Path(ct_test_str)
-    output_dir = Path(f"{VERSION_STR}-{output_dir_str}")
+    output_dir = Path(output_dir_str)
     stats_dir = Path(stats_dir_str)
     split_dir = Path(split_dir_str)
     train_stats_dir = stats_dir / "train"
@@ -379,9 +379,9 @@ def init(verbose: bool = False) -> Config:
     per_case_train_stats_file = train_stats_dir / "per_case_summary.csv"
     persistent_dataset_dir = Path(persistent_dataset_dir_str) if persistent_dataset_dir_str else None
 
-    checkpoint_dir = output_dir / run_id / "checkpoints"
-    log_dir = output_dir / run_id / "logs"
-    tensorboard_dir = output_dir / run_id / "tensorboard"
+    checkpoint_dir = output_dir / f"{VERSION_STR}-{run_id}" / "checkpoints"
+    log_dir = output_dir / f"{VERSION_STR}-{run_id}" / "logs"
+    tensorboard_dir = output_dir / f"{VERSION_STR}-{run_id}" / "tensorboard"
 
     if device == "cuda" and (not use_cache_train_dataset or not use_cache_val_dataset):
         if persistent_dataset_dir is None:
