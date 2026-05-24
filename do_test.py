@@ -46,6 +46,10 @@ def _main(args: argparse.Namespace):
     if not checkpoint.exists():
         logger.error("Checkpoint file not found: %s", checkpoint)
         return 1
+    logger.info("This is the test-time evaluation script for tumour segmentation." \
+                " It will load the specified model checkpoint, run inference on the " \
+                "test dataset, and generate a report of the results.")
+    logger.info("Using checkpoint: %s", checkpoint)
     logger.info("[Validation] Reading directories...")
     loader = DataCollector()
     loader.read_dir(cfg.CT_TEST, ds_source='LiTS')

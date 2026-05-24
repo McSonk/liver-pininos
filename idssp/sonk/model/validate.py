@@ -65,7 +65,7 @@ class TestEvaluator:
 
         if "config_snapshot" in checkpoint:
             for key in ["NUM_CLASSES", "ISO_SPACING", "HU_WINDOW_MIN", "HU_WINDOW_MAX"]:
-                if checkpoint["config_snapshot"].get(key) != getattr(self.config, key):
+                if tuple(checkpoint["config_snapshot"].get(key, [])) != tuple(getattr(self.config, key)):
                     logger.warning("Config mismatch: %s (ckpt=%s, current=%s)",
                                 key, checkpoint["config_snapshot"].get(key), getattr(self.config, key))
 

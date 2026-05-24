@@ -5,12 +5,23 @@ import datetime
 import os
 import warnings
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
 import psutil
 import torch
 from dotenv import load_dotenv
 
+VERSION_STR = "2.2"
+'''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
+
+class AvailableModels(str, Enum):
+    """
+    Enumeration of supported segmentation models.
+    Using str inheritance allows easy serialization (e.g., for logging/JSON).
+    """
+    U_NET = "u-net"
+    SEG_RES_NET = "seg-res-net"
 
 @dataclass(frozen=True)
 class Config:
@@ -27,8 +38,9 @@ class Config:
     '''The total memory available to the process, in GB. This takes into account
        cgroup limits, so if the process is running in a container with limited memory,
        this will reflect that limit rather than the total RAM of the host machine.'''
-    VERSION: str = "2.1.7"
+    VERSION: str = VERSION_STR
     '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
+    MODEL: AvailableModels = AvailableModels.SEG_RES_NET
 
     # Preprocessing
     HU_WINDOW_MIN: int = -175
@@ -208,7 +220,6 @@ def init(verbose: bool = False) -> Config:
         "train_patch_size": (128, 128, 128) if hc_gpu else (64, 64, 64),
         # Not used but kept for config/logging consistency
         "val_patch_size": (128, 128, 128),
-        # TODO: Tune. Both options sound valid, so decide which is better based on experiments.
         "iso_spacing": (1.0, 1.0, 1.0) if hc_gpu else (1.5, 1.5, 1.5),
     }
 
@@ -360,7 +371,7 @@ def init(verbose: bool = False) -> Config:
 
     ct_root = Path(ct_root_str)
     ct_test = Path(ct_test_str)
-    output_dir = Path(output_dir_str)
+    output_dir = Path(f"{VERSION_STR}-{output_dir_str}")
     stats_dir = Path(stats_dir_str)
     split_dir = Path(split_dir_str)
     train_stats_dir = stats_dir / "train"
@@ -558,6 +569,7 @@ def to_dict() -> dict:
     config = get()
     return {
         "RUN_ID": config.RUN_ID,
+        "MODEL": config.MODEL.value,
         "VERSION": config.VERSION,
         "cpu_memory": config.cpu_memory,
         "container_memory": config.container_memory,

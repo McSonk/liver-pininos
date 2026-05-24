@@ -8,7 +8,6 @@ from monai.data import (CacheDataset, DataLoader, Dataset, PersistentDataset,
 from monai.inferers import SlidingWindowInferer
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
-from monai.networks.nets import UNet
 from monai.transforms import (Activations, AsDiscrete, Compose,
                               CropForegroundd, EnsureTyped, LoadImaged,
                               Orientationd, RandCropByPosNegLabeld, RandFlipd,
@@ -22,6 +21,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.tensorboard import SummaryWriter
 
 from idssp.sonk import config
+from idssp.sonk.model.models import get_model
 from idssp.sonk.utils.logger import get_logger, log_memory_usage
 from idssp.sonk.utils.notifications import send_alert
 from idssp.sonk.view.utils import log_segmentation_overlay
@@ -128,6 +128,7 @@ class ModelBuilder:
 
         # tensorboard writer for logging training metrics
         logger.debug("Writing initial hyperparameters to TensorBoard: \n%s", config.to_param_dict())
+        # TODO: review the use of all writers to tensorboard
         self.writer = SummaryWriter(log_dir=str(self.config.TENSORBOARD_DIR))
         self.writer.add_hparams(
             config.to_param_dict(),
@@ -183,7 +184,6 @@ class ModelBuilder:
             # liver + tumour region, with a margin of 10 voxels.)
             # THIS WILL CHANGE THE SHAPE OF THE INPUT DATA
             # Remove on inference if fixed-size validation is needed
-            # TODO: Consider using "image" as source_key (edge case: small peripheral tumours)
             CropForegroundd(
                 keys=["image", "label"],
                 source_key="image",
@@ -467,23 +467,9 @@ class ModelBuilder:
         )
 
     def init_model(self):
-        '''Initializes the model (uNet), loss function, and optimizer.'''
+        '''Initializes the model, loss function, and optimizer.'''
         logger.debug("Initializing model...")
-        # TODO: change for a SegResNet
-        self.model = UNet(
-            spatial_dims=3,
-            # Just 1 channel for the grayscale CT image.
-            in_channels=1,
-            out_channels=self.config.NUM_CLASSES,
-            # channels=(64, 128, 256, 512)
-            channels=(32, 64, 128, 256),
-            # One stride per downsampling transition: len(strides) == len(channels) - 1
-            strides=(2, 2, 2),
-            num_res_units=1 if config.is_limited_env() else 2,
-            # batch norm isn't useful for 3d images (usually batches aren't longer than 4)
-            norm="INSTANCE",
-            act="PRELU"
-        ).to(self.device)
+        self.model = get_model().to(self.device)
 
         log_memory_usage(logger, prefix="After model initialization: ")
 
