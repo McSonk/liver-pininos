@@ -5,14 +5,24 @@ import datetime
 import os
 import warnings
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
 import psutil
 import torch
 from dotenv import load_dotenv
 
-VERSION_STR = "2.1.7"
+VERSION_STR = "2.2"
 '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
+
+class AvailableModels(str, Enum):
+    """
+    Enumeration of supported segmentation models.
+    Using str inheritance allows easy serialization (e.g., for logging/JSON).
+    """
+    U_NET = "u-net"
+    SEG_RES_NET = "seg-res-net"
+
 @dataclass(frozen=True)
 class Config:
     # Environment & Device
@@ -30,6 +40,7 @@ class Config:
        this will reflect that limit rather than the total RAM of the host machine.'''
     VERSION: str = VERSION_STR
     '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
+    MODEL: AvailableModels = AvailableModels.SEG_RES_NET
 
     # Preprocessing
     HU_WINDOW_MIN: int = -175
@@ -558,6 +569,7 @@ def to_dict() -> dict:
     config = get()
     return {
         "RUN_ID": config.RUN_ID,
+        "MODEL": config.MODEL.value,
         "VERSION": config.VERSION,
         "cpu_memory": config.cpu_memory,
         "container_memory": config.container_memory,
