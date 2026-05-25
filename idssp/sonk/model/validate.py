@@ -13,6 +13,7 @@ import torch
 from monai.data import DataLoader, Dataset, decollate_batch
 from monai.inferers import SlidingWindowInferer
 from monai.metrics import DiceMetric, HausdorffDistanceMetric
+from monai.transforms import KeepLargestConnectedComponent
 
 from idssp.sonk import config
 from idssp.sonk.model.models import get_model
@@ -22,6 +23,40 @@ from idssp.sonk.model.transforms import (get_activations_transforms,
 from idssp.sonk.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _post_process_class_map(pred_np: np.ndarray) -> np.ndarray:
+    """
+    Keep largest connected component for liver (class 1),
+    remove tumour (class 2) outside retained liver.
+    
+    Args:
+        pred_np: 3D numpy array of class indices (0=bg, 1=liver, 2=tumour)
+    Returns:
+        Post-processed class map (same shape)
+    """
+    from scipy import ndimage
+    
+    result = pred_np.copy()
+    
+    # 1. Keep largest liver component
+    liver_mask = (result == 1).astype(np.uint8)
+    labelled, num = ndimage.label(liver_mask)
+    
+    if num > 0:
+        sizes = ndimage.sum(liver_mask, labelled, range(1, num + 1))
+        largest_label = np.argmax(sizes) + 1  # +1 because label 0 is background
+        liver_lcc = (labelled == largest_label).astype(np.uint8)
+    else:
+        liver_lcc = np.zeros_like(liver_mask)
+    
+    # 2. Replace liver with LCC
+    result[(result == 1) & (liver_lcc == 0)] = 0
+    
+    # 3. Remove tumour outside retained liver
+    result[(result == 2) & (liver_lcc == 0)] = 0
+    
+    return result
 
 class TestEvaluator:
     """
@@ -69,7 +104,9 @@ class TestEvaluator:
                 curr_val = getattr(curr_config, key, None)
 
                 if ckpt_val is None or curr_val is None:
-                    logger.warning("Config key '%s' missing in checkpoint or current config. Skipping check.", key)
+                    logger.warning(
+                        "Config key '%s' missing in checkpoint or current config. Skipping check.",
+                        key)
                     continue
 
                 # Normalise values to lists for comparison to handle both scalars and tuples/lists
@@ -95,7 +132,8 @@ class TestEvaluator:
 
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.model.eval()
-        logger.info("Model loaded successfully. Best Dice (train): %.4f", checkpoint.get("best_dice", -1.0))
+        logger.info("Model loaded successfully. Best Dice (train): %.4f",
+                    checkpoint.get("best_dice", -1.0))
 
         # Sliding window inferer (must match training patch size)
         self.inferer = SlidingWindowInferer(
@@ -140,11 +178,11 @@ class TestEvaluator:
                 with torch.amp.autocast(device_type="cuda", enabled=self.device.type == "cuda"):
                     preds = self.inferer(inputs=images, network=self.model)
                 labels = batch["label"].to(self.device)
-                
+
                 # Decollate to per-volume tensors
                 val_preds = decollate_batch(preds)
                 val_labels = decollate_batch(labels)
-                
+
                 # Apply MONAI post-processing (matches training.py exactly)
                 val_preds = [self.pred_transform(p) for p in val_preds]
                 val_labels = [self.label_transform(l) for l in val_labels]
@@ -153,7 +191,7 @@ class TestEvaluator:
                 for i, (pred, label) in enumerate(zip(val_preds, val_labels)):
                     pred_spatial = pred.shape[1:]  # Exclude channel dimension
                     label_spatial = label.shape[1:]
-                    
+
                     if pred_spatial != label_spatial:
                         logger.warning(
                             "Shape mismatch for sample %d: pred=%s, label=%s. "
@@ -169,12 +207,33 @@ class TestEvaluator:
                         val_labels[i] = label_resampled
                 # ======
 
-                # Compute metrics on one-hot tensors
-                self.dice_metric(y_pred=val_preds, y=val_labels)
-                self.hd95_metric(y_pred=val_preds, y=val_labels)
-                
+                # === APPLY POST-PROCESSING BEFORE METRICS ===
+                logger.debug("Applying largest-connected-component post-processing to predictions")
+                processed_preds = []
+                for pred in val_preds:
+                    # pred: one-hot tensor (C, D, H, W)
+                    pred_class = pred.argmax(dim=0)  # → (D, H, W) class indices
+                    
+                    # Apply post-processing on CPU (numpy)
+                    pred_np = pred_class.cpu().numpy().astype(np.int32)
+                    pred_post = _post_process_class_map(pred_np)  # See helper below
+                    
+                    # Convert back to one-hot for MONAI metrics
+                    pred_onehot = torch.nn.functional.one_hot(
+                        torch.from_numpy(pred_post).long(),
+                        num_classes=self.config.NUM_CLASSES
+                    ).permute(3, 0, 1, 2).float().to(pred.device)  # → (C, D, H, W)
+                    
+                    processed_preds.append(pred_onehot)
+
+                # Compute metrics on post-processed predictions
+                self.dice_metric(y_pred=processed_preds, y=val_labels)
+                self.hd95_metric(y_pred=processed_preds, y=val_labels)
+
+                # === END POST-PROCESSING ===
+
                 # Save prediction (argmax back to class labels)
-                pred_class_map = val_preds[0].argmax(dim=0).cpu().numpy().astype(np.uint8)
+                pred_class_map = processed_preds[0].argmax(dim=0).cpu().numpy().astype(np.uint8)
                 pred_nib = nib.Nifti1Image(pred_class_map, affine=batch["image"].affine[0].numpy())
                 nib.save(pred_nib, str(save_path / f"{Path(batch['image'].meta['filename_or_obj'][0]).stem}_pred.nii.gz"))
                 
