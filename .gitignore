@@ -6,3 +6,4 @@
 # own generated files
 files/outputs
 files/server_logs
+scripts/download-files.sh
