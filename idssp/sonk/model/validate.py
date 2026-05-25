@@ -13,7 +13,6 @@ import torch
 from monai.data import DataLoader, Dataset, decollate_batch
 from monai.inferers import SlidingWindowInferer
 from monai.metrics import DiceMetric, HausdorffDistanceMetric
-from monai.transforms import KeepLargestConnectedComponent
 
 from idssp.sonk import config
 from idssp.sonk.model.models import get_model
@@ -208,25 +207,34 @@ class TestEvaluator:
                 # ======
 
                 # === APPLY POST-PROCESSING BEFORE METRICS ===
-                logger.debug("Applying largest-connected-component post-processing to predictions")
                 processed_preds = []
-                for pred in val_preds:
-                    # pred: one-hot tensor (C, D, H, W)
-                    pred_class = pred.argmax(dim=0)  # → (D, H, W) class indices
-                    
-                    # Apply post-processing on CPU (numpy)
-                    pred_np = pred_class.cpu().numpy().astype(np.int32)
-                    pred_post = _post_process_class_map(pred_np)
-                    
-                    # Convert back to one-hot for MONAI metrics
-                    pred_onehot = torch.nn.functional.one_hot(
-                        torch.from_numpy(pred_post).long(),
-                        num_classes=self.config.NUM_CLASSES
-                    ).permute(3, 0, 1, 2).float().to(pred.device)  # → (C, D, H, W)
-                    
-                    processed_preds.append(pred_onehot)
+                if self.config.NUM_CLASSES == 3:
+                    logger.debug("Applying largest-connected-component post-processing to predictions")
+                    for pred in val_preds:
+                        # pred: one-hot tensor (C, D, H, W)
+                        pred_class = pred.argmax(dim=0)  # → (D, H, W) class indices
 
-                # Compute metrics on post-processed predictions
+                        # Apply post-processing on CPU (numpy) for the expected
+                        # multi-class layout only (background=0, liver=1, tumour=2).
+                        pred_np = pred_class.cpu().numpy().astype(np.int32)
+                        pred_post = _post_process_class_map(pred_np)
+
+                        # Convert back to one-hot for MONAI metrics
+                        pred_onehot = torch.nn.functional.one_hot(
+                            torch.from_numpy(pred_post).long(),
+                            num_classes=self.config.NUM_CLASSES
+                        ).permute(3, 0, 1, 2).float().to(pred.device)  # → (C, D, H, W)
+
+                        processed_preds.append(pred_onehot)
+                else:
+                    logger.warning(
+                        "Skipping class-map post-processing for NUM_CLASSES=%d; "
+                        "existing helper assumes a 3-class layout.",
+                        self.config.NUM_CLASSES
+                    )
+                    processed_preds = val_preds
+
+                # Compute metrics on predictions
                 self.dice_metric(y_pred=processed_preds, y=val_labels)
                 self.hd95_metric(y_pred=processed_preds, y=val_labels)
 
