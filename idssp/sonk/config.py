@@ -39,8 +39,10 @@ class Config:
        cgroup limits, so if the process is running in a container with limited memory,
        this will reflect that limit rather than the total RAM of the host machine.'''
     VERSION: str = VERSION_STR
-    '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
+    '''Version of the training pipeline (and its config) to keep track of changes
+       and experiments.'''
     MODEL: AvailableModels = AvailableModels.SEG_RES_NET
+    '''The model architecture to use. Choose from the AvailableModels enum.'''
 
     # Preprocessing
     HU_WINDOW_MIN: int = -175
@@ -195,7 +197,8 @@ def init(verbose: bool = False) -> Config:
             print("[Config] Detected high-compute GPU and lots of RAM. Using optimal settings.")
             gpu_num_workers = 12
         else:
-            print("[Config] Detected high-compute GPU but limited RAM. Using conservative settings.")
+            print("[Config] Detected high-compute GPU but limited RAM. Using "
+                   "conservative settings.")
             gpu_num_workers = 4
     else:
         print("[Config] No high-compute GPU detected. Using minimal settings for memory safety.")
