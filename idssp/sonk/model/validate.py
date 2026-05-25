@@ -216,7 +216,7 @@ class TestEvaluator:
                     
                     # Apply post-processing on CPU (numpy)
                     pred_np = pred_class.cpu().numpy().astype(np.int32)
-                    pred_post = _post_process_class_map(pred_np)  # See helper below
+                    pred_post = _post_process_class_map(pred_np)
                     
                     # Convert back to one-hot for MONAI metrics
                     pred_onehot = torch.nn.functional.one_hot(
