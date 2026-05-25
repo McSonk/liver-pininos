@@ -290,8 +290,10 @@ def send_final_alert(title: str, message: str) -> None:
             sync=True,
             timeout=30.0
         )
+        raise
     except Exception as e:
         logger.error("Failed to create or send archive: %s", e)
+        raise
 
 def _create_run_archive(config_object: config.Config) -> Path:
     """
