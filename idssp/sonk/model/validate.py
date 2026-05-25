@@ -73,10 +73,10 @@ class TestEvaluator:
     Handles checkpoint loading, full-volume inference, metric computation,
     and result export for test datasets.
     """
-    def __init__(self, checkpoint_path: str, post_process: bool = False):
+    def __init__(self, checkpoint_path: Path, post_process: bool = False):
         self.config = config.get()
         self.device = torch.device(self.config.DEVICE)
-        self.checkpoint_path = Path(checkpoint_path)
+        self.checkpoint_path = checkpoint_path
         self.model = None
         self.inferer = None
         self.test_transforms = None
