@@ -13,6 +13,7 @@ import torch
 from monai.data import DataLoader, Dataset, decollate_batch
 from monai.inferers import SlidingWindowInferer
 from monai.metrics import DiceMetric, HausdorffDistanceMetric
+from scipy import ndimage
 
 from idssp.sonk import config
 from idssp.sonk.model.models import get_model
@@ -28,33 +29,43 @@ def _post_process_class_map(pred_np: np.ndarray) -> np.ndarray:
     """
     Keep largest connected component for liver (class 1),
     remove tumour (class 2) outside retained liver.
-    
+
+    Note: Uses 6-connectivity (default in scipy.ndimage.label) for 3D volumes,
+    which is standard for medical segmentation tasks.
+
     Args:
         pred_np: 3D numpy array of class indices (0=bg, 1=liver, 2=tumour)
     Returns:
         Post-processed class map (same shape)
     """
-    from scipy import ndimage
-    
     result = pred_np.copy()
-    
+
     # 1. Keep largest liver component
     liver_mask = (result == 1).astype(np.uint8)
     labelled, num = ndimage.label(liver_mask)
-    
+
     if num > 0:
         sizes = ndimage.sum(liver_mask, labelled, range(1, num + 1))
         largest_label = np.argmax(sizes) + 1  # +1 because label 0 is background
         liver_lcc = (labelled == largest_label).astype(np.uint8)
     else:
         liver_lcc = np.zeros_like(liver_mask)
-    
+
     # 2. Replace liver with LCC
     result[(result == 1) & (liver_lcc == 0)] = 0
-    
+
     # 3. Remove tumour outside retained liver
     result[(result == 2) & (liver_lcc == 0)] = 0
-    
+
+    liver_voxels_before = (pred_np == 1).sum()
+    liver_voxels_after = liver_lcc.sum()
+    if liver_voxels_before > 0 and liver_voxels_after / liver_voxels_before < 0.5:
+        logger.warning(
+            "LCC post-processing discarded %.1f%% of predicted liver voxels. "
+            "This may indicate fragmented predictions or atypical anatomy.",
+            100 * (1 - liver_voxels_after / liver_voxels_before)
+        )
+
     return result
 
 class TestEvaluator:
@@ -62,7 +73,7 @@ class TestEvaluator:
     Handles checkpoint loading, full-volume inference, metric computation,
     and result export for test datasets.
     """
-    def __init__(self, checkpoint_path: str):
+    def __init__(self, checkpoint_path: str, post_process: bool = False):
         self.config = config.get()
         self.device = torch.device(self.config.DEVICE)
         self.checkpoint_path = Path(checkpoint_path)
@@ -70,6 +81,7 @@ class TestEvaluator:
         self.inferer = None
         self.test_transforms = None
         self.pred_postprocess = None
+        self.post_process = post_process
 
          # EXACT post-processing used in training.py
         self.pred_transform = get_activations_transforms(self.config)
@@ -208,31 +220,35 @@ class TestEvaluator:
 
                 # === APPLY POST-PROCESSING BEFORE METRICS ===
                 processed_preds = []
-                if self.config.NUM_CLASSES == 3:
-                    logger.debug("Applying largest-connected-component post-processing to predictions")
-                    for pred in val_preds:
-                        # pred: one-hot tensor (C, D, H, W)
-                        pred_class = pred.argmax(dim=0)  # → (D, H, W) class indices
+                if self.post_process:
+                    if self.config.NUM_CLASSES == 3:
+                        logger.debug("Applying largest-connected-component post-processing to predictions")
+                        for pred in val_preds:
+                            # pred: one-hot tensor (C, D, H, W)
+                            pred_class = pred.argmax(dim=0)  # → (D, H, W) class indices
 
-                        # Apply post-processing on CPU (numpy) for the expected
-                        # multi-class layout only (background=0, liver=1, tumour=2).
-                        pred_np = pred_class.cpu().numpy().astype(np.int32)
-                        pred_post = _post_process_class_map(pred_np)
+                            # Apply post-processing on CPU (numpy) for the expected
+                            # multi-class layout only (background=0, liver=1, tumour=2).
+                            pred_np = pred_class.cpu().numpy().astype(np.int32)
+                            pred_post = _post_process_class_map(pred_np)
 
-                        # Convert back to one-hot for MONAI metrics
-                        pred_onehot = torch.nn.functional.one_hot(
-                            torch.from_numpy(pred_post).long(),
-                            num_classes=self.config.NUM_CLASSES
-                        ).permute(3, 0, 1, 2).float().to(pred.device)  # → (C, D, H, W)
+                            # Convert back to one-hot for MONAI metrics
+                            pred_onehot = torch.nn.functional.one_hot(
+                                torch.from_numpy(pred_post).long(),
+                                num_classes=self.config.NUM_CLASSES
+                            ).permute(3, 0, 1, 2).float().to(pred.device)  # → (C, D, H, W)
 
-                        processed_preds.append(pred_onehot)
+                            processed_preds.append(pred_onehot)
+                    else:
+                        logger.warning(
+                            "Skipping class-map post-processing for NUM_CLASSES=%d; "
+                            "existing helper assumes a 3-class layout.",
+                            self.config.NUM_CLASSES
+                        )
+                        processed_preds = val_preds
                 else:
-                    logger.warning(
-                        "Skipping class-map post-processing for NUM_CLASSES=%d; "
-                        "existing helper assumes a 3-class layout.",
-                        self.config.NUM_CLASSES
-                    )
                     processed_preds = val_preds
+                    logger.debug("Post-processing disabled; using raw predictions for metrics.")
 
                 # Compute metrics on predictions
                 self.dice_metric(y_pred=processed_preds, y=val_labels)

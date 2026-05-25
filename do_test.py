@@ -33,16 +33,22 @@ def _parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--checkpoint",
+        "--checkpoint", "-chk",
         type=str,
         required=True,
         help="Path to the trained model checkpoint (.pth file)",
+    )
+    parser.add_argument(
+        "--post-process", "-pp",
+        action="store_true",
+        help="Whether to apply post-processing to the predicted segmentation maps"
     )
     return parser.parse_args()
 
 def _main(args: argparse.Namespace):
     cfg = config.init()
     checkpoint = Path(args.checkpoint)
+    post_process = args.post_process
     if not checkpoint.exists():
         logger.error("Checkpoint file not found: %s", checkpoint)
         return 1
@@ -50,6 +56,11 @@ def _main(args: argparse.Namespace):
                 " It will load the specified model checkpoint, run inference on the " \
                 "test dataset, and generate a report of the results.")
     logger.info("Using checkpoint: %s", checkpoint)
+    if post_process:
+        logger.info("Post-processing of predictions is ENABLED.")
+    else:
+        logger.info("Post-processing of predictions is DISABLED; " \
+                    "raw model outputs will be used for metrics.")
     logger.info("[Validation] Reading directories...")
     loader = DataCollector()
     loader.read_dir(cfg.CT_TEST, ds_source='LiTS')
@@ -69,7 +80,7 @@ def _main(args: argparse.Namespace):
     for file in test_files:
         logger.debug(file)
 
-    evaluator = TestEvaluator(checkpoint)
+    evaluator = TestEvaluator(checkpoint, post_process)
     evaluator.load_checkpoint()
     results = evaluator.run_inference(test_files)
     evaluator.generate_report(results)
