@@ -60,13 +60,39 @@ class TestEvaluator:
         checkpoint = torch.load(self.checkpoint_path, map_location=self.device, weights_only=True)
 
         if "config_snapshot" in checkpoint:
-            for key in ["NUM_CLASSES", "ISO_SPACING", "HU_WINDOW_MIN", "HU_WINDOW_MAX"]:
-                if tuple(checkpoint["config_snapshot"].get(key, [])) != tuple(getattr(self.config, key)):
-                    logger.warning("Config mismatch: %s (ckpt=%s, current=%s)",
-                                key, checkpoint["config_snapshot"].get(key), getattr(self.config, key))
+            ckpt_config = checkpoint["config_snapshot"]
+            curr_config = self.config
 
+            # Keys to verify for consistency between training and inference
+            keys_to_check = ["NUM_CLASSES", "ISO_SPACING", "HU_WINDOW_MIN", "HU_WINDOW_MAX"]
+
+            for key in keys_to_check:
+                ckpt_val = ckpt_config.get(key)
+                curr_val = getattr(curr_config, key, None)
+
+                if ckpt_val is None or curr_val is None:
+                    logger.warning("Config key '%s' missing in checkpoint or current config. Skipping check.", key)
+                    continue
+
+                # Normalise values to lists for comparison to handle both scalars and tuples/lists
+                # e.g. NUM_CLASSES (int) -> [3], ISO_SPACING (tuple) -> [1.0, 1.0, 1.0]
+                def to_list(val):
+                    if isinstance(val, (list, tuple)):
+                        return list(val)
+                    else:
+                        return [val]
+
+                if to_list(ckpt_val) != to_list(curr_val):
+                    logger.warning(
+                        "Config mismatch detected for '%s': Checkpoint=%s, Current=%s. "
+                        "This may cause errors if architecture or preprocessing differs.",
+                        key, ckpt_val, curr_val
+                    )
+                else:
+                    logger.debug("Config match for '%s': %s", key, curr_val)
 
         # Initialise model architecture matching training
+        # Ensure get_model() uses the current config to build the right architecture
         self.model = get_model().to(self.device)
 
         self.model.load_state_dict(checkpoint["model_state_dict"])
