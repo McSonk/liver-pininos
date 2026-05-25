@@ -13,14 +13,14 @@ import torch
 from monai.data import DataLoader, Dataset, decollate_batch
 from monai.inferers import SlidingWindowInferer
 from monai.metrics import DiceMetric, HausdorffDistanceMetric
-from monai.networks.nets import UNet
-from monai.transforms import (Activations, AsDiscrete, Compose,
-                              CropForegroundd, EnsureTyped, LoadImaged,
-                              Orientationd, ScaleIntensityRanged, Spacingd,
-                              SpatialPadd)
-from monai.utils import set_determinism
 
 from idssp.sonk import config
+from idssp.sonk.model.models import get_model
+from idssp.sonk.model.transforms import (get_activations_transforms,
+                                         get_deterministic_transforms,
+                                         get_label_transform,
+                                         get_random_transforms,
+                                         get_validation_transforms)
 from idssp.sonk.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -31,7 +31,7 @@ class TestEvaluator:
     and result export for test datasets.
     """
     def __init__(self, checkpoint_path: str):
-        self.config = config.init()
+        self.config = config.get()
         self.device = torch.device(self.config.DEVICE)
         self.checkpoint_path = Path(checkpoint_path)
         self.model = None
@@ -40,11 +40,8 @@ class TestEvaluator:
         self.pred_postprocess = None
 
          # EXACT post-processing used in training.py
-        self.pred_transform = Compose([
-            Activations(softmax=True),
-            AsDiscrete(argmax=True, to_onehot=self.config.NUM_CLASSES)
-        ])
-        self.label_transform = AsDiscrete(to_onehot=self.config.NUM_CLASSES)
+        self.pred_transform = get_activations_transforms(self.config)
+        self.label_transform = get_label_transform(self.config)
 
         # Metrics expect decollated lists of tensors
         self.dice_metric = DiceMetric(include_background=False, reduction="none")
@@ -52,7 +49,6 @@ class TestEvaluator:
             include_background=False, reduction="none", percentile=95.0, distance_metric="euclidean"
         )
 
-        set_determinism(seed=self.config.RANDOM_SEED)
         logger.info("TestEvaluator initialised. Device: %s", self.device)
 
     def load_checkpoint(self):
@@ -71,16 +67,7 @@ class TestEvaluator:
 
 
         # Initialise model architecture matching training
-        self.model = UNet(
-            spatial_dims=3,
-            in_channels=1,
-            out_channels=self.config.NUM_CLASSES,
-            channels=(32, 64, 128, 256),
-            strides=(2, 2, 2),
-            num_res_units=1 if config.is_limited_env() else 2,
-            norm="INSTANCE",
-            act="PRELU"
-        ).to(self.device)
+        self.model = get_model().to(self.device)
 
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.model.eval()
@@ -96,51 +83,12 @@ class TestEvaluator:
             progress=False
         )
 
-    def _get_test_transforms(self) -> Compose:
-        """
-        Deterministic preprocessing for test data.
-        Ensures image/label spatial alignment via reference-key resampling.
-        """
-        return Compose([
-            LoadImaged(keys=["image", "label"], ensure_channel_first=True),
-            Orientationd(keys=["image", "label"], axcodes="LAS"),
-            Spacingd(
-                keys=["image", "label"],
-                pixdim=self.config.ISO_SPACING,
-                mode=("bilinear", "nearest"),
-                recompute_affine=True,  # Ensure output affines are updated
-            ),
-            ScaleIntensityRanged(
-                keys=["image"],
-                a_min=self.config.HU_WINDOW_MIN,
-                a_max=self.config.HU_WINDOW_MAX,
-                b_min=0.0,
-                b_max=1.0,
-                clip=True
-            ),
-            CropForegroundd(
-                keys=["image", "label"],
-                source_key="image",
-                # Background is 0
-                select_fn=lambda x: x > 0,
-                margin=10,
-                allow_smaller=True
-            ),
-            SpatialPadd(
-                keys=["image", "label"],
-                spatial_size=self.config.TRAIN_PATCH_SIZE,
-                mode="constant",
-                value=0
-            ),
-            EnsureTyped(keys=["image", "label"])
-        ])
-
     def run_inference(self, test_files: List[Dict[str, str]]) -> pd.DataFrame:
         """
         Run full-volume inference on test dataset.
         Returns a DataFrame with per-case metrics.
         """
-        self.test_transforms = self._get_test_transforms()
+        self.test_transforms = get_validation_transforms(self.config)
         test_ds = Dataset(data=test_files, transform=self.test_transforms)
         test_dl = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=0)
 
