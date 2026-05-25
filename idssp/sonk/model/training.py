@@ -8,13 +8,7 @@ from monai.data import (CacheDataset, DataLoader, Dataset, PersistentDataset,
 from monai.inferers import SlidingWindowInferer
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
-from monai.transforms import (Activations, AsDiscrete, Compose,
-                              CropForegroundd, EnsureTyped, LoadImaged,
-                              Orientationd, RandCropByPosNegLabeld, RandFlipd,
-                              RandGaussianNoised, RandRotated,
-                              RandScaleIntensityd, RandZoomd,
-                              ScaleIntensityRanged, Spacingd, SpatialPadd,
-                              Transform)
+from monai.transforms import Compose
 from torch.amp import GradScaler, autocast
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
@@ -22,6 +16,11 @@ from torch.utils.tensorboard import SummaryWriter
 
 from idssp.sonk import config
 from idssp.sonk.model.models import get_model
+from idssp.sonk.model.transforms import (get_activations_transforms,
+                                         get_deterministic_transforms,
+                                         get_label_transform,
+                                         get_random_transforms,
+                                         get_validation_transforms)
 from idssp.sonk.utils.logger import get_logger, log_memory_usage
 from idssp.sonk.utils.notifications import send_alert
 from idssp.sonk.view.utils import log_segmentation_overlay
@@ -77,13 +76,7 @@ class ModelBuilder:
         '''This will store a fixed validation image for logging to tensorboard'''
 
         # Post-processing & Metrics
-        self.pred_trans = Compose([
-            # Apply softmax Transform to get class probabilities for each voxel
-            Activations(softmax=True),
-            # Select the class with the highest probability for each voxel
-            # and convert to one-hot encoding
-            AsDiscrete(argmax=True, to_onehot=self.config.NUM_CLASSES)
-        ])
+        self.pred_trans = get_activations_transforms(self.config)
         '''`Compose` of transforms applied to model predictions so we have
         a probability distribution [0-1] for each voxel per class (`config.NUM_CLASSES`).
         To be used in validation step.
@@ -97,7 +90,7 @@ class ModelBuilder:
            encoding format.
         '''
 
-        self.label_trans = AsDiscrete(to_onehot=self.config.NUM_CLASSES)
+        self.label_trans = get_label_transform(self.config)
         '''Transform applied to ground truth labels so they're represented as one-hot
            encoded tensors to each class before metric calculation.
            It only contains `AsDiscrete(to_onehot=self.config.NUM_CLASSES)`, which converts
@@ -143,69 +136,6 @@ class ModelBuilder:
 
         logger.info("ModelBuilder initialized. Device set to: %s", self.device)
 
-    def _get_deterministic_transforms(self) -> list[Transform]:
-        '''
-        Returns the deterministic transforms that are applied to all training samples.
-        This includes loading, orientation, resampling, and intensity scaling.
-        These transforms are applied once and can be cached when using PersistentDataset.
-        '''
-        # WARNING: If you modify the transforms and you're on a GPU environment,
-        # make sure to clear (delete) the PersistentDataset folder
-        # to avoid issues with cached data that doesn't match the new transforms.
-        return [
-            LoadImaged(keys=['image', 'label'], ensure_channel_first=True),
-
-            # Ensure consistent orientation (LAS)
-            Orientationd(keys=["image", "label"], axcodes="LAS", labels=None),
-
-            # We standardise (resample) spacing across all volumes so a tumour of a given
-            # voxel size appears at the same scale regardless of the original scan resolution.
-            Spacingd(
-                keys=["image", "label"],
-                pixdim=self.config.ISO_SPACING,
-                # bilinear (average) interpolation for CT
-                # nearest for labels to avoid creating non-integer class values
-                mode=("bilinear", "nearest")
-            ),
-
-            # Changes CT intensity scale to something more meaningful for the model
-            ScaleIntensityRanged(
-                keys=["image"],
-                # We clip the HU values to the defined liver/tumour range
-                a_min=self.config.HU_WINDOW_MIN, a_max=self.config.HU_WINDOW_MAX,
-                # We then scale that range to [0, 1] for better training stability.
-                b_min=0.0,  b_max=1.0,
-                # Values outside liver/tumour range are clipped.
-                clip=True,
-            ),
-
-            # Remove excess background to reduce memory usage and speed up training.
-            # (It effectively crops the image to a bounding box around the
-            # liver + tumour region, with a margin of 10 voxels.)
-            # THIS WILL CHANGE THE SHAPE OF THE INPUT DATA
-            # Remove on inference if fixed-size validation is needed
-            CropForegroundd(
-                keys=["image", "label"],
-                source_key="image",
-                # Background is 0
-                select_fn=lambda x: x > 0,
-                margin=10,
-                allow_smaller=True
-            ),
-
-            # After cropping foreground we might end up with volumes smaller
-            # than `config.TRAIN_PATCH_SIZE`, which will cause issues
-            # with `RandCropByPosNegLabeld`. To avoid that, we 0-pad the volumes to ensure
-            # they are at least as large as the training patch size.
-            # (it is conceptually just adding air)
-            SpatialPadd(
-                keys=["image", "label"],
-                spatial_size=self.config.TRAIN_PATCH_SIZE,
-                mode="constant",
-                value=0
-            )
-        ]
-
     def get_train_transforms(self) -> tuple[Compose, Compose]:
         '''
         Returns the transforms for the training data. Note that the result will
@@ -230,69 +160,9 @@ class ModelBuilder:
               or using CacheDataset, in which case the random transforms are included
               in the deterministic pipeline.
         '''
-        deterministic_transforms = self._get_deterministic_transforms()
+        deterministic_transforms = get_deterministic_transforms(self.config)
 
-        random_transforms = [
-            # Sample patches with a given ratio of positive (tumor/liver) and
-            # negative (background) examples.
-            # This is because of voxel imbalance. (we want to maximise the likelihood
-            # of sampling tumour voxels, which are the most important to learn,
-            # while still including some negative samples to learn the background)
-            RandCropByPosNegLabeld(
-                keys=["image", "label"],
-                label_key="label",
-                spatial_size=self.config.TRAIN_PATCH_SIZE,
-                pos=2,
-                neg=1,
-                # number of samples to generate per volume
-                num_samples=self.config.RAND_CROP_NUM_SAMPLES,
-                image_key="image",
-                # Negative samples are taken on tissue ( HU > 0). Used with image_key
-                image_threshold=0,
-            ),
-
-            # Randomly flip the image and label horizontally, vertically and
-            # depth-wise with a 50% chance each to augment the data and improve generalization.
-            # NOTE: Liver sits always on the left side of the image.
-            # Flipping along x-axis would create unrealistic samples.
-            # RandFlipd(keys=["image", "label"], spatial_axis=0, prob=0.5),
-            RandFlipd(keys=["image", "label"], spatial_axis=1, prob=0.5),
-            RandFlipd(keys=["image", "label"], spatial_axis=2, prob=0.5),
-            # TODO: study this
-            # Intensity augmentations: simulate CT scanner noise & protocol variations
-            # Applied post-normalisation ([0,1] range) to act as implicit regularisers
-            # and improve generalisation across heterogeneous clinical scanners.
-            RandGaussianNoised(
-                keys=["image"],
-                mean=0.0,
-                std=0.010,      # ~1.0% of the [0, 1] normalised range
-                prob=0.10
-            ),
-            RandScaleIntensityd(
-                keys=["image"],
-                factors=0.05,    # ±5% intensity variation
-                prob=0.10
-            ),
-            RandRotated(
-                keys=["image", "label"],
-                range_x=0.2, range_y=0.2, range_z=0.2,
-                prob=0.3,
-                mode=("bilinear", "nearest"),
-                padding_mode=("zeros", "zeros")
-            ),
-            RandZoomd(
-                keys=["image", "label"], 
-                prob=0.3, 
-                min_zoom=0.9, 
-                max_zoom=1.1,
-                mode=["trilinear", "nearest"]
-            ),
-            # Converts data to PyTorch tensors
-            EnsureTyped(keys=["image"]),
-            # Labels must be long for the loss function
-            # (Sometimes it is loaded as float)
-            EnsureTyped(keys=["label"], dtype=torch.long),
-        ]
+        random_transforms = get_random_transforms(self.config)
 
         if config.is_limited_env():
             logger.debug("Using random crop in main transform pipeline for limited "
@@ -304,33 +174,6 @@ class ModelBuilder:
             random_transforms = []  # No separate random transforms needed
 
         return Compose(deterministic_transforms), Compose(random_transforms)
-
-    def get_val_transforms(self) -> Compose:
-        '''Returns the transforms for the validation data.'''
-        compose_list = self._get_deterministic_transforms()
-
-        if config.is_limited_env():
-            logger.warning("Validation transforms: Using random crop for limited environment.")
-            compose_list.extend([
-                # On limited GPU or CPU we apply cropping so we don't overload memory.
-                # ByPosNeg to make sure we have some positive examples in the validation set
-                RandCropByPosNegLabeld(
-                    keys=["image", "label"],
-                    label_key="label",
-                    spatial_size=self.config.VAL_PATCH_SIZE,
-                    pos=1,
-                    neg=0,
-                    num_samples=1,
-                    image_key="image",
-                    image_threshold=0,
-                )
-            ])
-
-        compose_list.extend([
-            EnsureTyped(keys=["image"]),
-            EnsureTyped(keys=["label"], dtype=torch.long),
-        ])
-        return Compose(compose_list)
 
     def init_data_loaders(self, train_files: list, val_files: list):
         '''
@@ -363,7 +206,7 @@ class ModelBuilder:
             logger.debug("  %2d. %s", i, t.__class__.__name__)
 
         logger.debug("Creating validation transforms object...")
-        val_transforms = self.get_val_transforms()
+        val_transforms = get_validation_transforms(self.config)
 
         logger.debug("Validation transforms (%d steps):", len(val_transforms.transforms))
         for i, t in enumerate(val_transforms.transforms, 1):

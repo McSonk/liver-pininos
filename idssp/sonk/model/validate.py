@@ -13,14 +13,12 @@ import torch
 from monai.data import DataLoader, Dataset, decollate_batch
 from monai.inferers import SlidingWindowInferer
 from monai.metrics import DiceMetric, HausdorffDistanceMetric
-from monai.networks.nets import UNet
-from monai.transforms import (Activations, AsDiscrete, Compose,
-                              CropForegroundd, EnsureTyped, LoadImaged,
-                              Orientationd, ScaleIntensityRanged, Spacingd,
-                              SpatialPadd)
-from monai.utils import set_determinism
 
 from idssp.sonk import config
+from idssp.sonk.model.models import get_model
+from idssp.sonk.model.transforms import (get_activations_transforms,
+                                         get_label_transform,
+                                         get_validation_transforms)
 from idssp.sonk.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -31,7 +29,7 @@ class TestEvaluator:
     and result export for test datasets.
     """
     def __init__(self, checkpoint_path: str):
-        self.config = config.init()
+        self.config = config.get()
         self.device = torch.device(self.config.DEVICE)
         self.checkpoint_path = Path(checkpoint_path)
         self.model = None
@@ -40,11 +38,8 @@ class TestEvaluator:
         self.pred_postprocess = None
 
          # EXACT post-processing used in training.py
-        self.pred_transform = Compose([
-            Activations(softmax=True),
-            AsDiscrete(argmax=True, to_onehot=self.config.NUM_CLASSES)
-        ])
-        self.label_transform = AsDiscrete(to_onehot=self.config.NUM_CLASSES)
+        self.pred_transform = get_activations_transforms(self.config)
+        self.label_transform = get_label_transform(self.config)
 
         # Metrics expect decollated lists of tensors
         self.dice_metric = DiceMetric(include_background=False, reduction="none")
@@ -52,7 +47,6 @@ class TestEvaluator:
             include_background=False, reduction="none", percentile=95.0, distance_metric="euclidean"
         )
 
-        set_determinism(seed=self.config.RANDOM_SEED)
         logger.info("TestEvaluator initialised. Device: %s", self.device)
 
     def load_checkpoint(self):
@@ -64,23 +58,40 @@ class TestEvaluator:
         checkpoint = torch.load(self.checkpoint_path, map_location=self.device, weights_only=True)
 
         if "config_snapshot" in checkpoint:
-            for key in ["NUM_CLASSES", "ISO_SPACING", "HU_WINDOW_MIN", "HU_WINDOW_MAX"]:
-                if tuple(checkpoint["config_snapshot"].get(key, [])) != tuple(getattr(self.config, key)):
-                    logger.warning("Config mismatch: %s (ckpt=%s, current=%s)",
-                                key, checkpoint["config_snapshot"].get(key), getattr(self.config, key))
+            ckpt_config = checkpoint["config_snapshot"]
+            curr_config = self.config
 
+            # Keys to verify for consistency between training and inference
+            keys_to_check = ["NUM_CLASSES", "ISO_SPACING", "HU_WINDOW_MIN", "HU_WINDOW_MAX"]
+
+            for key in keys_to_check:
+                ckpt_val = ckpt_config.get(key)
+                curr_val = getattr(curr_config, key, None)
+
+                if ckpt_val is None or curr_val is None:
+                    logger.warning("Config key '%s' missing in checkpoint or current config. Skipping check.", key)
+                    continue
+
+                # Normalise values to lists for comparison to handle both scalars and tuples/lists
+                # e.g. NUM_CLASSES (int) -> [3], ISO_SPACING (tuple) -> [1.0, 1.0, 1.0]
+                def to_list(val):
+                    if isinstance(val, (list, tuple)):
+                        return list(val)
+                    else:
+                        return [val]
+
+                if to_list(ckpt_val) != to_list(curr_val):
+                    logger.warning(
+                        "Config mismatch detected for '%s': Checkpoint=%s, Current=%s. "
+                        "This may cause errors if architecture or preprocessing differs.",
+                        key, ckpt_val, curr_val
+                    )
+                else:
+                    logger.debug("Config match for '%s': %s", key, curr_val)
 
         # Initialise model architecture matching training
-        self.model = UNet(
-            spatial_dims=3,
-            in_channels=1,
-            out_channels=self.config.NUM_CLASSES,
-            channels=(32, 64, 128, 256),
-            strides=(2, 2, 2),
-            num_res_units=1 if config.is_limited_env() else 2,
-            norm="INSTANCE",
-            act="PRELU"
-        ).to(self.device)
+        # Ensure get_model() uses the current config to build the right architecture
+        self.model = get_model().to(self.device)
 
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.model.eval()
@@ -96,51 +107,12 @@ class TestEvaluator:
             progress=False
         )
 
-    def _get_test_transforms(self) -> Compose:
-        """
-        Deterministic preprocessing for test data.
-        Ensures image/label spatial alignment via reference-key resampling.
-        """
-        return Compose([
-            LoadImaged(keys=["image", "label"], ensure_channel_first=True),
-            Orientationd(keys=["image", "label"], axcodes="LAS"),
-            Spacingd(
-                keys=["image", "label"],
-                pixdim=self.config.ISO_SPACING,
-                mode=("bilinear", "nearest"),
-                recompute_affine=True,  # Ensure output affines are updated
-            ),
-            ScaleIntensityRanged(
-                keys=["image"],
-                a_min=self.config.HU_WINDOW_MIN,
-                a_max=self.config.HU_WINDOW_MAX,
-                b_min=0.0,
-                b_max=1.0,
-                clip=True
-            ),
-            CropForegroundd(
-                keys=["image", "label"],
-                source_key="image",
-                # Background is 0
-                select_fn=lambda x: x > 0,
-                margin=10,
-                allow_smaller=True
-            ),
-            SpatialPadd(
-                keys=["image", "label"],
-                spatial_size=self.config.TRAIN_PATCH_SIZE,
-                mode="constant",
-                value=0
-            ),
-            EnsureTyped(keys=["image", "label"])
-        ])
-
     def run_inference(self, test_files: List[Dict[str, str]]) -> pd.DataFrame:
         """
         Run full-volume inference on test dataset.
         Returns a DataFrame with per-case metrics.
         """
-        self.test_transforms = self._get_test_transforms()
+        self.test_transforms = get_validation_transforms(self.config)
         test_ds = Dataset(data=test_files, transform=self.test_transforms)
         test_dl = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=0)
 
