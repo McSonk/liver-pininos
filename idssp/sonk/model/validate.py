@@ -55,7 +55,12 @@ def _post_process_class_map(pred_np: np.ndarray) -> np.ndarray:
     result[(result == 1) & (liver_lcc == 0)] = 0
 
     # 3. Remove tumour outside retained liver
-    result[(result == 2) & (liver_lcc == 0)] = 0
+    # Tumour voxels are labelled as class 2, not class 1, so they are NOT
+    # included in liver_lcc. We must build the retention mask from both
+    # the retained liver (liver_lcc) AND any predicted tumour voxels,
+    # since anatomically tumours reside inside the liver.
+    anatomical_liver_region = (liver_lcc == 1) | (result == 2)
+    result[(result == 2) & ~anatomical_liver_region] = 0
 
     liver_voxels_before = (pred_np == 1).sum()
     liver_voxels_after = liver_lcc.sum()
