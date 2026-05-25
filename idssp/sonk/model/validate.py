@@ -17,9 +17,7 @@ from monai.metrics import DiceMetric, HausdorffDistanceMetric
 from idssp.sonk import config
 from idssp.sonk.model.models import get_model
 from idssp.sonk.model.transforms import (get_activations_transforms,
-                                         get_deterministic_transforms,
                                          get_label_transform,
-                                         get_random_transforms,
                                          get_validation_transforms)
 from idssp.sonk.utils.logger import get_logger
 
