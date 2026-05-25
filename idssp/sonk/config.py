@@ -125,6 +125,7 @@ class Config:
     CT_ROOT: Path = field(default_factory=Path)
     CT_TEST: Path = field(default_factory=Path)
     OUTPUT_DIR: Path = field(default_factory=Path)
+    RUN_DIR: Path = field(default_factory=Path)
     CHECKPOINT_DIR: Path = field(default_factory=Path)
     LOG_DIR: Path = field(default_factory=Path)
     TENSORBOARD_DIR: Path = field(default_factory=Path)
@@ -379,9 +380,10 @@ def init(verbose: bool = False) -> Config:
     per_case_train_stats_file = train_stats_dir / "per_case_summary.csv"
     persistent_dataset_dir = Path(persistent_dataset_dir_str) if persistent_dataset_dir_str else None
 
-    checkpoint_dir = output_dir / f"{VERSION_STR}-{run_id}" / "checkpoints"
-    log_dir = output_dir / f"{VERSION_STR}-{run_id}" / "logs"
-    tensorboard_dir = output_dir / f"{VERSION_STR}-{run_id}" / "tensorboard"
+    run_dir = output_dir / f"{VERSION_STR}-{run_id}"
+    checkpoint_dir = run_dir / "checkpoints"
+    log_dir = run_dir / "logs"
+    tensorboard_dir = run_dir / "tensorboard"
 
     if device == "cuda" and (not use_cache_train_dataset or not use_cache_val_dataset):
         if persistent_dataset_dir is None:
@@ -491,6 +493,7 @@ def init(verbose: bool = False) -> Config:
         NUM_CLASSES=num_classes,
         DICE_CE_WEIGHTS=dice_ce_weights,
         OUTPUT_DIR=output_dir,
+        RUN_DIR=run_dir,
         CHECKPOINT_DIR=checkpoint_dir,
         LOG_DIR=log_dir,
         TENSORBOARD_DIR=tensorboard_dir,
@@ -614,6 +617,7 @@ def to_dict() -> dict:
         "CT_ROOT": str(config.CT_ROOT),
         "CT_TEST": str(config.CT_TEST),
         "OUTPUT_DIR": str(config.OUTPUT_DIR),
+        "RUN_DIR": str(config.RUN_DIR),
         "CHECKPOINT_DIR": str(config.CHECKPOINT_DIR),
         "TENSORBOARD_DIR": str(config.TENSORBOARD_DIR),
         "PERSISTENT_DATASET_DIR": str(config.PERSISTENT_DATASET_DIR) if config.PERSISTENT_DATASET_DIR else None,
@@ -646,7 +650,13 @@ def to_param_dict() -> dict:
         "ENV",
         "DEVICE",
         "CT_ROOT",
+        "CT_TEST",
+        "LOG_LEVEL_CONSOLE",
+        "LOG_LEVEL_FILE",
+        "cpu_memory",
+        "container_memory",
         "OUTPUT_DIR",
+        "RUN_DIR",
         "CHECKPOINT_DIR",
         "TENSORBOARD_DIR",
         "PERSISTENT_DATASET_DIR",

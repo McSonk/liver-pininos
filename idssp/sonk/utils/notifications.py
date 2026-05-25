@@ -280,8 +280,20 @@ def send_final_alert(title: str, message: str) -> None:
                 timeout=30.0
             )
         # End if-else archive size
+    except FileNotFoundError as e:
+        logger.error("Failed to create archive for final alert: %s", e)
+        # Send alert without attachment, including error note
+        error_message = f"{message}\n\nNote: Failed to create run archive for attachment."
+        send_alert(
+            title,
+            error_message,
+            sync=True,
+            timeout=30.0
+        )
+        raise
     except Exception as e:
         logger.error("Failed to create or send archive: %s", e)
+        raise
 
 def _create_run_archive(config_object: config.Config) -> Path:
     """
@@ -297,17 +309,10 @@ def _create_run_archive(config_object: config.Config) -> Path:
     `str`
         Path to the created archive.
     """
-    output_dir = config_object.OUTPUT_DIR
-    run_id = config_object.RUN_ID
-    run_dir = output_dir / run_id
-
-    if not run_dir.exists() and not output_dir.exists():
+    if not config_object.RUN_DIR.exists():
         raise FileNotFoundError(
-            f"Run directory ({run_dir}) doesn't exist."
+            f"Run directory ({config_object.RUN_DIR}) doesn't exist."
         )
-
-    archive_root = run_dir
-    archive_name_base = run_id
 
     # Choose archive format based on platform
     # gztar on POSIX, zip on Windows for portability
@@ -316,16 +321,14 @@ def _create_run_archive(config_object: config.Config) -> Path:
     else:
         archive_format = "gztar"
 
-    archive_base_path = output_dir / archive_name_base
-
-    # Ensure parent directory exists
-    archive_base_path.parent.mkdir(parents=True, exist_ok=True)
-
     # Create the archive
     created_path = shutil.make_archive(
-        str(archive_base_path),  # Base name (extension added by make_archive)
+        # Full path to the archive file and archive name (without extension)
+        str(config_object.RUN_DIR.parent / config_object.RUN_DIR.name),
+        # extension (zip or tar.gz) is determined by the format
         archive_format,
-        root_dir=str(archive_root),
+        # The directory that we want to archive (the entire run output)
+        root_dir=str(config_object.RUN_DIR),
     )
 
     final_path = Path(created_path)
