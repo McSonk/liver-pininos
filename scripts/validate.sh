@@ -27,27 +27,32 @@ LOG_FILE="${LOG_DIR}/test_${TIMESTAMP}.log"
 TMUX_SESSION_PREFIX="thesis_test"
 
 # ==============================================================================
-# ARGUMENTS
+# ARGUMENTS (Single pass-through parser)
 # ==============================================================================
 
 # Default values
 CHECKPOINT_PATH=""
-POST_PROCESS_FLAG=""
+ARGS_FOR_PYTHON=()
 
 # Parse arguments passed to this script
 while [[ "$#" -gt 0 ]]; do
     case $1 in
-        --checkpoint) CHECKPOINT_PATH="$2"; shift ;;
-        --post-process) POST_PROCESS_FLAG="--post-process" ;;
-        --verbose) VERBOSE_FLAG="--verbose" ;;
-        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+        --checkpoint|-chk)
+            CHECKPOINT_PATH="$2"
+            ARGS_FOR_PYTHON+=("$1" "$2")
+            shift 2
+            ;;
+        *)
+            # Pass any other argument directly to Python
+            ARGS_FOR_PYTHON+=("$1")
+            shift
+            ;;
     esac
-    shift
 done
 
 if [ -z "$CHECKPOINT_PATH" ]; then
     echo "Error: --checkpoint is required."
-    echo "Usage: ./run_test.sh --checkpoint /path/to/model.pth [--post-process]"
+    echo "Usage: ./run_test.sh --checkpoint /path/to/model.pth [--post-process] [--verbose]"
     exit 1
 fi
 
@@ -77,7 +82,7 @@ else
     exit 1
 fi
 
-# 4. Cleanup old sessions (Optional but recommended)
+# 4. Cleanup old sessions
 echo "Cleaning up old thesis test sessions..."
 if command -v tmux >/dev/null 2>&1; then
     { tmux list-sessions -F "#{session_name}" 2>/dev/null | grep "^${TMUX_SESSION_PREFIX}_" || true; } | while read -r session; do
@@ -94,7 +99,7 @@ if command -v tmux &> /dev/null; then
     CMD="cd \"${PROJECT_DIR}\" && \
         export CUDA_DEVICE_ORDER=\"${CUDA_DEVICE_ORDER}\" CUDA_VISIBLE_DEVICES=\"${CUDA_VISIBLE_DEVICES}\" && \
         . \"${VENV_DIR}/bin/activate\" && \
-        python -u do_test.py --checkpoint \"${CHECKPOINT_PATH}\" ${POST_PROCESS_FLAG} ${VERBOSE_FLAG:-} 2>&1 | tee \"${LOG_FILE}\""
+        python -u do_test.py ${ARGS_FOR_PYTHON[@]} 2>&1 | tee \"${LOG_FILE}\""
 
     # Start the session
     tmux new-session -d -s "$SESSION" "$CMD"
@@ -105,7 +110,7 @@ if command -v tmux &> /dev/null; then
     echo "Graceful stop:       tmux send-keys -t ${SESSION} C-c"
 else
     echo "tmux not found. Falling back to nohup..."
-    nohup python -u do_test.py --checkpoint "${CHECKPOINT_PATH}" ${POST_PROCESS_FLAG} ${VERBOSE_FLAG:-} > "${LOG_FILE}" 2>&1 &
+    nohup python -u do_test.py ${ARGS_FOR_PYTHON[@]} > "${LOG_FILE}" 2>&1 &
     echo "Test evaluation started in background (PID: $!)"
     echo "Follow logs live:    tail -f ${LOG_FILE}"
     echo "Graceful stop:       kill $!"
