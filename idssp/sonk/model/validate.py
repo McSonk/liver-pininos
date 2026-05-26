@@ -40,30 +40,43 @@ def _post_process_class_map(pred_np: np.ndarray) -> np.ndarray:
     """
     result = pred_np.copy()
 
-    # 1. Keep largest liver component
+    # 1. Identify the largest connected component of the liver (class 1)
     liver_mask = (result == 1).astype(np.uint8)
-    labelled, num = ndimage.label(liver_mask)
+    labelled_liver, num_liver = ndimage.label(liver_mask)
 
-    if num > 0:
-        sizes = ndimage.sum(liver_mask, labelled, range(1, num + 1))
-        largest_label = np.argmax(sizes) + 1  # +1 because label 0 is background
-        liver_lcc = (labelled == largest_label).astype(np.uint8)
+    if num_liver > 0:
+        sizes = ndimage.sum(liver_mask, labelled_liver, range(1, num_liver + 1))
+        largest_liver_label = np.argmax(sizes) + 1
+        liver_lcc = (labelled_liver == largest_liver_label)
     else:
-        liver_lcc = np.zeros_like(liver_mask)
+        liver_lcc = np.zeros_like(liver_mask, dtype=bool)
 
-    # 2. Replace liver with LCC
-    result[(result == 1) & (liver_lcc == 0)] = 0
+    # 2. Remove stray liver voxels
+    result[(result == 1) & ~liver_lcc] = 0
 
-    # 3. Remove tumour outside retained liver
-    # Tumour voxels are labelled as class 2, not class 1, so they are NOT
-    # included in liver_lcc. We must build the retention mask from both
-    # the retained liver (liver_lcc) AND any predicted tumour voxels,
-    # since anatomically tumours reside inside the liver.
-    anatomical_liver_region = (liver_lcc == 1) | (result == 2)
-    result[(result == 2) & ~anatomical_liver_region] = 0
+    # 3. Retain only tumours connected to the main liver component
+    # We create a combined mask and find which connected component contains the main liver.
+    anatomical_mask = ((result == 1) | (result == 2)).astype(np.uint8)
+    labelled_anat, num_anat = ndimage.label(anatomical_mask)
 
+    if num_anat > 0 and liver_lcc.any():
+        # Find the anatomical label that overlaps most with the retained liver
+        anat_labels_in_liver = labelled_anat[liver_lcc]
+        valid_labels = anat_labels_in_liver[anat_labels_in_liver > 0]
+        if len(valid_labels) > 0:
+            main_anat_label = np.bincount(valid_labels).argmax()
+            main_anat_mask = (labelled_anat == main_anat_label)
+        else:
+            main_anat_mask = liver_lcc
+    else:
+        main_anat_mask = liver_lcc
+
+    # Remove tumours outside this main anatomical component
+    result[(result == 2) & ~main_anat_mask] = 0
+
+    # 4. Warning logic for fragmented predictions
     liver_voxels_before = (pred_np == 1).sum()
-    liver_voxels_after = liver_lcc.sum()
+    liver_voxels_after = (result == 1).sum()
     if liver_voxels_before > 0 and liver_voxels_after / liver_voxels_before < 0.5:
         logger.warning(
             "LCC post-processing discarded %.1f%% of predicted liver voxels. "
