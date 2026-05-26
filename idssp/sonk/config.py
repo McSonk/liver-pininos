@@ -12,7 +12,7 @@ import psutil
 import torch
 from dotenv import load_dotenv
 
-VERSION_STR = "2.2"
+VERSION_STR = "2.3"
 '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
 
 class AvailableModels(str, Enum):
@@ -22,6 +22,7 @@ class AvailableModels(str, Enum):
     """
     U_NET = "u-net"
     SEG_RES_NET = "seg-res-net"
+    SWIN_UNETR = "swin-unetr"
 
 @dataclass(frozen=True)
 class Config:
@@ -41,7 +42,7 @@ class Config:
     VERSION: str = VERSION_STR
     '''Version of the training pipeline (and its config) to keep track of changes
        and experiments.'''
-    MODEL: AvailableModels = AvailableModels.SEG_RES_NET
+    MODEL: AvailableModels = AvailableModels.SWIN_UNETR
     '''The model architecture to use. Choose from the AvailableModels enum.'''
 
     # Preprocessing
@@ -112,6 +113,7 @@ class Config:
        is higher to emphasise learning the tumour class. For example, for `NUM_CLASSES=3`
        and `TUMOUR_CLASS_INDEX=2`'''
     LEARNING_RATE: float = 1e-4
+    SLIDING_WINDOW_BATCH_SIZE: int = 4
 
     # Early Stopping
     EARLY_STOPPING_PATIENCE: int = 35
@@ -219,9 +221,10 @@ def init(verbose: bool = False) -> Config:
         "cache_num_workers": 8 if lots_of_ram else 1,
         "dl_num_workers": min(gpu_num_workers, cpu_count),
         "pin_memory": True,
-        "batch_size": 4 if hc_gpu else 2,
+        # TODO: configure batch_size and train_patch_size based on model and flags
+        "batch_size": 2 if hc_gpu else 1,
         "num_epochs": 200 if hc_gpu else 5,
-        "train_patch_size": (128, 128, 128) if hc_gpu else (64, 64, 64),
+        "train_patch_size": (96, 96, 96) if hc_gpu else (64, 64, 64),
         # Not used but kept for config/logging consistency
         "val_patch_size": (128, 128, 128),
         "iso_spacing": (1.0, 1.0, 1.0) if hc_gpu else (1.5, 1.5, 1.5),
@@ -609,6 +612,7 @@ def to_dict() -> dict:
         "NUM_CLASSES": config.NUM_CLASSES,
         "DICE_CE_WEIGHTS": config.DICE_CE_WEIGHTS,
         "TUMOUR_CLASS_INDEX": config.TUMOUR_CLASS_INDEX,
+        "SLIDING_WINDOW_BATCH_SIZE": config.SLIDING_WINDOW_BATCH_SIZE,
 
         # Early Stopping
         "EARLY_STOPPING_PATIENCE": config.EARLY_STOPPING_PATIENCE,
