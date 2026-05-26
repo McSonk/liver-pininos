@@ -75,9 +75,14 @@ def get_swin_unetr(config_obj: config.Config) -> SwinUNETR:
        is defined by the MONAI library's SwinUNETR implementation, with parameters
        set according to the current configuration.'''
     logger.info("Creating SwinUNETR model with %d output classes.", config_obj.NUM_CLASSES)
-    if config_obj.TRAIN_PATCH_SIZE[0] % 32 != 0:
-        raise ValueError("TRAIN_PATCH_SIZE must be divisible by 32 for SwinUNETR "
-                         "due to the architecture's downsampling steps.")
+    train_patch_size = config_obj.TRAIN_PATCH_SIZE
+    if len(train_patch_size) != 3:
+        raise ValueError("TRAIN_PATCH_SIZE must contain exactly 3 spatial dimensions "
+                         f"for SwinUNETR, got {train_patch_size}.")
+    if any(dim % 32 != 0 for dim in train_patch_size):
+        raise ValueError("All TRAIN_PATCH_SIZE dimensions must be divisible by 32 "
+                         f"for SwinUNETR due to the architecture's downsampling "
+                         f"steps, got {train_patch_size}.")
     # We explicitly define feature_size=48 (the "large" variant for better performance)
     # but leave depths, num_heads, patch_size, and window_size to MONAI's defaults.
     spatial_dims=3
