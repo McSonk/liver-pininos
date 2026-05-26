@@ -349,7 +349,7 @@ class ModelBuilder:
                 # MUST be the same as the training patch size
                 roi_size=self.config.TRAIN_PATCH_SIZE,
                 # Process 16 patches in parallel
-                sw_batch_size=16,
+                sw_batch_size=self.config.SLIDING_WINDOW_BATCH_SIZE,
                 # Generate overlapping patches (reduces the step size)
                 # to smooth out predictions at patch borders
                 # (25% is a common choice, but 50% can further reduce border
@@ -363,7 +363,20 @@ class ModelBuilder:
                 # The process will be run via jobs, so progress bar won't be watched anyway
                 progress=False
             )
-            logger.debug("Using SlidingWindowInferer for full-volume inference")
+            logger.debug("Using SlidingWindowInferer for full-volume inference"
+                         "with params: "
+                         "roi_size=%s, "
+                         "sw_batch_size=%d, "
+                         "overlap=%.2f, "
+                         "mode=%s, "
+                         "device=%s, "
+                         "progress=%s",
+                         self.config.TRAIN_PATCH_SIZE,
+                         self.config.SLIDING_WINDOW_BATCH_SIZE,
+                         0.5,
+                         "gaussian",
+                         self.device,
+                         False)
 
         logger.info("Model initialized on %s", self.device)
         logger.info("Optimizer: AdamW | LR: %f | Weight Decay: 1e-5", self.config.LEARNING_RATE)

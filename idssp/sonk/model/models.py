@@ -1,5 +1,5 @@
 import torch.nn as nn
-from monai.networks.nets import SegResNet, UNet
+from monai.networks.nets import SegResNet, SwinUNETR, UNet
 
 from idssp.sonk import config
 from idssp.sonk.utils.logger import get_logger
@@ -70,12 +70,62 @@ def get_seg_res_net(config_obj: config.Config) -> SegResNet:
         act=act,
     )
 
+def get_swin_unetr(config_obj: config.Config) -> SwinUNETR:
+    '''Creates a 3D SwinUNETR model for medical image segmentation. The architecture
+       is defined by the MONAI library's SwinUNETR implementation, with parameters
+       set according to the current configuration.'''
+    logger.info("Creating SwinUNETR model with %d output classes.", config_obj.NUM_CLASSES)
+    train_patch_size = config_obj.TRAIN_PATCH_SIZE
+    if len(train_patch_size) != 3:
+        raise ValueError("TRAIN_PATCH_SIZE must contain exactly 3 spatial dimensions "
+                         f"for SwinUNETR, got {train_patch_size}.")
+    if any(dim % 32 != 0 for dim in train_patch_size):
+        raise ValueError("All TRAIN_PATCH_SIZE dimensions must be divisible by 32 "
+                         f"for SwinUNETR due to the architecture's downsampling "
+                         f"steps, got {train_patch_size}.")
+    # We explicitly define feature_size=48 (the "large" variant for better performance)
+    # but leave depths, num_heads, patch_size, and window_size to MONAI's defaults.
+    spatial_dims=3
+    in_channels=1
+    feature_size=48
+    # CRITICAL: Trades ~20% compute time for ~40% VRAM savings
+    use_checkpoint=True
+    norm_name="instance"
+
+    logger.debug("SwinUNETR architecture parameters: "
+                 "Spatial Dims: %d, "
+                 "In Channels: %d, "
+                 "Out Channels: %s, "
+                 "Feature Size: %d, "
+                 "Use Checkpoint: %s, "
+                 "Norm Name: %s",
+                 spatial_dims,
+                 in_channels,
+                 config_obj.NUM_CLASSES,
+                 feature_size,
+                 use_checkpoint,
+                 norm_name
+                )
+    model = SwinUNETR(
+        spatial_dims=spatial_dims,
+        in_channels=in_channels,
+        out_channels=config_obj.NUM_CLASSES,
+        feature_size=feature_size,
+        use_checkpoint=use_checkpoint,
+        norm_name=norm_name,
+    )
+
+    return model
+
 def get_model() -> nn.Module:
-    '''Factory function to create the segmentation model based on the current configuration.'''
+    '''Factory function to create the segmentation model based
+       on the current configuration.'''
     cfg = config.get()
     if cfg.MODEL == config.AvailableModels.U_NET:
         return get_unet(cfg)
     elif cfg.MODEL == config.AvailableModels.SEG_RES_NET:
         return get_seg_res_net(cfg)
+    elif cfg.MODEL == config.AvailableModels.SWIN_UNETR:
+        return get_swin_unetr(cfg)
     else:
         raise ValueError(f"Unsupported model type: {cfg.MODEL}")

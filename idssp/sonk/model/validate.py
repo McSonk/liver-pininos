@@ -167,7 +167,7 @@ class TestEvaluator:
         # Sliding window inferer (must match training patch size)
         self.inferer = SlidingWindowInferer(
             roi_size=self.config.TRAIN_PATCH_SIZE,
-            sw_batch_size=16,
+            sw_batch_size=self.config.SLIDING_WINDOW_BATCH_SIZE,
             overlap=0.5,
             mode="gaussian",
             device=self.device,

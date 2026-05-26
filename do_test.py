@@ -81,6 +81,8 @@ def _main(args: argparse.Namespace):
         logger.debug(file)
 
     evaluator = TestEvaluator(checkpoint, post_process)
+    # TODO: Check that the checkpoint is compatible with the current codebase 
+    # (e.g., model architecture, config)
     evaluator.load_checkpoint()
     results = evaluator.run_inference(test_files)
     evaluator.generate_report(results)
