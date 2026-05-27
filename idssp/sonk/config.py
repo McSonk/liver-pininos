@@ -12,7 +12,7 @@ import psutil
 import torch
 from dotenv import load_dotenv
 
-VERSION_STR = "2.3"
+VERSION_STR = "2.3.1"
 '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
 
 class AvailableModels(str, Enum):
@@ -197,11 +197,12 @@ def init(verbose: bool = False) -> Config:
     if hc_gpu:
         if lots_of_ram:
             print("[Config] Detected high-compute GPU and lots of RAM. Using optimal settings.")
-            gpu_num_workers = 12
+            # TODO: Make this model-aware (12 for light models)
+            gpu_num_workers = 8
         else:
             print("[Config] Detected high-compute GPU but limited RAM. Using "
                    "conservative settings.")
-            gpu_num_workers = 4
+            gpu_num_workers = 2
     else:
         print("[Config] No high-compute GPU detected. Using minimal settings for memory safety.")
         gpu_num_workers = 1
