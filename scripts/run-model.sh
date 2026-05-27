@@ -18,6 +18,21 @@ LOG_FILE="${LOG_DIR}/train_${TIMESTAMP}.log"
 
 TMUX_SESSION_PREFIX="thesis_train"
 
+# Parse optional --resume argument
+RESUME_PATH=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -r|--resume)
+            RESUME_PATH="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
 
 # 1. GPU selection
 GPU_INDEX=$(nvidia-smi --query-gpu=index,pci.bus_id --format=csv,noheader | awk -F', ' -v bus_id="$GPU_PCI_BUS" '$2 == bus_id { print $1; exit }')
@@ -50,6 +65,13 @@ if command -v tmux >/dev/null 2>&1; then
     done
 fi
 
+# Build resume argument if provided
+RESUME_ARG=""
+if [ -n "$RESUME_PATH" ]; then
+    RESUME_ARG="--resume \"$RESUME_PATH\""
+    echo "Resume mode enabled. Checkpoint: $RESUME_PATH"
+fi
+
 # 5. Launch with tmux (falls back to nohup if tmux unavailable)
 if command -v tmux &> /dev/null; then
     SESSION="${TMUX_SESSION_PREFIX}_${TIMESTAMP}"
@@ -58,7 +80,7 @@ if command -v tmux &> /dev/null; then
         "cd \"${PROJECT_DIR}\" && \
         export CUDA_DEVICE_ORDER=\"${CUDA_DEVICE_ORDER}\" CUDA_VISIBLE_DEVICES=\"${CUDA_VISIBLE_DEVICES}\" && \
         . \"${VENV_DIR}/bin/activate\" && \
-        python -u main.py 2>&1 | tee \"${LOG_FILE}\""
+        python -u main.py ${RESUME_ARG} 2>&1 | tee \"${LOG_FILE}\""
 
     echo "Training started in tmux session: ${SESSION}"
     echo "Attach to monitor:   tmux attach -t ${SESSION}"
@@ -66,7 +88,7 @@ if command -v tmux &> /dev/null; then
     echo "Graceful stop:       tmux send-keys -t ${SESSION} C-c"
 else
     echo "tmux not found. Falling back to nohup..."
-    nohup python -u main.py > "${LOG_FILE}" 2>&1 &
+    nohup python -u main.py ${RESUME_ARG} > "${LOG_FILE}" 2>&1 &
     echo "Training started in background (PID: $!)"
     echo "Follow logs live:    tail -f ${LOG_FILE}"
     echo "Graceful stop:       kill $!"

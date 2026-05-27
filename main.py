@@ -122,12 +122,22 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable fast run mode with a smaller subset of the data for quick testing",
     )
+
+    parser.add_argument(
+        "-r", "--resume",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Path to a checkpoint file (.pth) to resume training from",
+    )
+
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = _parse_args()
     verbose = args.verbose
     fast_run = args.fast_run
+    resume_path = args.resume
     cfg = config.init(verbose=verbose)
     log_environment_info(cfg)
     logger.info("Reading directories...")
@@ -180,7 +190,7 @@ if __name__ == "__main__":
 
         builder.init_model()
         logger.info("Model initialized. Starting training...")
-        builder.train()
+        builder.train(resume_path=resume_path)
     except KeyboardInterrupt:
         logger.warning("Training setup interrupted by user (Ctrl+C) before training began.")
         keyboard_title = "[Thesis] Training Interrupted by User"
