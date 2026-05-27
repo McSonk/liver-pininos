@@ -202,7 +202,7 @@ if __name__ == "__main__":
 
         builder.init_model()
         logger.info("Model initialized. Starting training...")
-        builder.train(resume_path=resume_path)
+        builder.train(resume_path=checkpoint_path)
     except KeyboardInterrupt:
         logger.warning("Training setup interrupted by user (Ctrl+C) before training began.")
         keyboard_title = "[Thesis] Training Interrupted by User"
