@@ -1,5 +1,6 @@
 import time
 from pathlib import Path
+from typing import Optional
 
 import torch
 import torch.optim as optim
@@ -432,6 +433,118 @@ class ModelBuilder:
         logger.info("Scheduler initialized: CosineAnnealingLR (T_max=%d, eta_min=%e)",
                     t_max, self.config.COSINE_ETA_MIN)
 
+    def _resume_from_checkpoint(self, checkpoint_path: str, early_stopper: 'EarlyStopper') -> None:
+        '''
+        Resumes training from a checkpoint file. Loads model weights, optimizer state,
+        scaler state, and seeds the EarlyStopper with saved metrics. Scheduler is
+        recreated and stepped to the saved epoch.
+
+        Params
+        ------
+        `checkpoint_path`: str
+            Path to the checkpoint file (.pth) to resume from.
+        `early_stopper`: EarlyStopper
+            The EarlyStopper instance to seed with saved best metrics.
+        '''
+        ckpt_path = Path(checkpoint_path)
+        if not ckpt_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+        logger.info("Loading checkpoint for resume: %s", ckpt_path)
+        checkpoint = torch.load(ckpt_path, map_location=self.device, weights_only=True)
+
+        # Load model state
+        self.model.load_state_dict(checkpoint["model_state_dict"])
+        logger.info("Model weights loaded successfully.")
+
+        # Load optimizer state if present
+        if "optimizer_state_dict" in checkpoint:
+            self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            logger.info("Optimizer state loaded.")
+
+        # Load scaler state if present
+        if checkpoint.get("scaler_state_dict") is not None and self.scaler is not None:
+            self.scaler.load_state_dict(checkpoint["scaler_state_dict"])
+            logger.info("Scaler state loaded.")
+
+        # Seed EarlyStopper with saved metrics
+        saved_epoch = checkpoint.get("epoch", 0)
+        early_stopper.best_mean_dice = checkpoint.get("best_dice", -1.0)
+        early_stopper.best_liver_dice = checkpoint.get("best_liver_dice", -1.0)
+        early_stopper.best_tumour_dice = checkpoint.get("best_tumour_dice", -1.0)
+        early_stopper.best_epoch = saved_epoch
+        logger.info(
+            "EarlyStopper seeded: best_epoch=%d, best_dice=%.4f,"
+            " best_liver_dice=%.4f, best_tumour_dice=%.4f",
+            saved_epoch,
+            early_stopper.best_mean_dice,
+            early_stopper.best_liver_dice,
+            early_stopper.best_tumour_dice
+        )
+
+        # Align scheduler by stepping to saved epoch
+        # Recreate scheduler as in init_model(), then advance it
+        warm_epochs = self.config.WARMUP_EPOCHS
+        if warm_epochs <= 0:
+            warm_epochs = 1
+        t_max = self.config.NUM_EPOCHS - self.config.WARMUP_EPOCHS
+        if t_max <= 0:
+            t_max = 1
+
+        # Re-create schedulers with current optimizer
+        warmup = LinearLR(
+            self.optimizer,
+            start_factor=0.1,
+            end_factor=1.0,
+            total_iters=warm_epochs - 1
+        )
+        cosine = CosineAnnealingLR(
+            self.optimizer,
+            T_max=t_max,
+            eta_min=self.config.COSINE_ETA_MIN
+        )
+        self.scheduler = SequentialLR(
+            self.optimizer,
+            schedulers=[warmup, cosine],
+            milestones=[self.config.WARMUP_EPOCHS]
+        )
+
+        # Step scheduler to align with saved epoch
+        for _ in range(saved_epoch + 1):
+            self.scheduler.step()
+        logger.info("Scheduler advanced to epoch %d.", saved_epoch)
+
+        # Config compatibility warning (reuse pattern from validate.py)
+        if "config_snapshot" in checkpoint:
+            ckpt_config = checkpoint["config_snapshot"]
+            curr_config = self.config
+            keys_to_check = ["NUM_CLASSES", "ISO_SPACING", "HU_WINDOW_MIN", "HU_WINDOW_MAX"]
+
+            for key in keys_to_check:
+                ckpt_val = ckpt_config.get(key)
+                curr_val = getattr(curr_config, key, None)
+
+                if ckpt_val is None or curr_val is None:
+                    logger.warning(
+                        "Config key '%s' missing in checkpoint or current config. Skipping check.",
+                        key)
+                    continue
+
+                def to_list(val):
+                    if isinstance(val, (list, tuple)):
+                        return list(val)
+                    else:
+                        return [val]
+
+                if to_list(ckpt_val) != to_list(curr_val):
+                    logger.warning(
+                        "Config mismatch detected for '%s': Checkpoint=%s, Current=%s. "
+                        "This may cause errors if architecture or preprocessing differs.",
+                        key, ckpt_val, curr_val
+                    )
+                else:
+                    logger.debug("Config match for '%s': %s", key, curr_val)
+
     def back_propagate(self, loss):
         '''
         Performs backpropagation with optional mixed precision scaling.
@@ -757,18 +870,34 @@ class ModelBuilder:
 
         return epoch_dice, liver_dice, tumour_dice
 
-    def train(self) -> None:
+    def train(self, resume_path: Optional[str] = None) -> None:
         '''
         Main training loop that iterates over epochs, performs training and validation,
         logs metrics, and handles checkpointing and early stopping.
+
+        Params
+        -----
+        `resume_path`: Optional[str]
+            Path to a checkpoint file to resume training from. If None, starts from scratch.
         '''
         early_stopper = EarlyStopper(self)
+        start_epoch = 0
+
+        # Resume from checkpoint if provided
+        # NOTE: Not other checkpoint is saved (e.g. for each epoch), so resume_path
+        # is expected to be the best checkpoint path
+        if resume_path is not None:
+            self._resume_from_checkpoint(resume_path, early_stopper)
+            start_epoch = early_stopper.best_epoch + 1
+            logger.info("Resuming training from epoch %d (checkpoint had %d epochs)",
+                        start_epoch, early_stopper.best_epoch)
+
 
         total_start_time = time.time()
         logger.info("Starting training for %d epochs...", self.config.NUM_EPOCHS)
 
         try:
-            for epoch in range(self.config.NUM_EPOCHS):
+            for epoch in range(start_epoch, self.config.NUM_EPOCHS):
                 epoch_dice, liver_dice, tumour_dice = self._run_epoch(epoch, early_stopper.best_tumour_dice)
 
                 # Returns true if the model hasn't improved for
@@ -778,8 +907,6 @@ class ModelBuilder:
             # End epoch loop
         except KeyboardInterrupt:
             logger.warning("Training interrupted by user. Saving current model...")
-            # TODO: Add a --resume flag to load the last checkpoint and continue training
-            # (This also works for broken training runs, e.g. due to OOM errors or preemption on a cluster)
             early_stopper.save_checkpoint(is_best=False, current_epoch=epoch)
             raise
 
@@ -882,6 +1009,8 @@ class EarlyStopper:
             # Counters and others for AMP
             "scaler_state_dict":
                 self.builder.scaler.state_dict() if self.builder.scaler is not None else None,
+            # early stopping state
+            "epochs_no_improve": self.epochs_no_improve,
             # Config snapshot for reproducibility (can be used to log the exact
             # config that led to the best model)
             "config_snapshot": config.to_dict(),
