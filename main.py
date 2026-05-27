@@ -2,6 +2,7 @@ print("[main.py] Importing torch... (This may take a moment)")
 import argparse
 import os
 import subprocess
+from pathlib import Path
 
 import torch
 from monai.utils import set_determinism
@@ -140,6 +141,17 @@ if __name__ == "__main__":
     resume_path = args.resume
     cfg = config.init(verbose=verbose)
     log_environment_info(cfg)
+
+    checkpoint_path = None
+
+    if resume_path:
+        logger.info("Resume path provided: %s", resume_path)
+        if not Path(resume_path).is_file():
+            logger.error("Resume checkpoint file not found: %s", resume_path)
+            raise FileNotFoundError(f"Checkpoint file not found: {resume_path}")
+        else:
+            logger.info("Checkpoint file found. Will attempt to resume training from this checkpoint.")
+            checkpoint_path = Path(resume_path)
     logger.info("Reading directories...")
     loader = DataCollector()
     loader.read_dir(cfg.CT_ROOT, ds_source='LiTS')
