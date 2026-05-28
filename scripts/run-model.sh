@@ -27,22 +27,36 @@ Launches the automated liver tumour segmentation training pipeline.
 
 Options:
   -h, --help            Display this help message and exit.
+  -v, --verbose         Enable verbose logging for debugging purposes.
+  -fr, --fast-run       Enable fast run mode with a smaller subset of the data.
   -r, --resume PATH     Resume training from an existing checkpoint file.
                         The provided file path must exist.
 
 Examples:
   $(basename "$0")
+  $(basename "$0") -v -fr
   $(basename "$0") -r /path/to/best_model.pth
 EOF
 }
 
 # Parse optional arguments
+VERBOSE_FLAG=""
+FAST_RUN_FLAG=""
 RESUME_PATH=""
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help)
             usage
             exit 0
+            ;;
+        -v|--verbose)
+            VERBOSE_FLAG="--verbose"
+            shift
+            ;;
+        -fr|--fast-run)
+            FAST_RUN_FLAG="--fast-run"
+            shift
             ;;
         -r|--resume)
             if [[ $# -lt 2 ]]; then
@@ -95,10 +109,25 @@ if command -v tmux >/dev/null 2>&1; then
     done
 fi
 
-# Build resume argument if provided
-RESUME_ARG=""
-if [ -n "$RESUME_PATH" ]; then
-    RESUME_ARG="--resume \"$RESUME_PATH\""
+# Build python arguments safely for both tmux (string) and nohup (array)
+TMUX_PY_ARGS=""
+NOHUP_PY_ARGS=()
+
+if [[ -n "$VERBOSE_FLAG" ]]; then
+    TMUX_PY_ARGS+=" --verbose"
+    NOHUP_PY_ARGS+=("--verbose")
+    echo "Verbose mode enabled."
+fi
+
+if [[ -n "$FAST_RUN_FLAG" ]]; then
+    TMUX_PY_ARGS+=" --fast-run"
+    NOHUP_PY_ARGS+=("--fast-run")
+    echo "Fast-run mode enabled."
+fi
+
+if [[ -n "$RESUME_PATH" ]]; then
+    TMUX_PY_ARGS+=" --resume \"$RESUME_PATH\""
+    NOHUP_PY_ARGS+=("--resume" "$RESUME_PATH")
     echo "Resume mode enabled. Checkpoint: $RESUME_PATH"
 fi
 
@@ -110,7 +139,7 @@ if command -v tmux &> /dev/null; then
         "cd \"${PROJECT_DIR}\" && \
         export CUDA_DEVICE_ORDER=\"${CUDA_DEVICE_ORDER}\" CUDA_VISIBLE_DEVICES=\"${CUDA_VISIBLE_DEVICES}\" && \
         . \"${VENV_DIR}/bin/activate\" && \
-        python -u main.py ${RESUME_ARG} 2>&1 | tee \"${LOG_FILE}\""
+        python -u main.py ${TMUX_PY_ARGS} 2>&1 | tee \"${LOG_FILE}\""
 
     echo "Training started in tmux session: ${SESSION}"
     echo "Attach to monitor:   tmux attach -t ${SESSION}"
@@ -127,7 +156,7 @@ if command -v tmux &> /dev/null; then
     fi
 else
     echo "tmux not found. Falling back to nohup..."
-    nohup python -u main.py ${RESUME_ARG} > "${LOG_FILE}" 2>&1 &
+    nohup python -u main.py "${NOHUP_PY_ARGS[@]}" > "${LOG_FILE}" 2>&1 &
     echo "Training started in background (PID: $!)"
     echo "Follow logs live:    tail -f ${LOG_FILE}"
     echo "Graceful stop:       kill $!"
