@@ -18,21 +18,51 @@ LOG_FILE="${LOG_DIR}/train_${TIMESTAMP}.log"
 
 TMUX_SESSION_PREFIX="thesis_train"
 
-# Parse optional --resume argument
+# Function to display help message
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Launches the automated liver tumour segmentation training pipeline.
+
+Options:
+  -h, --help            Display this help message and exit.
+  -r, --resume PATH     Resume training from an existing checkpoint file.
+                        The provided file path must exist.
+
+Examples:
+  $(basename "$0")
+  $(basename "$0") -r /path/to/best_model.pth
+EOF
+}
+
+# Parse optional arguments
 RESUME_PATH=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
         -r|--resume)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: --resume requires a file path argument." >&2
+                exit 1
+            fi
             RESUME_PATH="$2"
+            if [[ ! -f "$RESUME_PATH" ]]; then
+                echo "Error: Resume checkpoint file does not exist: $RESUME_PATH" >&2
+                exit 1
+            fi
             shift 2
             ;;
         *)
-            echo "Unknown option: $1" >&2
+            echo "Error: Unknown option: $1" >&2
+            usage
             exit 1
             ;;
     esac
 done
-
 
 # 1. GPU selection
 GPU_INDEX=$(nvidia-smi --query-gpu=index,pci.bus_id --format=csv,noheader | awk -F', ' -v bus_id="$GPU_PCI_BUS" '$2 == bus_id { print $1; exit }')
@@ -52,11 +82,11 @@ cd "$PROJECT_DIR"
 if [ -f "${VENV_DIR}/bin/activate" ]; then
     source "${VENV_DIR}/bin/activate"
 else
-    echo "Virtual environment not found at ${VENV_DIR}" >&2
+    echo "Error: Virtual environment not found at ${VENV_DIR}" >&2
     exit 1
 fi
 
-# 4 Cleanup old sessions (Optional but recommended)
+# 4. Cleanup old sessions (Optional but recommended)
 echo "Cleaning up old thesis training sessions..."
 if command -v tmux >/dev/null 2>&1; then
     { tmux list-sessions -F "#{session_name}" 2>/dev/null | grep "^${TMUX_SESSION_PREFIX}_" || true; } | while read -r session; do
@@ -86,6 +116,15 @@ if command -v tmux &> /dev/null; then
     echo "Attach to monitor:   tmux attach -t ${SESSION}"
     echo "Follow logs live:    tail -f ${LOG_FILE}"
     echo "Graceful stop:       tmux send-keys -t ${SESSION} C-c"
+    
+    # Prompt user to attach to the tmux session automatically
+    read -r -p "Do you wish to attach to the tmux session now? [Y/n] " attach_response
+    attach_response=${attach_response,,} # Convert to lowercase
+    if [[ -z "$attach_response" || "$attach_response" == "y" || "$attach_response" == "yes" ]]; then
+        tmux attach-session -t "$SESSION"
+    else
+        echo "Detached mode. Use 'tmux attach -t ${SESSION}' to connect later."
+    fi
 else
     echo "tmux not found. Falling back to nohup..."
     nohup python -u main.py ${RESUME_ARG} > "${LOG_FILE}" 2>&1 &
