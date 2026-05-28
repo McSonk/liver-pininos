@@ -433,7 +433,7 @@ class ModelBuilder:
         logger.info("Scheduler initialized: CosineAnnealingLR (T_max=%d, eta_min=%e)",
                     t_max, self.config.COSINE_ETA_MIN)
 
-    def _resume_from_checkpoint(self, checkpoint_path: str, early_stopper: 'EarlyStopper') -> None:
+    def _resume_from_checkpoint(self, checkpoint_path: Path, early_stopper: 'EarlyStopper') -> None:
         '''
         Resumes training from a checkpoint file. Loads model weights, optimizer state,
         scaler state, and seeds the EarlyStopper with saved metrics. Scheduler is
@@ -441,17 +441,13 @@ class ModelBuilder:
 
         Params
         ------
-        `checkpoint_path`: str
+        `checkpoint_path`: Path
             Path to the checkpoint file (.pth) to resume from.
         `early_stopper`: EarlyStopper
             The EarlyStopper instance to seed with saved best metrics.
         '''
-        ckpt_path = Path(checkpoint_path)
-        if not ckpt_path.exists():
-            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-
-        logger.info("Loading checkpoint for resume: %s", ckpt_path)
-        checkpoint = torch.load(ckpt_path, map_location=self.device, weights_only=True)
+        logger.info("Loading checkpoint for resume: %s", checkpoint_path)
+        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=True)
 
         # Load model state
         self.model.load_state_dict(checkpoint["model_state_dict"])
@@ -870,14 +866,14 @@ class ModelBuilder:
 
         return epoch_dice, liver_dice, tumour_dice
 
-    def train(self, resume_path: Optional[str] = None) -> None:
+    def train(self, resume_path: Optional[Path] = None) -> None:
         '''
         Main training loop that iterates over epochs, performs training and validation,
         logs metrics, and handles checkpointing and early stopping.
 
         Params
         -----
-        `resume_path`: Optional[str]
+        `resume_path`: Optional[Path]
             Path to a checkpoint file to resume training from. If None, starts from scratch.
         '''
         early_stopper = EarlyStopper(self)

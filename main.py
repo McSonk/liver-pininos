@@ -2,6 +2,7 @@ print("[main.py] Importing torch... (This may take a moment)")
 import argparse
 import os
 import subprocess
+from pathlib import Path
 
 import torch
 from monai.utils import set_determinism
@@ -140,6 +141,17 @@ if __name__ == "__main__":
     resume_path = args.resume
     cfg = config.init(verbose=verbose)
     log_environment_info(cfg)
+
+    checkpoint_path = None
+
+    if resume_path:
+        logger.info("Resume path provided: %s", resume_path)
+        if not Path(resume_path).is_file():
+            logger.error("Resume checkpoint file not found: %s", resume_path)
+            raise FileNotFoundError(f"Checkpoint file not found: {resume_path}")
+        else:
+            logger.info("Checkpoint file found. Will attempt to resume training from this checkpoint.")
+            checkpoint_path = Path(resume_path)
     logger.info("Reading directories...")
     loader = DataCollector()
     loader.read_dir(cfg.CT_ROOT, ds_source='LiTS')
@@ -148,7 +160,7 @@ if __name__ == "__main__":
     logger.debug("ISO spacing: %s", cfg.ISO_SPACING)
     logger.debug("Training patch size: %s", cfg.TRAIN_PATCH_SIZE)
     val_patch_size = getattr(cfg, "VAL_PATCH_SIZE", None)
-    if val_patch_size is not None:
+    if val_patch_size is not None and config.is_limited_env():
         logger.debug("Validation patch size: %s", val_patch_size)
     logger.debug("Batch size: %d", cfg.BATCH_SIZE)
     logger.debug("Number of epochs: %d", cfg.NUM_EPOCHS)
@@ -190,7 +202,7 @@ if __name__ == "__main__":
 
         builder.init_model()
         logger.info("Model initialized. Starting training...")
-        builder.train(resume_path=resume_path)
+        builder.train(resume_path=checkpoint_path)
     except KeyboardInterrupt:
         logger.warning("Training setup interrupted by user (Ctrl+C) before training began.")
         keyboard_title = "[Thesis] Training Interrupted by User"

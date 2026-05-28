@@ -12,7 +12,7 @@ import psutil
 import torch
 from dotenv import load_dotenv
 
-VERSION_STR = "2.3.1"
+VERSION_STR = "2.3.2"
 '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
 
 class AvailableModels(str, Enum):
@@ -56,8 +56,8 @@ class Config:
        so resampling to 1.0mm will not introduce much blurring while ensuring. However,
        there are 2 volumes with a z spacing of .5mm, so here we should be more careful.'''
 
-    TRAIN_PATCH_SIZE: tuple = (96, 96, 96)
-    VAL_PATCH_SIZE: tuple = (96, 96, 96)
+    TRAIN_PATCH_SIZE: tuple = None
+    VAL_PATCH_SIZE: tuple = None
     '''The size of the 3D patches to be extracted from the volumes for training and validation.
        (Only used in local env). NOT TO BE CONFUSED WITH `VAL_BATCH_SIZE`'''
 
@@ -225,7 +225,7 @@ def init(verbose: bool = False) -> Config:
         # TODO: configure batch_size and train_patch_size based on model and flags
         "batch_size": 2 if hc_gpu else 1,
         "num_epochs": 200 if hc_gpu else 5,
-        "train_patch_size": (96, 96, 96) if hc_gpu else (64, 64, 64),
+        "train_patch_size": (128, 128, 128) if hc_gpu else (64, 64, 64),
         # Not used but kept for config/logging consistency
         "val_patch_size": (128, 128, 128),
         "iso_spacing": (1.0, 1.0, 1.0) if hc_gpu else (1.5, 1.5, 1.5),
