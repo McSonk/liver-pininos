@@ -160,7 +160,7 @@ if __name__ == "__main__":
     logger.debug("ISO spacing: %s", cfg.ISO_SPACING)
     logger.debug("Training patch size: %s", cfg.TRAIN_PATCH_SIZE)
     val_patch_size = getattr(cfg, "VAL_PATCH_SIZE", None)
-    if val_patch_size is not None and not config.is_limited_env():
+    if val_patch_size is not None and config.is_limited_env():
         logger.debug("Validation patch size: %s", val_patch_size)
     logger.debug("Batch size: %d", cfg.BATCH_SIZE)
     logger.debug("Number of epochs: %d", cfg.NUM_EPOCHS)
