@@ -151,6 +151,12 @@ if __name__ == "__main__":
             raise FileNotFoundError(f"Checkpoint file not found: {resume_path}")
         else:
             logger.info("Checkpoint file found. Will attempt to resume training from this checkpoint.")
+            logger.info("Validation will be performed before loading:")
+            logger.info("  - Required keys (model_state_dict)")
+            logger.info("  - MODEL architecture compatibility (hard-fail on mismatch)")
+            logger.info("  - NUM_CLASSES compatibility (hard-fail on mismatch)")
+            logger.info("  - Preprocessing settings (warn on mismatch)")
+            logger.info("  - Epoch range validation")
             checkpoint_path = Path(resume_path)
     logger.info("Reading directories...")
     loader = DataCollector()
