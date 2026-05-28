@@ -56,8 +56,8 @@ class Config:
        so resampling to 1.0mm will not introduce much blurring while ensuring. However,
        there are 2 volumes with a z spacing of .5mm, so here we should be more careful.'''
 
-    TRAIN_PATCH_SIZE: tuple
-    VAL_PATCH_SIZE: tuple
+    TRAIN_PATCH_SIZE: tuple = None
+    VAL_PATCH_SIZE: tuple = None
     '''The size of the 3D patches to be extracted from the volumes for training and validation.
        (Only used in local env). NOT TO BE CONFUSED WITH `VAL_BATCH_SIZE`'''
 
