@@ -146,13 +146,18 @@ if command -v tmux &> /dev/null; then
     echo "Follow logs live:    tail -f ${LOG_FILE}"
     echo "Graceful stop:       tmux send-keys -t ${SESSION} C-c"
     
-    # Prompt user to attach to the tmux session automatically
-    read -r -p "Do you wish to attach to the tmux session now? [Y/n] " attach_response
-    attach_response=${attach_response,,} # Convert to lowercase
-    if [[ -z "$attach_response" || "$attach_response" == "y" || "$attach_response" == "yes" ]]; then
-        tmux attach-session -t "$SESSION"
+
+    # Prompt user to attach to the tmux session automatically (only if interactive)
+    if [[ -t 0 ]]; then
+        read -r -p "Do you wish to attach to the tmux session now? [Y/n] " attach_response
+        attach_response=${attach_response,,} # Convert to lowercase
+        if [[ -z "$attach_response" || "$attach_response" == "y" || "$attach_response" == "yes" ]]; then
+            tmux attach-session -t "$SESSION"
+        else
+            echo "Detached mode. Use 'tmux attach -t ${SESSION}' to connect later."
+        fi
     else
-        echo "Detached mode. Use 'tmux attach -t ${SESSION}' to connect later."
+        echo "Non-interactive shell detected. Use 'tmux attach -t ${SESSION}' to connect."
     fi
 else
     echo "tmux not found. Falling back to nohup..."
