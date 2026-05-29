@@ -1,7 +1,9 @@
 import time
 from pathlib import Path
+import random
 from typing import Optional
 
+import numpy as np
 import torch
 import torch.optim as optim
 from monai.data import (CacheDataset, DataLoader, Dataset, PersistentDataset,
@@ -433,11 +435,121 @@ class ModelBuilder:
         logger.info("Scheduler initialized: CosineAnnealingLR (T_max=%d, eta_min=%e)",
                     t_max, self.config.COSINE_ETA_MIN)
 
+    def _validate_checkpoint(self, checkpoint: dict, checkpoint_path: Path) -> None:
+        '''
+        Validates a checkpoint before loading to ensure compatibility and prevent
+        corrupted or incompatible resumes.
+
+        Validation rules:
+        - Required keys must exist (model_state_dict at minimum)
+        - MODEL and NUM_CLASSES must match exactly (hard-fail on mismatch)
+        - Preprocessing keys (ISO_SPACING, HU_WINDOW_MIN, HU_WINDOW_MAX) warn on mismatch
+        - Checkpoint epoch must be < current NUM_EPOCHS config
+        - torch.load errors are caught and re-raised with clear messages
+
+        Params
+        ------
+        `checkpoint`: dict
+            The loaded checkpoint dictionary to validate.
+        `checkpoint_path`: Path
+            Path to the checkpoint file (for error messages).
+
+        Raises
+        ------
+        ValueError
+            If required keys are missing or if MODEL/NUM_CLASSES mismatch.
+        RuntimeError
+            If checkpoint is corrupted or epoch >= NUM_EPOCHS.
+        '''
+        logger.info("Validating checkpoint: %s", checkpoint_path)
+
+        # Step 1: Validate required keys exist
+        required_keys = ["model_state_dict"]
+        for key in required_keys:
+            if key not in checkpoint:
+                raise ValueError(
+                    f"Checkpoint validation failed: Required key '{key}' not found in "
+                    f"checkpoint {checkpoint_path}. "
+                    f"Checkpoint may be corrupted or from an incompatible version."
+                )
+
+        # Step 2: Validate model architecture compatibility (hard-fail)
+        if "config_snapshot" in checkpoint:
+            ckpt_config = checkpoint["config_snapshot"]
+            curr_config = self.config
+
+            # MODEL check - hard fail on mismatch
+            ckpt_model = ckpt_config.get("MODEL")
+            curr_model = curr_config.MODEL.value
+            if ckpt_model is not None and ckpt_model != curr_model:
+                raise ValueError(
+                    f"Checkpoint validation failed: MODEL mismatch. "
+                    f"Checkpoint has MODEL='{ckpt_model}', but current config has MODEL='{curr_model}'. "
+                    f"Cannot resume training with a different model architecture."
+                )
+
+            # NUM_CLASSES check - hard fail on mismatch
+            ckpt_num_classes = ckpt_config.get("NUM_CLASSES")
+            curr_num_classes = curr_config.NUM_CLASSES
+            if ckpt_num_classes is not None and ckpt_num_classes != curr_num_classes:
+                raise ValueError(
+                    f"Checkpoint validation failed: NUM_CLASSES mismatch. "
+                    f"Checkpoint has NUM_CLASSES={ckpt_num_classes}, but current config has NUM_CLASSES={curr_num_classes}. "
+                    f"Cannot resume training with a different number of classes."
+                )
+
+            # Preprocessing checks - warn on mismatch but allow resume
+            preprocessing_keys = ["ISO_SPACING", "HU_WINDOW_MIN", "HU_WINDOW_MAX"]
+            for key in preprocessing_keys:
+                ckpt_val = ckpt_config.get(key)
+                curr_val = getattr(curr_config, key, None)
+
+                if ckpt_val is None or curr_val is None:
+                    logger.debug(
+                        "Config key '%s' missing in checkpoint or current config. Skipping check.",
+                        key)
+                    continue
+
+                def to_list(val):
+                    if isinstance(val, (list, tuple)):
+                        return list(val)
+                    else:
+                        return [val]
+
+                if to_list(ckpt_val) != to_list(curr_val):
+                    logger.warning(
+                        "Preprocessing mismatch for '%s': Checkpoint=%s, Current=%s. "
+                        "Resume will proceed but results may differ due to preprocessing changes.",
+                        key, ckpt_val, curr_val
+                    )
+                else:
+                    logger.debug("Preprocessing match for '%s': %s", key, curr_val)
+        else:
+            logger.warning(
+                "Checkpoint does not contain 'config_snapshot'. "
+                "Skipping config compatibility validation. "
+                "Ensure checkpoint was created with compatible settings."
+            )
+
+        # Step 3: Validate epoch is within valid range
+        saved_epoch = checkpoint.get("epoch", 0)
+        if saved_epoch >= self.config.NUM_EPOCHS:
+            raise RuntimeError(
+                f"Checkpoint validation failed: Checkpoint epoch ({saved_epoch}) >= "
+                f"current NUM_EPOCHS ({self.config.NUM_EPOCHS}). "
+                f"Training has already completed or NUM_EPOCHS was reduced."
+            )
+
+        logger.info(
+            "Checkpoint validation passed: epoch=%d/%d, config compatible.",
+            saved_epoch, self.config.NUM_EPOCHS - 1
+        )
+
     def _resume_from_checkpoint(self, checkpoint_path: Path, early_stopper: 'EarlyStopper') -> None:
         '''
         Resumes training from a checkpoint file. Loads model weights, optimizer state,
-        scaler state, and seeds the EarlyStopper with saved metrics. Scheduler is
-        recreated and stepped to the saved epoch.
+        scaler state, scheduler state (if available), RNG states, and seeds the EarlyStopper
+        with saved metrics. Includes strict validation before loading.
 
         Params
         ------
@@ -445,26 +557,106 @@ class ModelBuilder:
             Path to the checkpoint file (.pth) to resume from.
         `early_stopper`: EarlyStopper
             The EarlyStopper instance to seed with saved best metrics.
+
+        Raises
+        ------
+        ValueError
+            If checkpoint validation fails (missing keys, MODEL/NUM_CLASSES mismatch).
+        RuntimeError
+            If checkpoint is corrupted or incompatible.
         '''
         logger.info("Loading checkpoint for resume: %s", checkpoint_path)
-        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=True)
+        # Step 0: Load checkpoint with error handling
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=True)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load checkpoint {checkpoint_path}: {type(e).__name__}: {e}. "
+                f"Checkpoint may be corrupted or invalid."
+            ) from e
 
-        # Load model state
+        # Step 1: Validate checkpoint before loading any state
+        self._validate_checkpoint(checkpoint, checkpoint_path)
+
+        # Step 2: Load model state
         self.model.load_state_dict(checkpoint["model_state_dict"])
         logger.info("Model weights loaded successfully.")
 
-        # Load optimizer state if present
+        # Step 3: Load optimizer state if present
         if "optimizer_state_dict" in checkpoint:
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
             logger.info("Optimizer state loaded.")
+        else:
+            logger.warning("Optimizer state not found in checkpoint. Training will restart with fresh optimizer.")
 
-        # Load scaler state if present
+        # Step 4: Load scaler state if present
         if checkpoint.get("scaler_state_dict") is not None and self.scaler is not None:
             self.scaler.load_state_dict(checkpoint["scaler_state_dict"])
             logger.info("Scaler state loaded.")
 
-        # Seed EarlyStopper with saved metrics
+        # Step 5: Load scheduler state if present (backward compatible)
         saved_epoch = checkpoint.get("epoch", 0)
+        if "scheduler_state_dict" in checkpoint and checkpoint["scheduler_state_dict"] is not None:
+            self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+            logger.info("Scheduler state loaded from checkpoint.")
+        else:
+            # Fallback: recreate scheduler and step to saved epoch (for older checkpoints)
+            logger.warning(
+                "Scheduler state not found in checkpoint. Recreating scheduler and advancing to epoch %d.",
+                saved_epoch
+            )
+            warm_epochs = self.config.WARMUP_EPOCHS
+            if warm_epochs <= 0:
+                warm_epochs = 1
+            t_max = self.config.NUM_EPOCHS - self.config.WARMUP_EPOCHS
+            if t_max <= 0:
+                t_max = 1
+
+            # Re-create schedulers with current optimizer
+            warmup = LinearLR(
+                self.optimizer,
+                start_factor=0.1,
+                end_factor=1.0,
+                total_iters=warm_epochs - 1
+            )
+            cosine = CosineAnnealingLR(
+                self.optimizer,
+                T_max=t_max,
+                eta_min=self.config.COSINE_ETA_MIN
+            )
+            self.scheduler = SequentialLR(
+                self.optimizer,
+                schedulers=[warmup, cosine],
+                milestones=[self.config.WARMUP_EPOCHS]
+            )
+
+            # Step scheduler to align with saved epoch
+            for _ in range(saved_epoch + 1):
+                self.scheduler.step()
+            logger.info("Scheduler recreated and advanced to epoch %d.", saved_epoch)
+
+        # Step 6: Restore RNG states for deterministic restart
+        if "rng_state" in checkpoint and checkpoint["rng_state"] is not None:
+            rng = checkpoint["rng_state"]
+            if rng.get("torch_cpu") is not None:
+                torch.set_rng_state(rng["torch_cpu"])
+                logger.debug("Torch CPU RNG state restored.")
+            if rng.get("torch_cuda") is not None and torch.cuda.is_available():
+                torch.cuda.set_rng_state_all(rng["torch_cuda"])
+                logger.debug("Torch CUDA RNG state restored.")
+            if rng.get("numpy") is not None:
+                try:
+                    np.random.set_state(rng["numpy"])
+                    logger.debug("NumPy RNG state restored.")
+                except Exception as e:
+                    logger.debug("Failed to restore NumPy RNG state: %s", e)
+            if rng.get("python") is not None:
+                random.setstate(rng["python"])
+                logger.debug("Python RNG state restored.")
+        else:
+            logger.warning("RNG states not found in checkpoint. Deterministic restart not guaranteed.")
+
+        # Step 7: Seed EarlyStopper with saved metrics
         early_stopper.best_mean_dice = checkpoint.get("best_dice", -1.0)
         early_stopper.best_liver_dice = checkpoint.get("best_liver_dice", -1.0)
         early_stopper.best_tumour_dice = checkpoint.get("best_tumour_dice", -1.0)
@@ -478,68 +670,13 @@ class ModelBuilder:
             early_stopper.best_tumour_dice
         )
 
-        # Align scheduler by stepping to saved epoch
-        # Recreate scheduler as in init_model(), then advance it
-        warm_epochs = self.config.WARMUP_EPOCHS
-        if warm_epochs <= 0:
-            warm_epochs = 1
-        t_max = self.config.NUM_EPOCHS - self.config.WARMUP_EPOCHS
-        if t_max <= 0:
-            t_max = 1
+        # Step 8: Optionally restore history for audit/debug (non-critical)
+        if "history" in checkpoint and checkpoint["history"] is not None:
+            self.history = checkpoint["history"]
+            logger.debug("Training history restored from checkpoint.")
 
-        # Re-create schedulers with current optimizer
-        warmup = LinearLR(
-            self.optimizer,
-            start_factor=0.1,
-            end_factor=1.0,
-            total_iters=warm_epochs - 1
-        )
-        cosine = CosineAnnealingLR(
-            self.optimizer,
-            T_max=t_max,
-            eta_min=self.config.COSINE_ETA_MIN
-        )
-        self.scheduler = SequentialLR(
-            self.optimizer,
-            schedulers=[warmup, cosine],
-            milestones=[self.config.WARMUP_EPOCHS]
-        )
-
-        # Step scheduler to align with saved epoch
-        for _ in range(saved_epoch + 1):
-            self.scheduler.step()
-        logger.info("Scheduler advanced to epoch %d.", saved_epoch)
-
-        # Config compatibility warning (reuse pattern from validate.py)
-        if "config_snapshot" in checkpoint:
-            ckpt_config = checkpoint["config_snapshot"]
-            curr_config = self.config
-            keys_to_check = ["NUM_CLASSES", "ISO_SPACING", "HU_WINDOW_MIN", "HU_WINDOW_MAX"]
-
-            for key in keys_to_check:
-                ckpt_val = ckpt_config.get(key)
-                curr_val = getattr(curr_config, key, None)
-
-                if ckpt_val is None or curr_val is None:
-                    logger.warning(
-                        "Config key '%s' missing in checkpoint or current config. Skipping check.",
-                        key)
-                    continue
-
-                def to_list(val):
-                    if isinstance(val, (list, tuple)):
-                        return list(val)
-                    else:
-                        return [val]
-
-                if to_list(ckpt_val) != to_list(curr_val):
-                    logger.warning(
-                        "Config mismatch detected for '%s': Checkpoint=%s, Current=%s. "
-                        "This may cause errors if architecture or preprocessing differs.",
-                        key, ckpt_val, curr_val
-                    )
-                else:
-                    logger.debug("Config match for '%s': %s", key, curr_val)
+        if "current_lr" in checkpoint and checkpoint["current_lr"] is not None:
+            logger.debug("Checkpoint LR at save: %.6f", checkpoint["current_lr"])
 
     def back_propagate(self, loss):
         '''
@@ -984,7 +1121,23 @@ class EarlyStopper:
         return True  # No improvement
 
     def save_checkpoint(self, is_best: bool = True, current_epoch: int = None):
-        '''Saves a checkpoint of the current model state.'''
+        '''Saves a checkpoint of the current model state.
+
+        Checkpoint schema includes:
+        - Core: version, epoch, model_state_dict, optimizer_state_dict
+        - Training state: scaler_state_dict, scheduler_state_dict (if available)
+        - Metrics: best_dice, best_liver_dice, best_tumour_dice, epochs_no_improve
+        - Reproducibility: RNG states (python, numpy, torch cpu/cuda)
+        - Config: config_snapshot for compatibility checking
+        - Optional: history, current_lr for audit/debug
+
+        When extending this checkpoint dict in the future, consider adding:
+        - New optimizer state (e.g., SAM, AdamW variants with additional buffers)
+        - Loss component states (if using trainable loss weights or auxiliary losses)
+        - Transform states (if using stateful augmentations like RandAugment)
+        - Distributed training state (DDP/FSDP shards, world_size, rank)
+        - Custom scheduler state (if not using standard PyTorch schedulers)
+        '''
         path: Path = None
         if is_best:
             path = self.checkpoint_path
@@ -992,6 +1145,16 @@ class EarlyStopper:
             path = self.config.CHECKPOINT_DIR / "last_epoch.pth"
 
         before_save_time = time.time()
+
+        # Capture all CUDA RNG states for multi-GPU safety
+        cuda_rng_states = None
+        if torch.cuda.is_available():
+            try:
+                cuda_rng_states = torch.cuda.get_rng_state_all()
+            except RuntimeError:
+                # Fallback if get_rng_state_all fails in some environments
+                cuda_rng_states = [torch.cuda.get_rng_state()]
+
         torch.save({
             "version": self.config.VERSION,
             "epoch": self.best_epoch if is_best else current_epoch,
@@ -1005,12 +1168,25 @@ class EarlyStopper:
             # Counters and others for AMP
             "scaler_state_dict":
                 self.builder.scaler.state_dict() if self.builder.scaler is not None else None,
+            # Scheduler state for exact LR schedule resume (added in v2.3.2+)
+            "scheduler_state_dict":
+                self.builder.scheduler.state_dict() if self.builder.scheduler is not None else None,
             # early stopping state
             "epochs_no_improve": self.epochs_no_improve,
             # Config snapshot for reproducibility (can be used to log the exact
             # config that led to the best model)
             "config_snapshot": config.to_dict(),
-            "interrupted": not is_best
+            "interrupted": not is_best,
+            # RNG states for deterministic restart (added in v2.3.2+)
+            "rng_state": {
+                "python": random.getstate(),
+                "numpy": np.random.get_state(),
+                "torch_cpu": torch.get_rng_state(),
+                "torch_cuda": cuda_rng_states,
+            },
+            # Optional audit/debug fields (added in v2.3.2+)
+            "history": self.builder.history,
+            "current_lr": self.builder.optimizer.param_groups[0]["lr"] if self.builder.optimizer else None,
         }, path)
         after_save_time = time.time()
         save_duration = after_save_time - before_save_time
