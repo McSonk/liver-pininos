@@ -1,6 +1,6 @@
 import time
 from pathlib import Path
-from random import random
+import random
 from typing import Optional
 
 import numpy as np
@@ -636,24 +636,22 @@ class ModelBuilder:
                 self.scheduler.step()
             logger.info("Scheduler recreated and advanced to epoch %d.", saved_epoch)
 
-        # Step 6: Restore RNG states for deterministic restart (backward compatible)
+        # Step 6: Restore RNG states for deterministic restart
         if "rng_state" in checkpoint and checkpoint["rng_state"] is not None:
             rng = checkpoint["rng_state"]
             if rng.get("torch_cpu") is not None:
                 torch.set_rng_state(rng["torch_cpu"])
                 logger.debug("Torch CPU RNG state restored.")
             if rng.get("torch_cuda") is not None and torch.cuda.is_available():
-                torch.cuda.set_rng_state(rng["torch_cuda"])
+                torch.cuda.set_rng_state_all(rng["torch_cuda"])
                 logger.debug("Torch CUDA RNG state restored.")
             if rng.get("numpy") is not None:
                 try:
-                    import numpy as np
                     np.random.set_state(rng["numpy"])
                     logger.debug("NumPy RNG state restored.")
-                except ImportError:
-                    logger.debug("NumPy not available, skipping NumPy RNG restore.")
+                except Exception as e:
+                    logger.debug("Failed to restore NumPy RNG state: %s", e)
             if rng.get("python") is not None:
-                import random
                 random.setstate(rng["python"])
                 logger.debug("Python RNG state restored.")
         else:
@@ -1148,6 +1146,16 @@ class EarlyStopper:
             path = self.config.CHECKPOINT_DIR / "last_epoch.pth"
 
         before_save_time = time.time()
+
+        # Capture all CUDA RNG states for multi-GPU safety
+        cuda_rng_states = None
+        if torch.cuda.is_available():
+            try:
+                cuda_rng_states = torch.cuda.get_rng_state_all()
+            except RuntimeError:
+                # Fallback if get_rng_state_all fails in some environments
+                cuda_rng_states = [torch.cuda.get_rng_state()]
+
         torch.save({
             "version": self.config.VERSION,
             "epoch": self.best_epoch if is_best else current_epoch,
@@ -1175,7 +1183,7 @@ class EarlyStopper:
                 "python": random.getstate(),
                 "numpy": np.random.get_state(),
                 "torch_cpu": torch.get_rng_state(),
-                "torch_cuda": torch.cuda.get_rng_state() if torch.cuda.is_available() else None,
+                "torch_cuda": cuda_rng_states,
             },
             # Optional audit/debug fields (added in v2.3.2+)
             "history": self.builder.history,
