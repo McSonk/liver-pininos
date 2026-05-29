@@ -1,7 +1,9 @@
 import time
 from pathlib import Path
+from random import random
 from typing import Optional
 
+import numpy as np
 import torch
 import torch.optim as optim
 from monai.data import (CacheDataset, DataLoader, Dataset, PersistentDataset,
@@ -1170,8 +1172,8 @@ class EarlyStopper:
             "interrupted": not is_best,
             # RNG states for deterministic restart (added in v2.3.2+)
             "rng_state": {
-                "python": None,  # Python random state (not used in this pipeline)
-                "numpy": None,   # NumPy RNG state (if NumPy is used in transforms)
+                "python": random.getstate(),
+                "numpy": np.random.get_state(),
                 "torch_cpu": torch.get_rng_state(),
                 "torch_cuda": torch.cuda.get_rng_state() if torch.cuda.is_available() else None,
             },
