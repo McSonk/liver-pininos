@@ -479,7 +479,6 @@ class ModelBuilder:
             curr_config = self.config
 
             # MODEL check - hard fail on mismatch
-            # MODEL check - hard fail on mismatch
             ckpt_model = ckpt_config.get("MODEL")
             curr_model = curr_config.MODEL.value
             if ckpt_model is not None and ckpt_model != curr_model:

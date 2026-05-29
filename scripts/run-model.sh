@@ -145,7 +145,6 @@ if command -v tmux &> /dev/null; then
     echo "Attach to monitor:   tmux attach -t ${SESSION}"
     echo "Follow logs live:    tail -f ${LOG_FILE}"
     echo "Graceful stop:       tmux send-keys -t ${SESSION} C-c"
-    
 
     # Prompt user to attach to the tmux session automatically (only if interactive)
     if [[ -t 0 ]]; then
