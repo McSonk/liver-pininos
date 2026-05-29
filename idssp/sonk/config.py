@@ -12,7 +12,7 @@ import psutil
 import torch
 from dotenv import load_dotenv
 
-VERSION_STR = "2.3.2"
+VERSION_STR = "2.3.3"
 '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
 
 class AvailableModels(str, Enum):
@@ -223,7 +223,7 @@ def init(verbose: bool = False) -> Config:
         "dl_num_workers": min(gpu_num_workers, cpu_count),
         "pin_memory": True,
         # TODO: configure batch_size and train_patch_size based on model and flags
-        "batch_size": 2 if hc_gpu else 1,
+        "batch_size": 4 if hc_gpu else 2,
         "num_epochs": 200 if hc_gpu else 5,
         "train_patch_size": (128, 128, 128) if hc_gpu else (64, 64, 64),
         # Not used but kept for config/logging consistency
