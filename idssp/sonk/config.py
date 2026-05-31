@@ -120,9 +120,9 @@ class Config:
     '''Number of epochs with no improvement after which training will be stopped.'''
     EARLY_STOPPING_MIN_DELTA: float = 0.001
     '''Minimum change in the monitored metric to qualify as an improvement.'''
-    WARMUP_EPOCHS: int = 10
+    WARMUP_EPOCHS: int = 15
     '''Number of epochs for linear learning rate warmup (CosineSchedule).'''
-    COSINE_ETA_MIN: float = 1e-6
+    COSINE_ETA_MIN: float = 2e-6
     '''Minimum learning rate for the cosine annealing scheduler.'''
 
     # Paths (resolved at init)
