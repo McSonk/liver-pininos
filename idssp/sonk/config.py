@@ -12,7 +12,7 @@ import psutil
 import torch
 from dotenv import load_dotenv
 
-VERSION_STR = "2.3.3"
+VERSION_STR = "2.3.5"
 '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
 
 class AvailableModels(str, Enum):
@@ -112,7 +112,7 @@ class Config:
        This should be a list of length `NUM_CLASSES`, where the value at `TUMOUR_CLASS_INDEX`
        is higher to emphasise learning the tumour class. For example, for `NUM_CLASSES=3`
        and `TUMOUR_CLASS_INDEX=2`'''
-    LEARNING_RATE: float = 1e-4
+    LEARNING_RATE: float = 2e-4
     SLIDING_WINDOW_BATCH_SIZE: int = 4
 
     # Early Stopping
