@@ -1,3 +1,6 @@
+from pathlib import Path
+
+import torch
 import torch.nn as nn
 from monai.networks.nets import SegResNet, SwinUNETR, UNet
 
@@ -5,6 +8,49 @@ from idssp.sonk import config
 from idssp.sonk.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+def _load_monai_pretrained_weights(model: torch.nn.Module, pretrained_path: Path) -> None:
+    """
+    Loads MONAI Model or external pretrained weights into a given model.
+    Uses strict=False to accommodate different NUM_CLASSES (e.g. BTCV -> LiTS).
+    """
+    # MONAI checkpoints sometimes contain non-tensor objects or custom classes.
+    # We attempt weights_only=True first for security, falling back to False if it fails.
+    device = torch.device("cpu")  # Load on CPU to avoid GPU memory issues during loading
+    try:
+        checkpoint = torch.load(pretrained_path, map_location=device, weights_only=True)
+    except Exception:
+        logger.warning("weights_only=True failed. Falling back to weights_only=False.")
+        checkpoint = torch.load(pretrained_path, map_location=device, weights_only=False)
+        
+    # Extract the actual state_dict from common wrapper formats
+    if isinstance(checkpoint, dict):
+        if "state_dict" in checkpoint:
+            state_dict = checkpoint["state_dict"]
+        elif "model_state_dict" in checkpoint:
+            state_dict = checkpoint["model_state_dict"]
+        elif "model" in checkpoint:
+            state_dict = checkpoint["model"]
+        else:
+            # Assume the dictionary itself is the state_dict
+            state_dict = checkpoint
+    else:
+        state_dict = checkpoint
+
+    # Clean up 'module.' prefix from DDP/DataParallel if present
+    cleaned_state_dict = {}
+    for k, v in state_dict.items():
+        name = k.replace("module.", "", 1) if k.startswith("module.") else k
+        cleaned_state_dict[name] = v
+
+    # strict=False is CRITICAL for fine-tuning on a new dataset with different NUM_CLASSES
+    missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=False)
+    
+    logger.info("Loaded pretrained weights from %s", pretrained_path)
+    if missing:
+        logger.info("Missing keys (expected for the segmentation head due to different NUM_CLASSES): %s", missing)
+    if unexpected:
+        logger.warning("Unexpected keys in checkpoint: %s", unexpected)
 
 def get_unet(config_obj: config.Config) -> UNet:
     '''Creates a 3D UNet model for medical image segmentation. The architecture
@@ -117,6 +163,24 @@ def get_swin_unetr(config_obj: config.Config) -> SwinUNETR:
 
     return model
 
+def get_swin_unetr_pretrain(config_obj: config.Config) -> SwinUNETR:
+    '''Creates a SwinUNETR model and loads pretrained weights from the specified path.'''
+    logger.info("Creating SwinUNETR model with pretrained weights from %s.",
+                config_obj.PRE_TRAINED_MODEL_PATH)
+    model = get_swin_unetr(config_obj)
+
+    try:
+        _load_monai_pretrained_weights(
+            model=model,
+            pretrained_path=config_obj.PRE_TRAINED_MODEL_PATH
+        )
+    except Exception as e:
+        logger.error("Failed to load pretrained weights from %s: %s",
+                     config_obj.PRE_TRAINED_MODEL_PATH, str(e))
+        raise RuntimeError(f"Failed to load pretrained weights: {str(e)}")
+
+    return model
+
 def get_model() -> nn.Module:
     '''Factory function to create the segmentation model based
        on the current configuration.'''
@@ -127,5 +191,7 @@ def get_model() -> nn.Module:
         return get_seg_res_net(cfg)
     elif cfg.MODEL == config.AvailableModels.SWIN_UNETR:
         return get_swin_unetr(cfg)
+    elif cfg.MODEL == config.AvailableModels.SWIN_UNETR_PRETRAIN:
+        return get_swin_unetr_pretrain(cfg)
     else:
         raise ValueError(f"Unsupported model type: {cfg.MODEL}")
