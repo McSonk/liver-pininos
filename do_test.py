@@ -22,9 +22,6 @@ from idssp.sonk.utils.logger import (configure_logging, get_logger,
 # For reproducibility
 set_determinism(seed=42)
 
-# Initialize logger
-logger = get_logger(__name__)
-
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run test-time evaluation for HCC tumour segmentation",
@@ -44,8 +41,10 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 def _main(args: argparse.Namespace):
-    cfg = config.init()
+    cfg = config.init(mode=config.Mode.TEST)
     configure_logging(cfg)
+    # Initialize logger
+    logger = get_logger(__name__)
     # Install global hooks (for logging unhandled exceptions)
     install_global_exception_handlers(logger)
 
