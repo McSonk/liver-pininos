@@ -15,15 +15,18 @@ def _load_monai_pretrained_weights(model: torch.nn.Module, pretrained_path: Path
     Uses strict=False to accommodate different NUM_CLASSES (e.g. BTCV -> LiTS).
     """
     # MONAI checkpoints sometimes contain non-tensor objects or custom classes.
-    # We attempt weights_only=True first for security, falling back to False if it fails.
+    # For security, prefer weights_only=True and do not silently fall back to unsafe pickle loading.
     device = torch.device("cpu")  # Load on CPU to avoid GPU memory issues during loading
     try:
         checkpoint = torch.load(pretrained_path, map_location=device, weights_only=True)
-    except Exception:
-        logger.warning("weights_only=True failed. Falling back to weights_only=False.")
-        checkpoint = torch.load(pretrained_path, map_location=device, weights_only=False)
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to load checkpoint with weights_only=True from {pretrained_path}. "
+            "Please provide a state_dict-only checkpoint (e.g., torch.save(model.state_dict(), ...))."
+        ) from e
         
     # Extract the actual state_dict from common wrapper formats
+    state_dict = checkpoint
     if isinstance(checkpoint, dict):
         if "state_dict" in checkpoint:
             state_dict = checkpoint["state_dict"]
@@ -31,11 +34,15 @@ def _load_monai_pretrained_weights(model: torch.nn.Module, pretrained_path: Path
             state_dict = checkpoint["model_state_dict"]
         elif "model" in checkpoint:
             state_dict = checkpoint["model"]
-        else:
-            # Assume the dictionary itself is the state_dict
-            state_dict = checkpoint
-    else:
-        state_dict = checkpoint
+
+    # Support checkpoints that store a full Module (e.g. torch.save(model, ...))
+    if isinstance(state_dict, torch.nn.Module):
+        state_dict = state_dict.state_dict()
+
+    if not hasattr(state_dict, "items"):
+        raise TypeError(
+            f"Unsupported checkpoint format loaded from {pretrained_path}: {type(state_dict).__name__}"
+        )
 
     # Clean up 'module.' prefix from DDP/DataParallel if present
     cleaned_state_dict = {}
@@ -177,7 +184,7 @@ def get_swin_unetr_pretrain(config_obj: config.Config) -> SwinUNETR:
     except Exception as e:
         logger.error("Failed to load pretrained weights from %s: %s",
                      config_obj.PRE_TRAINED_MODEL_PATH, str(e))
-        raise RuntimeError(f"Failed to load pretrained weights: {str(e)}")
+        raise RuntimeError(f"Failed to load pretrained weights: {e}") from e
 
     return model
 

@@ -26,8 +26,7 @@ class AvailableModels(str, Enum):
 
 VERSION_STR = "2.3.6"
 '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
-MODEL_TO_USE = AvailableModels.SWIN_UNETR_PRETRAIN
-
+MODEL_TO_USE = AvailableModels.SWIN_UNETR
 @dataclass(frozen=True)
 class Config:
     # Environment & Device
