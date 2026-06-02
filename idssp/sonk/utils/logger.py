@@ -3,7 +3,7 @@ import logging
 import sys
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import psutil
 import torch
@@ -25,25 +25,33 @@ def get_active_log_file() -> Optional[Path]:
 
 def get_logger(
         name: str,
-        console_level: Optional[int] = None
+        console_level: Optional[int|str] = None,
+        **kwargs: Any
     ) -> logging.Logger:
     """
     Creates a logger that outputs to both Console and File.
+
+    Please note that this *should* be called before any calls to config.init()
+    in your main script
 
     Params
     ------
     `name`: str
         Name of the logger (usually __name__).
-    `console_level`: Optional[int]
+    `console_level`: Optional[int|str]
         Logging level for console output (e.g., logging.INFO). If None, defaults to 
         `config.LOG_LEVEL_CONSOLE`.
+    `**kwargs`: Any
+        Additional keyword arguments passed directly to `config.init()` 
+        (e.g., verbose=True, mode=Mode.TRAIN).
 
     Returns
     -------
     logging.Logger
         Configured logger instance.
     """
-    cfg = config.init()
+    # Forward kwargs to config.init
+    cfg = config.init(**kwargs)
     if console_level is None:
         console_level = cfg.LOG_LEVEL_CONSOLE
     log_dir = cfg.LOG_DIR

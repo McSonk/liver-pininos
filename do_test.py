@@ -23,7 +23,7 @@ from idssp.sonk.utils.logger import (get_logger,
 set_determinism(seed=42)
 
 # Initialize logger
-logger = get_logger(__name__)
+logger = get_logger(__name__, mode=config.Mode.TEST)
 # Install global hooks (for logging unhandled exceptions)
 install_global_exception_handlers(logger)
 
@@ -46,7 +46,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 def _main(args: argparse.Namespace):
-    cfg = config.init(mode=config.Mode.TEST)
+    cfg = config.get()
     checkpoint = Path(args.checkpoint)
     post_process = args.post_process
     if not checkpoint.exists():

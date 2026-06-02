@@ -42,7 +42,7 @@ def main():
      - Provides terminal output unless --no-verbose is set
     '''
 
-    cfg = config.init()
+    cfg = config.get()
 
     if cfg.STATS_DIR is None:
         logger.error("STATS_DIR is not configured. Please set the 'STATS_DIR' "

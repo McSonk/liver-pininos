@@ -1,5 +1,6 @@
 print("[main.py] Importing torch... (This may take a moment)")
 import argparse
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -19,12 +20,7 @@ from idssp.sonk.utils.notifications import send_alert, send_final_alert
 # For reproducibility
 set_determinism(seed=42)
 
-# Initialize logger
-logger = get_logger(__name__)
-# Install global hooks (for logging unhandled exceptions)
-install_global_exception_handlers(logger)
-
-def _log_gpu_info(cuda_torch_properties) -> None:
+def _log_gpu_info(cuda_torch_properties, logger: logging.Logger) -> None:
     '''Logs detailed information about the available CUDA devices, including their names,
        total memory, and the GPU that PyTorch is currently using.'''
     pytorch_uuid = getattr(cuda_torch_properties, "uuid", None)
@@ -66,7 +62,7 @@ def _log_gpu_info(cuda_torch_properties) -> None:
 
     logger.info("Active physical PCI Bus ID: %s", active_bus_id)
 
-def log_environment_info(config_obj: config.Config) -> None:
+def log_environment_info(config_obj: config.Config, logger: logging.Logger) -> None:
     '''Logs detailed information about the training environment, including PyTorch version,
     CUDA availability and devices, and key configuration parameters.'''
     cuda_properties = None
@@ -90,8 +86,7 @@ def log_environment_info(config_obj: config.Config) -> None:
     logger.info("Available container memory (GB): %.2f", config_obj.container_memory)
 
     if cuda_properties is not None:
-        _log_gpu_info(cuda_properties)
-
+        _log_gpu_info(cuda_properties, logger)
 
     logger.info("Device: %s", config_obj.DEVICE)
     logger.info("Batch Size: %d", config_obj.BATCH_SIZE)
@@ -139,8 +134,13 @@ if __name__ == "__main__":
     verbose = args.verbose
     fast_run = args.fast_run
     resume_path = args.resume
-    cfg = config.init(verbose=verbose)
-    log_environment_info(cfg)
+
+    logger = get_logger(__name__, verbose=verbose)
+    # Install global hooks (for logging unhandled exceptions)
+    install_global_exception_handlers(logger)
+
+    cfg = config.get()
+    log_environment_info(cfg, logger)
 
     checkpoint_path = None
 
