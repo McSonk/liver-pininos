@@ -12,9 +12,6 @@ import psutil
 import torch
 from dotenv import load_dotenv
 
-VERSION_STR = "2.3.5"
-'''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
-
 class AvailableModels(str, Enum):
     """
     Enumeration of supported segmentation models.
@@ -23,7 +20,13 @@ class AvailableModels(str, Enum):
     U_NET = "u-net"
     SEG_RES_NET = "seg-res-net"
     SWIN_UNETR = "swin-unetr"
+    SWIN_UNETR_PRETRAIN = "swin-unetr-pretrain"
 
+# Some constant definitions
+
+VERSION_STR = "2.3.6"
+'''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
+MODEL_TO_USE = AvailableModels.SWIN_UNETR
 @dataclass(frozen=True)
 class Config:
     # Environment & Device
@@ -42,7 +45,7 @@ class Config:
     VERSION: str = VERSION_STR
     '''Version of the training pipeline (and its config) to keep track of changes
        and experiments.'''
-    MODEL: AvailableModels = AvailableModels.SWIN_UNETR
+    MODEL: AvailableModels = MODEL_TO_USE
     '''The model architecture to use. Choose from the AvailableModels enum.'''
 
     # Preprocessing
@@ -138,6 +141,7 @@ class Config:
     SPLIT_DIR: Path = field(default_factory=Path)
     TRAIN_STATS_DIR: Path = field(default_factory=Path)
     PER_CASE_TRAIN_STATS_FILE: Path = field(default_factory=Path)
+    PRE_TRAINED_MODEL_PATH: Path = field(default_factory=Path)
     LOG_LEVEL_CONSOLE: str = "INFO"
     LOG_LEVEL_FILE: str = "DEBUG"
 
@@ -298,6 +302,7 @@ def init(verbose: bool = False) -> Config:
     ct_test_str = os.getenv("LITS_CT_TEST")
     output_dir_str = os.getenv("OUTPUT_DIR")
     persistent_dataset_dir_str = os.getenv("PERSISTENT_DATASET_DIR")
+    pre_trained_model_path_str = os.getenv("PRE_TRAINED_MODEL_PATH")
     stats_dir_str = os.getenv("STATS_DIR")
     split_dir_str = os.getenv("SPLIT_DIR")
 
@@ -331,6 +336,11 @@ def init(verbose: bool = False) -> Config:
         raise ValueError("[Config] Environment variable 'SPLIT_DIR' is not set. "
             "Splitting cannot be performed. Please set 'SPLIT_DIR' to the "
             "directory where the split files will be stored.")
+
+    if MODEL_TO_USE == AvailableModels.SWIN_UNETR_PRETRAIN and not pre_trained_model_path_str:
+        raise ValueError("[Config] MODEL is set to 'swin-unetr-pretrain' but "
+            "PRE_TRAINED_MODEL_PATH is not set. Please set PRE_TRAINED_MODEL_PATH to the "
+            "path of the pretrained model weights to be used for initialization.")
 
     if log_level_console not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
         print(f"[Config] Warning: LOG_LEVEL_CONSOLE '{log_level_console}' is not "
@@ -382,6 +392,7 @@ def init(verbose: bool = False) -> Config:
     output_dir = Path(output_dir_str)
     stats_dir = Path(stats_dir_str)
     split_dir = Path(split_dir_str)
+    pre_trained_model_path = Path(pre_trained_model_path_str) if pre_trained_model_path_str else None
     train_stats_dir = stats_dir / "train"
     train_stats_dir.mkdir(parents=True, exist_ok=True)
     per_case_train_stats_file = train_stats_dir / "per_case_summary.csv"
@@ -431,6 +442,9 @@ def init(verbose: bool = False) -> Config:
 
     if not ct_root.exists():
         raise FileNotFoundError(f"[Config] CT root directory does not exist: {ct_root}")
+
+    if MODEL_TO_USE == AvailableModels.SWIN_UNETR_PRETRAIN and not pre_trained_model_path.exists():
+        raise FileNotFoundError(f"[Config] Pretrained model weights file does not exist: {pre_trained_model_path}")
 
     if persistent_dataset_dir and not persistent_dataset_dir.exists():
         print("[Config] Persistent dataset directory does not exist. "
@@ -509,6 +523,7 @@ def init(verbose: bool = False) -> Config:
         SPLIT_DIR=split_dir,
         TRAIN_STATS_DIR=train_stats_dir,
         PER_CASE_TRAIN_STATS_FILE=per_case_train_stats_file,
+        PRE_TRAINED_MODEL_PATH=pre_trained_model_path,
         LOG_LEVEL_CONSOLE=log_level_console,
         LOG_LEVEL_FILE=log_level_file,
         CACHE_NUM_WORKERS=cache_num_workers,
@@ -635,6 +650,7 @@ def to_dict() -> dict:
         "LOG_LEVEL_FILE": config.LOG_LEVEL_FILE,
         "SPLIT_DIR": str(config.SPLIT_DIR),
         "TRAIN_STATS_DIR": str(config.TRAIN_STATS_DIR),
+        "PRE_TRAINED_MODEL_PATH": str(config.PRE_TRAINED_MODEL_PATH) if config.PRE_TRAINED_MODEL_PATH else None,
         "PER_CASE_TRAIN_STATS_FILE": str(config.PER_CASE_TRAIN_STATS_FILE),
 
         # Notifications (exclude contact details/secrets from persisted config snapshots)
@@ -671,6 +687,7 @@ def to_param_dict() -> dict:
         "STATS_DIR",
         "LOG_DIR",
         "SPLIT_DIR",
+        "PRE_TRAINED_MODEL_PATH",
         "TRAIN_STATS_DIR",
         "PER_CASE_TRAIN_STATS_FILE",
         "USE_CACHE_TRAIN_DATASET",
