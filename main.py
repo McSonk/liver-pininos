@@ -11,7 +11,8 @@ from monai.utils import set_determinism
 from idssp.sonk import config
 from idssp.sonk.disk.loader import DataCollector
 from idssp.sonk.model.training import ModelBuilder
-from idssp.sonk.utils.logger import (get_active_log_file, get_logger,
+from idssp.sonk.utils.logger import (configure_logging, get_active_log_file,
+                                     get_logger,
                                      install_global_exception_handlers,
                                      log_memory_usage)
 from idssp.sonk.utils.mail import send_training_email
@@ -135,11 +136,12 @@ if __name__ == "__main__":
     fast_run = args.fast_run
     resume_path = args.resume
 
-    logger = get_logger(__name__, verbose=verbose)
+    cfg = config.init(verbose=verbose)
+    configure_logging(cfg)
+    logger = get_logger(__name__)
     # Install global hooks (for logging unhandled exceptions)
     install_global_exception_handlers(logger)
 
-    cfg = config.get()
     log_environment_info(cfg, logger)
 
     checkpoint_path = None

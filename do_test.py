@@ -6,26 +6,24 @@ Usage:
     python do_test.py --checkpoint /path/to/best_model.pth
 """
 print("[do_test.py] Importing torch... (This may take a moment)")
-import torch
 import argparse
 import sys
 from pathlib import Path
 
+import torch
 from monai.utils import set_determinism
 
 from idssp.sonk import config
 from idssp.sonk.disk.loader import DataCollector
 from idssp.sonk.model.validate import TestEvaluator
-from idssp.sonk.utils.logger import (get_logger,
+from idssp.sonk.utils.logger import (configure_logging, get_logger,
                                      install_global_exception_handlers)
 
 # For reproducibility
 set_determinism(seed=42)
 
 # Initialize logger
-logger = get_logger(__name__, mode=config.Mode.TEST)
-# Install global hooks (for logging unhandled exceptions)
-install_global_exception_handlers(logger)
+logger = get_logger(__name__)
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -46,7 +44,11 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 def _main(args: argparse.Namespace):
-    cfg = config.get()
+    cfg = config.init()
+    configure_logging(cfg)
+    # Install global hooks (for logging unhandled exceptions)
+    install_global_exception_handlers(logger)
+
     checkpoint = Path(args.checkpoint)
     post_process = args.post_process
     if not checkpoint.exists():
