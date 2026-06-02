@@ -135,8 +135,13 @@ TMUX_PY_ARGS=""
 NOHUP_PY_ARGS=()
 
 for arg in "${ARGS_FOR_PYTHON[@]}"; do
-    # Escape double quotes and wrap in double quotes for tmux string execution
-    escaped_arg="${arg//\"/\\\"}"
+    # Escape characters that would still expand inside double quotes when executed via tmux
+    escaped_arg="$arg"
+    escaped_arg="${escaped_arg//\\/\\\\}"
+    escaped_arg="${escaped_arg//\"/\\\"}"
+    escaped_arg="${escaped_arg//\$/\\\$}"
+    escaped_arg="${escaped_arg//\`/\\\`}"
+
     TMUX_PY_ARGS+=" \"$escaped_arg\""
     NOHUP_PY_ARGS+=("$arg")
 done
@@ -161,7 +166,8 @@ if command -v tmux &> /dev/null; then
     echo "Follow logs live:    tail -f ${LOG_FILE}"
     echo "Graceful stop:       tmux send-keys -t ${SESSION} C-c"
 
-    # Prompt user to attach to the tmux session automatically
+# Prompt user to attach to the tmux session automatically (only when interactive)
+if [[ -t 0 ]]; then
     read -r -p "Do you wish to attach to the tmux session now? [Y/n] " attach_response
     attach_response=${attach_response,,} # Convert to lowercase
     if [[ -z "$attach_response" || "$attach_response" == "y" || "$attach_response" == "yes" ]]; then
@@ -169,6 +175,9 @@ if command -v tmux &> /dev/null; then
     else
         echo "Detached mode. Use 'tmux attach -t ${SESSION}' to connect later."
     fi
+else
+    echo "Non-interactive shell detected; leaving tmux session detached."
+fi
 else
     echo "tmux not found. Falling back to nohup..."
     nohup python -u do_test.py "${NOHUP_PY_ARGS[@]}" > "${LOG_FILE}" 2>&1 &
