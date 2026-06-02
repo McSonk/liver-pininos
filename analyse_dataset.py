@@ -27,9 +27,8 @@ import argparse
 from idssp.sonk import config
 from idssp.sonk.disk.loader import DataCollector
 from idssp.sonk.model.data import analyse_dataset
-from idssp.sonk.utils.logger import get_logger
-
-logger = get_logger(__name__)
+from idssp.sonk.utils.logger import (configure_logging, get_logger,
+                                     install_global_exception_handlers)
 
 
 def main():
@@ -42,7 +41,11 @@ def main():
      - Provides terminal output unless --no-verbose is set
     '''
 
-    cfg = config.get()
+    cfg = config.init()
+    configure_logging(cfg)
+
+    logger = get_logger(__name__)
+    install_global_exception_handlers(logger)
 
     if cfg.STATS_DIR is None:
         logger.error("STATS_DIR is not configured. Please set the 'STATS_DIR' "

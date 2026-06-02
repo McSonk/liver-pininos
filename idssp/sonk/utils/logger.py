@@ -32,13 +32,8 @@ def configure_logging(config: Config) -> logging.Logger:
     
     Params
     ------
-    `log_dir`: Optional[Path]
-        Directory where the log file will be written. If None, file logging is disabled.
-    `console_level`: int | str
-        Logging level for console output (e.g., logging.INFO or 'INFO'). Defaults to INFO.
-    `file_level`: int | str
-        Logging level for file output (e.g., logging.DEBUG or 'DEBUG'). Defaults to DEBUG.
-    
+    `config`: Config
+        The configuration object containing logging settings (e.g., log levels, log directory).
     Returns
     -------
     logging.Logger
