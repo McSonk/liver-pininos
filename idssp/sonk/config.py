@@ -173,6 +173,11 @@ _config: Config = None
 def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
     global _config
     if _config is not None:
+        if _config.MODE != mode:
+            raise RuntimeError(
+                f"Configuration already initialised in mode '{_config.MODE.value}'. "
+                f"Cannot reinitialise with mode '{mode.value}'."
+            )
         return _config
 
     #  Check computing power
