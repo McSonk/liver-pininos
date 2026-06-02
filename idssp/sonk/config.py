@@ -22,6 +22,13 @@ class AvailableModels(str, Enum):
     SWIN_UNETR = "swin-unetr"
     SWIN_UNETR_PRETRAIN = "swin-unetr-pretrain"
 
+class Mode(str, Enum):
+    """
+    Enumeration of training modes.
+    """
+    TRAIN = "train"
+    TEST = "test"
+
 # Some constant definitions
 
 VERSION_STR = "2.3.6"
@@ -47,6 +54,8 @@ class Config:
        and experiments.'''
     MODEL: AvailableModels = MODEL_TO_USE
     '''The model architecture to use. Choose from the AvailableModels enum.'''
+    MODE: Mode = Mode.TRAIN
+    '''The mode of operation for the training pipeline. Defaults to TRAIN.'''
 
     # Preprocessing
     HU_WINDOW_MIN: int = -175
@@ -161,7 +170,7 @@ class Config:
 # Module-level singleton (lazy)
 _config: Config = None
 
-def init(verbose: bool = False) -> Config:
+def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
     global _config
     if _config is not None:
         return _config
@@ -398,7 +407,11 @@ def init(verbose: bool = False) -> Config:
     per_case_train_stats_file = train_stats_dir / "per_case_summary.csv"
     persistent_dataset_dir = Path(persistent_dataset_dir_str) if persistent_dataset_dir_str else None
 
-    run_dir = output_dir / f"{VERSION_STR}-{run_id}"
+    run_dir: Path
+    if mode == Mode.TRAIN:
+        run_dir = output_dir / f"{VERSION_STR}-{run_id}"
+    else:
+        run_dir = output_dir / f"{VERSION_STR}-{run_id}_test"
     checkpoint_dir = run_dir / "checkpoints"
     log_dir = run_dir / "logs"
     tensorboard_dir = run_dir / "tensorboard"
@@ -509,6 +522,7 @@ def init(verbose: bool = False) -> Config:
         ENV=env,
         DEVICE=device,
         HC_GPU=hc_gpu,
+        MODE=mode,
         CT_ROOT=ct_root,
         CT_TEST=ct_test,
         NUM_CLASSES=num_classes,
@@ -603,6 +617,7 @@ def to_dict() -> dict:
         "DEVICE": config.DEVICE,
         "HC_GPU": config.HC_GPU,
         "RANDOM_SEED": config.RANDOM_SEED,
+        "MODE": config.MODE.value,
 
         # Preprocessing
         "HU_WINDOW_MIN": config.HU_WINDOW_MIN,
@@ -673,6 +688,7 @@ def to_param_dict() -> dict:
         "RUN_ID",
         "ENV",
         "DEVICE",
+        "MODE",
         "CT_ROOT",
         "CT_TEST",
         "LOG_LEVEL_CONSOLE",

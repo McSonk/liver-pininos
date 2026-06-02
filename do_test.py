@@ -46,7 +46,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 def _main(args: argparse.Namespace):
-    cfg = config.init()
+    cfg = config.init(mode=config.Mode.TEST)
     checkpoint = Path(args.checkpoint)
     post_process = args.post_process
     if not checkpoint.exists():

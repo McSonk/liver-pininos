@@ -184,7 +184,7 @@ class TestEvaluator:
         test_dl = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=0)
 
         results = []
-        save_path = self.config.OUTPUT_DIR / "test_predictions"
+        save_path = self.config.RUN_DIR / "test_predictions"
         save_path.mkdir(parents=True, exist_ok=True)
 
         logger.info("Starting full-volume inference on %d test volumes...", len(test_files))
@@ -305,7 +305,7 @@ class TestEvaluator:
 
     def generate_report(self, df: pd.DataFrame, output_dir: Optional[str] = None) -> str:
         """Aggregate metrics, print thesis-ready table, and export CSV."""
-        out_path = Path(output_dir) if output_dir else self.config.OUTPUT_DIR / "reports"
+        out_path = Path(output_dir) if output_dir else self.config.RUN_DIR / "reports"
         out_path.mkdir(parents=True, exist_ok=True)
 
         # Aggregate statistics (mean ± std)
