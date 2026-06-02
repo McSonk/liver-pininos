@@ -13,7 +13,7 @@ GPU_PCI_BUS="00000000:C2:00.0"
 # The project and auxiliary files are generated in the home dir
 HOME_DIR="/home/misael"
 
-# This is the name of the project directory (where main.py is located)
+# This is the name of the project directory (where do_test.py is located)
 PROJECT_NAME="liver-pininos"
 
 # Virtual environment dir
@@ -27,23 +27,62 @@ LOG_FILE="${LOG_DIR}/test_${TIMESTAMP}.log"
 TMUX_SESSION_PREFIX="thesis_test"
 
 # ==============================================================================
-# ARGUMENTS (Single pass-through parser)
+# ARGUMENTS PARSER
 # ==============================================================================
 
-# Default values
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Launches the automated liver tumour segmentation validation/testing pipeline.
+
+Options:
+  -h, --help               Display this help message and exit.
+  -chk, --checkpoint PATH  Path to the model checkpoint (.pth) to evaluate.
+                           The file must exist. The path is converted to absolute.
+  -pp, --post-process      Apply post-processing to the predicted segmentation maps.
+  
+  Any unrecognised arguments are passed directly to do_test.py.
+
+Examples:
+  $(basename "$0") --checkpoint /path/to/best_model.pth
+  $(basename "$0") -chk ./checkpoints/last_epoch.pth --post-process
+EOF
+}
+
 CHECKPOINT_PATH=""
 ARGS_FOR_PYTHON=()
 
-# Parse arguments passed to this script
 while [[ "$#" -gt 0 ]]; do
     case $1 in
+        -h|--help)
+            usage
+            exit 0
+            ;;
         --checkpoint|-chk)
-            CHECKPOINT_PATH="$2"
-            ARGS_FOR_PYTHON+=("$1" "$2")
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a file path argument." >&2
+                exit 1
+            fi
+            if [[ ! -f "$2" ]]; then
+                echo "Error: Checkpoint file does not exist: $2" >&2
+                exit 1
+            fi
+            
+            # Convert to absolute path to avoid working directory issues in tmux/nohup
+            if command -v realpath >/dev/null 2>&1; then
+                ABS_CHK_PATH=$(realpath "$2")
+            else
+                ABS_CHK_PATH=$(readlink -f "$2")
+            fi
+            CHECKPOINT_PATH="$ABS_CHK_PATH"
+            
+            # Reconstruct the argument for python using the absolute path
+            ARGS_FOR_PYTHON+=("$1" "$ABS_CHK_PATH")
             shift 2
             ;;
         *)
-            # Pass any other argument directly to Python
+            # Pass any other argument (e.g., --post-process / -pp) directly to Python
             ARGS_FOR_PYTHON+=("$1")
             shift
             ;;
@@ -51,8 +90,8 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 if [ -z "$CHECKPOINT_PATH" ]; then
-    echo "Error: --checkpoint is required."
-    echo "Usage: ./run_test.sh --checkpoint /path/to/model.pth [--post-process] [--verbose]"
+    echo "Error: --checkpoint is required." >&2
+    usage
     exit 1
 fi
 
@@ -78,7 +117,7 @@ cd "$PROJECT_DIR"
 if [ -f "${VENV_DIR}/bin/activate" ]; then
     source "${VENV_DIR}/bin/activate"
 else
-    echo "Virtual environment not found at ${VENV_DIR}" >&2
+    echo "Error: Virtual environment not found at ${VENV_DIR}" >&2
     exit 1
 fi
 
@@ -91,6 +130,19 @@ if command -v tmux >/dev/null 2>&1; then
     done
 fi
 
+# Build python arguments safely for both tmux (string) and nohup (array)
+TMUX_PY_ARGS=""
+NOHUP_PY_ARGS=()
+
+for arg in "${ARGS_FOR_PYTHON[@]}"; do
+    # Escape double quotes and wrap in double quotes for tmux string execution
+    escaped_arg="${arg//\"/\\\"}"
+    TMUX_PY_ARGS+=" \"$escaped_arg\""
+    NOHUP_PY_ARGS+=("$arg")
+done
+
+echo "Validation arguments: ${NOHUP_PY_ARGS[*]}"
+
 # 5. Launch with tmux (falls back to nohup if tmux unavailable)
 if command -v tmux &> /dev/null; then
     SESSION="${TMUX_SESSION_PREFIX}_${TIMESTAMP}"
@@ -99,7 +151,7 @@ if command -v tmux &> /dev/null; then
     CMD="cd \"${PROJECT_DIR}\" && \
         export CUDA_DEVICE_ORDER=\"${CUDA_DEVICE_ORDER}\" CUDA_VISIBLE_DEVICES=\"${CUDA_VISIBLE_DEVICES}\" && \
         . \"${VENV_DIR}/bin/activate\" && \
-        python -u do_test.py ${ARGS_FOR_PYTHON[@]} 2>&1 | tee \"${LOG_FILE}\""
+        python -u do_test.py ${TMUX_PY_ARGS} 2>&1 | tee \"${LOG_FILE}\""
 
     # Start the session
     tmux new-session -d -s "$SESSION" "$CMD"
@@ -108,9 +160,18 @@ if command -v tmux &> /dev/null; then
     echo "Attach to monitor:   tmux attach -t ${SESSION}"
     echo "Follow logs live:    tail -f ${LOG_FILE}"
     echo "Graceful stop:       tmux send-keys -t ${SESSION} C-c"
+
+    # Prompt user to attach to the tmux session automatically
+    read -r -p "Do you wish to attach to the tmux session now? [Y/n] " attach_response
+    attach_response=${attach_response,,} # Convert to lowercase
+    if [[ -z "$attach_response" || "$attach_response" == "y" || "$attach_response" == "yes" ]]; then
+        tmux attach-session -t "$SESSION"
+    else
+        echo "Detached mode. Use 'tmux attach -t ${SESSION}' to connect later."
+    fi
 else
     echo "tmux not found. Falling back to nohup..."
-    nohup python -u do_test.py ${ARGS_FOR_PYTHON[@]} > "${LOG_FILE}" 2>&1 &
+    nohup python -u do_test.py "${NOHUP_PY_ARGS[@]}" > "${LOG_FILE}" 2>&1 &
     echo "Test evaluation started in background (PID: $!)"
     echo "Follow logs live:    tail -f ${LOG_FILE}"
     echo "Graceful stop:       kill $!"
