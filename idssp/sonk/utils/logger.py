@@ -8,8 +8,8 @@ from typing import Optional
 import psutil
 import torch
 
-from idssp.sonk import config
 from idssp.sonk.config import get_container_usage
+from idssp.sonk.config import Config
 
 # -----------------------------------------------------------------------------
 # Module-level variable to ensure consistent timestamp across all loggers
@@ -23,45 +23,29 @@ def get_active_log_file() -> Optional[Path]:
     return _RUN_LOG_FILE
 
 
-def get_logger(
-        name: str,
-        console_level: Optional[int] = None
-    ) -> logging.Logger:
+def configure_logging(config: Config) -> logging.Logger:
     """
-    Creates a logger that outputs to both Console and File.
+    Configure shared console and file handlers on the root logger.
 
+    All module loggers created with logging.getLogger(__name__) will inherit these
+    handlers through propagation.
+    
     Params
     ------
-    `name`: str
-        Name of the logger (usually __name__).
-    `console_level`: Optional[int]
-        Logging level for console output (e.g., logging.INFO). If None, defaults to 
-        `config.LOG_LEVEL_CONSOLE`.
-
+    `config`: Config
+        The configuration object containing logging settings (e.g., log levels, log directory).
     Returns
     -------
     logging.Logger
-        Configured logger instance.
+        The configured root logger instance.
     """
-    cfg = config.init()
-    if console_level is None:
-        console_level = cfg.LOG_LEVEL_CONSOLE
-    log_dir = cfg.LOG_DIR
-    file_level = cfg.LOG_LEVEL_FILE
+    root_logger = logging.getLogger()
+    if root_logger.handlers:
+        return root_logger
 
-    logger = logging.getLogger(name)
-    # CRITICAL: Set the logger itself to the LOWEST level (DEBUG)
-    # This ensures the logger accepts all messages, and the Handlers do the filtering.
-    logger.setLevel(logging.DEBUG)
-    # To prevent duplicate in case other libraries also use logging (e.g., MONAI),
-    # we set propagate to False to avoid messages being passed to the root logger
-    logger.propagate = False
+    # Set root logger to the lowest level to ensure all messages are processed by handlers
+    root_logger.setLevel(logging.DEBUG)
 
-    # Prevent adding handlers multiple times if imported repeatedly
-    if logger.handlers:
-        return logger
-
-    # Format: [Time] [Level] [Module] Message
     formatter = logging.Formatter(
         "%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S"
@@ -69,27 +53,44 @@ def get_logger(
 
     # 1. Console Handler (stdout, filtered by console_level)
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(console_level) # e.g., INFO
+    console_handler.setLevel(config.LOG_LEVEL_CONSOLE)
     console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
+    root_logger.addHandler(console_handler)
 
-    # 2. File Handler (if log_dir is provided)
-    if log_dir:
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / "training.log"
-        global _RUN_LOG_FILE
-        if _RUN_LOG_FILE is None:  # Only set once per process run
-            _RUN_LOG_FILE = log_file
+    # 2. File Handler 
+    config.LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_file = config.LOG_DIR / "training.log"
 
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(file_level) 
-        file_handler.setFormatter(formatter)
+    if _RUN_LOG_FILE is None:
+        globals()["_RUN_LOG_FILE"] = log_file
 
-        logger.addHandler(file_handler)
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(config.LOG_LEVEL_FILE)
+    file_handler.setFormatter(formatter)
+    root_logger.addHandler(file_handler)
 
-        logger.debug("Logging initialized. File: %s", log_file)
+    root_logger.debug("Logging initialized. File: %s", log_file)
 
-    return logger
+    return root_logger
+
+
+def get_logger(
+        name: str
+    ) -> logging.Logger:
+    """
+    Return a named logger with optional shared logging bootstrap.
+
+    Params
+    ------
+    `name`: str
+        Name of the logger (usually __name__).
+
+    Returns
+    -------
+    logging.Logger
+        A named logger instance.
+    """
+    return logging.getLogger(name)
 
 def log_memory_usage(logger: logging.Logger, prefix: str = ""):
     """
@@ -138,7 +139,7 @@ def log_memory_usage(logger: logging.Logger, prefix: str = ""):
             logger.info("%sCPU (container) Memory - Used: %.2f GB, Limit: %.2f GB, "
                         "Free: %.2f GB (%.1f%% of limit used)",
                         prefix, usage, limit, free, percentage)
-    except Exception as e:
+    except (OSError, RuntimeError, ValueError) as e:
         logger.warning("%sCould not retrieve CPU memory usage: %s", prefix, str(e))
 
 def install_global_exception_handlers(logger: logging.Logger) -> None:
