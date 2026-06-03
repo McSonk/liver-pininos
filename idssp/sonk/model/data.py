@@ -4,9 +4,11 @@ from typing import Any, Dict, List, Optional
 
 import nibabel as nib
 import numpy as np
+from scipy import ndimage
+from scipy.stats import skew
 
-from idssp.sonk.view import utils
 from idssp.sonk.utils.logger import get_logger
+from idssp.sonk.view import utils
 
 logger = get_logger(__name__)
 
@@ -176,6 +178,51 @@ class VolumeWrapper:
             liver_hu_min, liver_hu_max = None, None
             logger.warning("No liver voxels found in volume. Cannot compute liver HU statistics.")
 
+        # Tumour intensity statistics (parallel to liver stats)
+        tumour_mask = self.label_data == 2
+        if np.any(tumour_mask):
+            tumour_hu = self.image_data[tumour_mask]
+            tumour_hu_mean = tumour_hu.mean()
+            tumour_hu_std = tumour_hu.std()
+            tumour_hu_median = np.median(tumour_hu)
+            tumour_hu_skew = skew(tumour_hu)
+            hu_p01 = float(np.percentile(tumour_hu, 0.5))
+            hu_p99 = float(np.percentile(tumour_hu, 99.5))
+            tumour_hu_min = tumour_hu.min()
+            tumour_hu_max = tumour_hu.max()
+        else:
+            tumour_hu_mean = tumour_hu_std = tumour_hu_median = tumour_hu_skew = None
+            hu_p01 = hu_p99 = tumour_hu_min = tumour_hu_max = None
+
+        # Voxel volume for ml conversion
+        zooms = self.image.header.get_zooms()
+        voxel_volume_mm3 = zooms[0] * zooms[1] * zooms[2]
+
+        # Volume in millilitres
+        liver_volume_ml = liver_voxels * voxel_volume_mm3 / 1000.0
+        tumour_volume_ml = tumor_voxels * voxel_volume_mm3 / 1000.0
+
+        # Lesion-level metrics
+        lesion_metrics = self._compute_lesion_metrics(self.label_data)
+
+        # Simple liver texture variance (tumour-excluded)
+        liver_only_mask = (self.label_data == 1)
+        if np.any(liver_only_mask):
+            liver_texture_variance = float(np.var(self.image_data[liver_only_mask]))
+        else:
+            liver_texture_variance = None
+
+        # Noise estimate: std in homogeneous liver sub-region (optional refinement)
+        # Using interquartile range within liver as robust noise proxy
+        if np.any(liver_only_mask):
+            liver_hu_vals = self.image_data[liver_only_mask]
+            q1, q3 = np.percentile(liver_hu_vals, [25, 75])
+            iqr = q3 - q1
+            # Approximate noise as IQR / 1.35 (for Gaussian)
+            liver_noise_estimate = iqr / 1.35 if iqr > 0 else None
+        else:
+            liver_noise_estimate = None
+
         return {
             'image_path': self.img_path,
             'label_path': self.label_path,
@@ -203,7 +250,106 @@ class VolumeWrapper:
             'liver_hu_p01': hu_p01,
             'liver_hu_p99': hu_p99,
             'liver_hu_min': liver_hu_min,
-            'liver_hu_max': liver_hu_max
+            'liver_hu_max': liver_hu_max,
+            # Tumour intensity statistics
+            'tumour_hu_mean': tumour_hu_mean,
+            'tumour_hu_std': tumour_hu_std,
+            'tumour_hu_median': tumour_hu_median,
+            'tumour_hu_skewness': tumour_hu_skew,
+            'tumour_hu_p01': hu_p01,
+            'tumour_hu_p99': hu_p99,
+            'tumour_hu_min': tumour_hu_min,
+            'tumour_hu_max': tumour_hu_max,
+
+            # Volume in clinical units
+            'voxel_volume_mm3': voxel_volume_mm3,
+            'liver_volume_ml': liver_volume_ml,
+            'tumour_volume_ml': tumour_volume_ml,
+
+            # Lesion-level metrics
+            'num_lesions': lesion_metrics['num_lesions'],
+            'lesion_volumes_ml': lesion_metrics['lesion_volumes_ml'],
+            'lesion_equiv_diameters_mm': lesion_metrics['lesion_equiv_diameters_mm'],
+            'lesion_sphericities': lesion_metrics['lesion_sphericities'],
+            'min_lesion_diameter_mm': lesion_metrics['min_lesion_diameter_mm'],
+            'max_lesion_diameter_mm': lesion_metrics['max_lesion_diameter_mm'],
+            'mean_lesion_diameter_mm': lesion_metrics['mean_lesion_diameter_mm'],
+
+            # Liver texture and noise
+            'liver_texture_variance': liver_texture_variance,
+            'liver_noise_estimate': liver_noise_estimate,
+        }
+
+    def _compute_lesion_metrics(self, label_data: np.ndarray) -> dict:
+        """
+        Compute lesion-level metrics for tumour mask (label == 2).
+        
+        Returns
+        -------
+        dict
+            Contains:
+            - num_lesions: int
+            - lesion_volumes_ml: list[float]
+            - lesion_equiv_diameters_mm: list[float]
+            - lesion_sphericities: list[float] (if computable)
+        """
+        tumour_mask = (label_data == 2).astype(np.uint8)
+
+        if not np.any(tumour_mask):
+            return {
+                'num_lesions': 0,
+                'lesion_volumes_ml': [],
+                'lesion_equiv_diameters_mm': [],
+                'lesion_sphericities': [],
+                'min_lesion_diameter_mm': None,
+                'max_lesion_diameter_mm': None,
+                'mean_lesion_diameter_mm': None
+            }
+
+        # Connected component labelling (26-connectivity for 3D)
+        structure = ndimage.generate_binary_structure(3, 3)
+        labelled, num = ndimage.label(tumour_mask, structure=structure)
+
+        voxel_volume_mm3 = self.image.header.get_zooms()[0] * \
+                        self.image.header.get_zooms()[1] * \
+                        self.image.header.get_zooms()[2]
+
+        lesion_volumes_ml = []
+        lesion_equiv_diameters_mm = []
+        lesion_sphericities = []
+
+        for label_idx in range(1, num + 1):
+            lesion_mask = (labelled == label_idx)
+            volume_voxels = np.sum(lesion_mask)
+            volume_ml = volume_voxels * voxel_volume_mm3 / 1000.0
+            lesion_volumes_ml.append(volume_ml)
+
+            # Equivalent diameter: diameter of sphere with same volume
+            # V = (4/3)πr³ → r = (3V/4π)^(1/3) → d = 2r
+            volume_mm3 = volume_voxels * voxel_volume_mm3
+            equiv_diameter_mm = 2 * ((3 * volume_mm3) / (4 * np.pi)) ** (1/3)
+            lesion_equiv_diameters_mm.append(equiv_diameter_mm)
+
+            # Sphericity: 4πV / A² (requires surface area approximation)
+            # Approximate surface via morphological gradient
+            erosion = ndimage.binary_erosion(lesion_mask, structure=structure)
+            surface_voxels = np.sum(lesion_mask & ~erosion)
+            surface_area_mm2 = surface_voxels * voxel_volume_mm3 ** (2/3)  # Approximation
+            if surface_area_mm2 > 0:
+                sphericity = (4 * np.pi * volume_mm3) / (surface_area_mm2 ** 2)
+                sphericity = min(1.0, max(0.0, sphericity))  # Clamp to [0,1]
+            else:
+                sphericity = None
+            lesion_sphericities.append(sphericity)
+
+        return {
+            'num_lesions': num,
+            'lesion_volumes_ml': lesion_volumes_ml,
+            'lesion_equiv_diameters_mm': lesion_equiv_diameters_mm,
+            'lesion_sphericities': lesion_sphericities,
+            'min_lesion_diameter_mm': min(lesion_equiv_diameters_mm) if lesion_equiv_diameters_mm else None,
+            'max_lesion_diameter_mm': max(lesion_equiv_diameters_mm) if lesion_equiv_diameters_mm else None,
+            'mean_lesion_diameter_mm': np.mean(lesion_equiv_diameters_mm) if lesion_equiv_diameters_mm else None
         }
 class DataWrapper:
     def __init__(self):
