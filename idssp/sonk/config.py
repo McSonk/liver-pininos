@@ -31,9 +31,9 @@ class Mode(str, Enum):
 
 # Some constant definitions
 
-VERSION_STR = "2.3.6"
+VERSION_STR = "2.4"
 '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
-MODEL_TO_USE = AvailableModels.SWIN_UNETR
+MODEL_TO_USE = AvailableModels.U_NET
 @dataclass(frozen=True)
 class Config:
     # Environment & Device
@@ -124,17 +124,28 @@ class Config:
        This should be a list of length `NUM_CLASSES`, where the value at `TUMOUR_CLASS_INDEX`
        is higher to emphasise learning the tumour class. For example, for `NUM_CLASSES=3`
        and `TUMOUR_CLASS_INDEX=2`'''
-    LEARNING_RATE: float = 2e-4
-    SLIDING_WINDOW_BATCH_SIZE: int = 4
+
+    # For SwinUNETR: 2e-4
+    # Everything else: 1e-4
+    LEARNING_RATE: float = 1e-4
+
+    # For SwinUNETR: 4
+    # Everything else: 16
+    SLIDING_WINDOW_BATCH_SIZE: int = 16
 
     # Early Stopping
     EARLY_STOPPING_PATIENCE: int = 35
     '''Number of epochs with no improvement after which training will be stopped.'''
     EARLY_STOPPING_MIN_DELTA: float = 0.001
     '''Minimum change in the monitored metric to qualify as an improvement.'''
-    WARMUP_EPOCHS: int = 15
+    # For SwinUNETR: 15
+    # Everything else: 10
+    WARMUP_EPOCHS: int = 10
     '''Number of epochs for linear learning rate warmup (CosineSchedule).'''
-    COSINE_ETA_MIN: float = 2e-6
+
+    # For SwinUNETR: 1e-6
+    # Everything else: 1e-5
+    COSINE_ETA_MIN: float = 1e-6
     '''Minimum learning rate for the cosine annealing scheduler.'''
 
     # Paths (resolved at init)
@@ -199,6 +210,8 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
 
     run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
+    resource_intensive_model = MODEL_TO_USE in {AvailableModels.SWIN_UNETR, AvailableModels.SWIN_UNETR_PRETRAIN}
+
     cpu_count = os.cpu_count() or 1
 
     # ---------------------------------------
@@ -214,15 +227,19 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
     if hc_gpu:
         if lots_of_ram:
             print("[Config] Detected high-compute GPU and lots of RAM. Using optimal settings.")
-            # TODO: Make this model-aware (12 for light models)
-            gpu_num_workers = 8
+            gpu_num_workers = 8 if resource_intensive_model else 12
         else:
             print("[Config] Detected high-compute GPU but limited RAM. Using "
                    "conservative settings.")
-            gpu_num_workers = 2
+            gpu_num_workers = 2 if resource_intensive_model else 4
     else:
         print("[Config] No high-compute GPU detected. Using minimal settings for memory safety.")
         gpu_num_workers = 1
+
+    # TODO: do something similar, but with model
+    # Example: general_settings = { ... }
+    # if MODEL_TO_USE == AvailableModels.SWIN_UNETR:
+    # general_settings['..'] = ...
 
     local_specific = {
         "cache_num_workers": 0,
@@ -239,7 +256,6 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
         "cache_num_workers": 8 if lots_of_ram else 1,
         "dl_num_workers": min(gpu_num_workers, cpu_count),
         "pin_memory": True,
-        # TODO: configure batch_size and train_patch_size based on model and flags
         "batch_size": 4 if hc_gpu else 2,
         "num_epochs": 200 if hc_gpu else 5,
         "train_patch_size": (128, 128, 128) if hc_gpu else (64, 64, 64),
