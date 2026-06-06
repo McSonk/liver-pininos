@@ -4,9 +4,12 @@ from typing import Any, Dict, List, Optional
 
 import nibabel as nib
 import numpy as np
+import pandas as pd
+from scipy import ndimage
+from scipy.stats import skew
 
-from idssp.sonk.view import utils
 from idssp.sonk.utils.logger import get_logger
+from idssp.sonk.view import utils
 
 logger = get_logger(__name__)
 
@@ -176,6 +179,51 @@ class VolumeWrapper:
             liver_hu_min, liver_hu_max = None, None
             logger.warning("No liver voxels found in volume. Cannot compute liver HU statistics.")
 
+        # Tumour intensity statistics (parallel to liver stats)
+        tumour_mask = self.label_data == 2
+        if np.any(tumour_mask):
+            tumour_hu = self.image_data[tumour_mask]
+            tumour_hu_mean = tumour_hu.mean()
+            tumour_hu_std = tumour_hu.std()
+            tumour_hu_median = np.median(tumour_hu)
+            tumour_hu_skew = skew(tumour_hu)
+            hu_p01 = float(np.percentile(tumour_hu, 0.5))
+            hu_p99 = float(np.percentile(tumour_hu, 99.5))
+            tumour_hu_min = tumour_hu.min()
+            tumour_hu_max = tumour_hu.max()
+        else:
+            tumour_hu_mean = tumour_hu_std = tumour_hu_median = tumour_hu_skew = None
+            hu_p01 = hu_p99 = tumour_hu_min = tumour_hu_max = None
+
+        # Voxel volume for ml conversion
+        zooms = self.image.header.get_zooms()
+        voxel_volume_mm3 = zooms[0] * zooms[1] * zooms[2]
+
+        # Volume in millilitres
+        liver_volume_ml = liver_voxels * voxel_volume_mm3 / 1000.0
+        tumour_volume_ml = tumor_voxels * voxel_volume_mm3 / 1000.0
+
+        # Lesion-level metrics
+        lesion_metrics = self._compute_lesion_metrics(self.label_data)
+
+        # Simple liver texture variance (tumour-excluded)
+        liver_only_mask = (self.label_data == 1)
+        if np.any(liver_only_mask):
+            liver_texture_variance = float(np.var(self.image_data[liver_only_mask]))
+        else:
+            liver_texture_variance = None
+
+        # Noise estimate: std in homogeneous liver sub-region (optional refinement)
+        # Using interquartile range within liver as robust noise proxy
+        if np.any(liver_only_mask):
+            liver_hu_vals = self.image_data[liver_only_mask]
+            q1, q3 = np.percentile(liver_hu_vals, [25, 75])
+            iqr = q3 - q1
+            # Approximate noise as IQR / 1.35 (for Gaussian)
+            liver_noise_estimate = iqr / 1.35 if iqr > 0 else None
+        else:
+            liver_noise_estimate = None
+
         return {
             'image_path': self.img_path,
             'label_path': self.label_path,
@@ -203,7 +251,106 @@ class VolumeWrapper:
             'liver_hu_p01': hu_p01,
             'liver_hu_p99': hu_p99,
             'liver_hu_min': liver_hu_min,
-            'liver_hu_max': liver_hu_max
+            'liver_hu_max': liver_hu_max,
+            # Tumour intensity statistics
+            'tumour_hu_mean': tumour_hu_mean,
+            'tumour_hu_std': tumour_hu_std,
+            'tumour_hu_median': tumour_hu_median,
+            'tumour_hu_skewness': tumour_hu_skew,
+            'tumour_hu_p01': hu_p01,
+            'tumour_hu_p99': hu_p99,
+            'tumour_hu_min': tumour_hu_min,
+            'tumour_hu_max': tumour_hu_max,
+
+            # Volume in clinical units
+            'voxel_volume_mm3': voxel_volume_mm3,
+            'liver_volume_ml': liver_volume_ml,
+            'tumour_volume_ml': tumour_volume_ml,
+
+            # Lesion-level metrics
+            'num_lesions': lesion_metrics['num_lesions'],
+            'lesion_volumes_ml': lesion_metrics['lesion_volumes_ml'],
+            'lesion_equiv_diameters_mm': lesion_metrics['lesion_equiv_diameters_mm'],
+            'lesion_sphericities': lesion_metrics['lesion_sphericities'],
+            'min_lesion_diameter_mm': lesion_metrics['min_lesion_diameter_mm'],
+            'max_lesion_diameter_mm': lesion_metrics['max_lesion_diameter_mm'],
+            'mean_lesion_diameter_mm': lesion_metrics['mean_lesion_diameter_mm'],
+
+            # Liver texture and noise
+            'liver_texture_variance': liver_texture_variance,
+            'liver_noise_estimate': liver_noise_estimate,
+        }
+
+    def _compute_lesion_metrics(self, label_data: np.ndarray) -> dict:
+        """
+        Compute lesion-level metrics for tumour mask (label == 2).
+        
+        Returns
+        -------
+        dict
+            Contains:
+            - num_lesions: int
+            - lesion_volumes_ml: list[float]
+            - lesion_equiv_diameters_mm: list[float]
+            - lesion_sphericities: list[float] (if computable)
+        """
+        tumour_mask = (label_data == 2).astype(np.uint8)
+
+        if not np.any(tumour_mask):
+            return {
+                'num_lesions': 0,
+                'lesion_volumes_ml': [],
+                'lesion_equiv_diameters_mm': [],
+                'lesion_sphericities': [],
+                'min_lesion_diameter_mm': None,
+                'max_lesion_diameter_mm': None,
+                'mean_lesion_diameter_mm': None
+            }
+
+        # Connected component labelling (26-connectivity for 3D)
+        structure = ndimage.generate_binary_structure(3, 3)
+        labelled, num = ndimage.label(tumour_mask, structure=structure)
+
+        voxel_volume_mm3 = self.image.header.get_zooms()[0] * \
+                        self.image.header.get_zooms()[1] * \
+                        self.image.header.get_zooms()[2]
+
+        lesion_volumes_ml = []
+        lesion_equiv_diameters_mm = []
+        lesion_sphericities = []
+
+        for label_idx in range(1, num + 1):
+            lesion_mask = (labelled == label_idx)
+            volume_voxels = np.sum(lesion_mask)
+            volume_ml = volume_voxels * voxel_volume_mm3 / 1000.0
+            lesion_volumes_ml.append(volume_ml)
+
+            # Equivalent diameter: diameter of sphere with same volume
+            # V = (4/3)πr³ → r = (3V/4π)^(1/3) → d = 2r
+            volume_mm3 = volume_voxels * voxel_volume_mm3
+            equiv_diameter_mm = 2 * ((3 * volume_mm3) / (4 * np.pi)) ** (1/3)
+            lesion_equiv_diameters_mm.append(equiv_diameter_mm)
+
+            # Sphericity: 4πV / A² (requires surface area approximation)
+            # Approximate surface via morphological gradient
+            erosion = ndimage.binary_erosion(lesion_mask, structure=structure)
+            surface_voxels = np.sum(lesion_mask & ~erosion)
+            surface_area_mm2 = surface_voxels * voxel_volume_mm3 ** (2/3)  # Approximation
+            if surface_area_mm2 > 0:
+                sphericity = (4 * np.pi * volume_mm3) / (surface_area_mm2 ** 2)
+                sphericity = min(1.0, max(0.0, sphericity))  # Clamp to [0,1]
+            else:
+                sphericity = None
+            lesion_sphericities.append(sphericity)
+
+        return {
+            'num_lesions': num,
+            'lesion_volumes_ml': lesion_volumes_ml,
+            'lesion_equiv_diameters_mm': lesion_equiv_diameters_mm,
+            'lesion_sphericities': lesion_sphericities,
+            'min_lesion_diameter_mm': min(lesion_equiv_diameters_mm) if lesion_equiv_diameters_mm else None,
+            'max_lesion_diameter_mm': max(lesion_equiv_diameters_mm) if lesion_equiv_diameters_mm else None,
+            'mean_lesion_diameter_mm': np.mean(lesion_equiv_diameters_mm) if lesion_equiv_diameters_mm else None
         }
 class DataWrapper:
     def __init__(self):
@@ -398,34 +545,34 @@ class DatasetSummary:
         '''
         if not self.per_case_rows:
             raise ValueError("No data analysed. Call analyse_all() first.")
-        
+
         rows = self.per_case_rows
         n = len(rows)
-        
+
         # Shape statistics (D, H, W)
         shapes = np.array([r['image_shape'] for r in rows])
         shape_mean = shapes.mean(axis=0).tolist()
         shape_median = np.median(shapes, axis=0).tolist()
         shape_std = shapes.std(axis=0).tolist()
-        
+
         # Spacing statistics
         spacing_x = [r['spacing_x'] for r in rows]
         spacing_y = [r['spacing_y'] for r in rows]
         spacing_z = [r['spacing_z'] for r in rows]
-        
+
         spacing_mean = [np.mean(spacing_x), np.mean(spacing_y), np.mean(spacing_z)]
         spacing_std = [np.std(spacing_x), np.std(spacing_y), np.std(spacing_z)]
-        
+
         # Orientation distribution
         orientation_counts: Dict[str, int] = {}
         for r in rows:
             key = str(r['affine_codes'])
             orientation_counts[key] = orientation_counts.get(key, 0) + 1
-        
+
         # Tumor proportion
         num_with_tumor = sum(1 for r in rows if r['has_tumor'])
         tumor_proportion = num_with_tumor / n
-        
+
         # Slice range statistics
         liver_spans = []
         tumor_spans = []
@@ -453,7 +600,7 @@ class DatasetSummary:
         ct_maxs = [r['ct_max'] for r in rows]
         ct_min_mean = np.mean(ct_mins)
         ct_max_mean = np.mean(ct_maxs)
-        
+
         self.aggregate_stats = {
             'num_volumes': n,
             'shape_mean': shape_mean,
@@ -475,7 +622,7 @@ class DatasetSummary:
             'ct_min_mean': ct_min_mean,
             'ct_max_mean': ct_max_mean
         }
-        
+
         return self.aggregate_stats
 
     def print_table(self) -> None:
@@ -523,8 +670,59 @@ class DatasetSummary:
         logger.info("CT intensity (mean range):   %d to %d", agg['ct_min_mean'], agg['ct_max_mean'])
         logger.info("=" * 50)
 
+    def _flatten_dict(self, d: Dict[str, Any], parent_key: str = '', sep: str = '_') -> Dict[str, Any]:
+        """
+        Recursively flatten a nested dictionary for CSV export.
+        Lists are converted to semicolon-separated strings.
+        """
+        items = []
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, dict):
+                items.extend(self._flatten_dict(v, new_key, sep=sep).items())
+            elif isinstance(v, list):
+                # Convert list to semicolon-separated string for CSV compatibility
+                items.append((new_key, ';'.join(map(str, v))))
+            elif isinstance(v, (np.floating, np.integer)):
+                # Convert numpy scalars to native Python types
+                items.append((new_key, v.item()))
+            else:
+                items.append((new_key, v))
+        return dict(items)
+
+    def export_csv_auto(self, output_path: str, exclude_keys: Optional[List[str]] = None) -> None:
+        """
+        Export per-case rows to CSV using automatic flattening.
+        
+        Parameters
+        ----------
+        output_path : str
+            Path to the output CSV file.
+        exclude_keys : list of str, optional
+            Keys to exclude from export (e.g., large arrays, paths).
+        """
+        if not self.per_case_rows:
+            raise ValueError("No data analysed. Call analyse_all() first.")
+
+        if exclude_keys is None:
+            exclude_keys = ['image_path', 'label_path']  # Exclude long paths by default
+
+        flattened_rows = []
+        for r in self.per_case_rows:
+            flat = self._flatten_dict(r)
+            # Remove excluded keys
+            for key in exclude_keys:
+                flat.pop(key, None)
+            flattened_rows.append(flat)
+
+        # Use pandas for robust CSV handling
+        df = pd.DataFrame(flattened_rows)
+        df.to_csv(output_path, index=False)
+        print(f"CSV exported to: {output_path} ({len(df)} rows, {len(df.columns)} columns)")
+
     def export_csv(self, output_path: str) -> None:
         '''
+        DEPRECATED: Use export_csv_auto() instead for more robust handling of nested structures and data types.
         Export per-case rows to a CSV file for thesis analysis.
         
         Parameters
@@ -532,6 +730,8 @@ class DatasetSummary:
         output_path : str
             Path to the output CSV file.
         '''
+        logger.warning("export_csv() is deprecated. Use export_csv_auto() for better "
+                       "handling of nested data and types.")
         if not self.per_case_rows:
             raise ValueError("No data analysed. Call analyse_all() first.")
 
@@ -573,6 +773,35 @@ class DatasetSummary:
                 'liver_hu_p99': r['liver_hu_p99'],
                 'liver_hu_min': r['liver_hu_min'],
                 'liver_hu_max': r['liver_hu_max'],
+                # Tumour intensity statistics
+                'tumour_hu_mean': r['tumour_hu_mean'],
+                'tumour_hu_std': r['tumour_hu_std'],
+                'tumour_hu_median': r['tumour_hu_median'],
+                'tumour_hu_skewness': r['tumour_hu_skew'],
+                'tumour_hu_p01': r['hu_p01'],
+                'tumour_hu_p99': r['hu_p99'],
+                'tumour_hu_min': r['tumour_hu_min'],
+                'tumour_hu_max': r['tumour_hu_max'],
+
+                # Volume in clinical units
+                'voxel_volume_mm3': r['voxel_volume_mm3'],
+                'liver_volume_ml': r['liver_volume_ml'],
+                'tumour_volume_ml': r['tumour_volume_ml'],
+
+                # Lesion-level metrics
+                'num_lesions': r['num_lesions'],
+                'lesion_volumes_ml': r['lesion_volumes_ml'],
+                'lesion_equiv_diameters_mm': r['lesion_equiv_diameters_mm'],
+                'lesion_sphericities': r['lesion_sphericities'],
+                'min_lesion_diameter_mm': r['min_lesion_diameter_mm'],
+                'max_lesion_diameter_mm': r['max_lesion_diameter_mm'],
+                'mean_lesion_diameter_mm': r['mean_lesion_diameter_mm'],
+
+                # Liver texture and noise
+                'liver_texture_variance': r['liver_texture_variance'],
+                'liver_noise_estimate': r['liver_noise_estimate'],
+
+                # Include tumor presence as a simple boolean for easier analysis
                 'has_tumor': r['has_tumor']
             }
             csv_rows.append(csv_row)
@@ -672,7 +901,7 @@ def analyse_dataset(datasources: List[Dict[str, str]],
         summary.print_table()
 
     if output_csv:
-        summary.export_csv(output_csv)
+        summary.export_csv_auto(output_csv)
 
     if output_agg_csv:
         summary.export_aggregate_csv(output_agg_csv)

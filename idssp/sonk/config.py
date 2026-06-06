@@ -149,7 +149,6 @@ class Config:
     STATS_DIR: Path = field(default_factory=Path)
     SPLIT_DIR: Path = field(default_factory=Path)
     TRAIN_STATS_DIR: Path = field(default_factory=Path)
-    PER_CASE_TRAIN_STATS_FILE: Path = field(default_factory=Path)
     PRE_TRAINED_MODEL_PATH: Path = field(default_factory=Path)
     LOG_LEVEL_CONSOLE: str = "INFO"
     LOG_LEVEL_FILE: str = "DEBUG"
@@ -409,7 +408,6 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
     pre_trained_model_path = Path(pre_trained_model_path_str) if pre_trained_model_path_str else None
     train_stats_dir = stats_dir / "train"
     train_stats_dir.mkdir(parents=True, exist_ok=True)
-    per_case_train_stats_file = train_stats_dir / "per_case_summary.csv"
     persistent_dataset_dir = Path(persistent_dataset_dir_str) if persistent_dataset_dir_str else None
 
     run_dir: Path
@@ -541,7 +539,6 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
         STATS_DIR=stats_dir,
         SPLIT_DIR=split_dir,
         TRAIN_STATS_DIR=train_stats_dir,
-        PER_CASE_TRAIN_STATS_FILE=per_case_train_stats_file,
         PRE_TRAINED_MODEL_PATH=pre_trained_model_path,
         LOG_LEVEL_CONSOLE=log_level_console,
         LOG_LEVEL_FILE=log_level_file,
@@ -671,7 +668,6 @@ def to_dict() -> dict:
         "SPLIT_DIR": str(config.SPLIT_DIR),
         "TRAIN_STATS_DIR": str(config.TRAIN_STATS_DIR),
         "PRE_TRAINED_MODEL_PATH": str(config.PRE_TRAINED_MODEL_PATH) if config.PRE_TRAINED_MODEL_PATH else None,
-        "PER_CASE_TRAIN_STATS_FILE": str(config.PER_CASE_TRAIN_STATS_FILE),
 
         # Notifications (exclude contact details/secrets from persisted config snapshots)
         "ENABLE_EMAIL_NOTIFICATIONS": config.ENABLE_EMAIL_NOTIFICATIONS,
@@ -710,7 +706,6 @@ def to_param_dict() -> dict:
         "SPLIT_DIR",
         "PRE_TRAINED_MODEL_PATH",
         "TRAIN_STATS_DIR",
-        "PER_CASE_TRAIN_STATS_FILE",
         "USE_CACHE_TRAIN_DATASET",
         "USE_CACHE_VAL_DATASET",
         "PIN_MEMORY",

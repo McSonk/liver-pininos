@@ -12,6 +12,13 @@
 #
 # 2. Install the rest of the dependencies:
 #    pip install -r requirements.txt
+#
+# (Optional) For VSCode development:
+# pip install "ipython==8.39.0"
+# pip install ipykernel
+#
+# (Optional) For stratification:
+# pip install "iterative-stratification==0.1.9"
 # ==============================================================================
 
 

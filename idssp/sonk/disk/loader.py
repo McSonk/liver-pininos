@@ -4,15 +4,9 @@ This module is responsible for reading the dataset from disk, discovering and
 pairing image and label files, and providing the necessary file paths for further
 processing in the pipeline.
 '''
-
-import datetime
 import glob
 import json
-from collections import defaultdict
 from pathlib import Path
-
-import pandas as pd
-from monai.data import partition_dataset
 
 from idssp.sonk import config
 from idssp.sonk.utils.logger import get_logger
@@ -195,136 +189,6 @@ class DataCollector:
         logger.debug("Extracted %d image-label pairs from the dataset.", len(self.datasources))
         return self.datasources
 
-    def get_reproducible_split(self, train_ratio: float = 0.8) -> tuple[list, list]:
-        """
-        Splits the paired data into training and validation sets deterministically.
-        
-        Returns
-        -------
-        train_files: list[dict]
-        val_files: list[dict]
-        """
-        if not self.datasources:
-            raise ValueError("No data loaded. Call read_dir() first.")
-
-        train_files, val_files = partition_dataset(
-            data=self.datasources,
-            ratios=[train_ratio, 1.0 - train_ratio],
-            shuffle=True,
-            seed=self.config.RANDOM_SEED
-        )
-
-        logger.info("Split dataset into %d training and %d validation samples.",
-                    len(train_files), len(val_files))
-
-        # Log split for thesis appendix
-        log_path = self.config.SPLIT_DIR / f"{self.d_sets[0].ds_source}_split_seed{self.config.RANDOM_SEED}.json"
-        log_path.write_text(
-            json.dumps(
-                {
-                    "train": [Path(f["image"]).name for f in train_files],
-                    "val":   [Path(f["image"]).name for f in val_files],
-                    "creation_date": datetime.datetime.now().isoformat()
-                },
-                indent=2
-            ),
-            encoding="utf-8"
-        )
-        logger.info("Split logged to %s", log_path)
-
-        return train_files, val_files
-
-    def _assign_bin(self, row) -> str:
-        '''Assigns a tumour burden bin label based on the tumor-to-liver ratio.
-
-        - "none": No tumor present (tumor_to_liver_ratio = 0)
-        - "micro": Very low tumor burden (0 < tumor_to_liver_ratio < 0.2%)
-        - "low": Low tumor burden (0.2 % ≤ tumor_to_liver_ratio < 1%)
-        - "mid": Moderate tumor burden (1% ≤ tumor_to_liver_ratio < 6%)
-        - "high": High tumor burden (tumor_to_liver_ratio ≥ 6%)
-        '''
-        if not row["has_tumor"]:
-            return "none"
-        r = row["tumor_to_liver_ratio"]
-        if r < 0.002:
-            return "micro"
-        if r < 0.01:
-            return "low"
-        if r < 0.06:
-            return "mid"
-        return "high"
-
-    def _calc_and_write(self, file_path: Path, train_ratio: float=0.8) -> tuple[list, list]:
-        '''Calculates the stratified split based on the stats and writes
-        the split log to disk.'''
-        if not self.config.PER_CASE_TRAIN_STATS_FILE.exists():
-            raise FileNotFoundError(
-                f"per_case_summary.csv not found at {self.config.PER_CASE_TRAIN_STATS_FILE}. "
-                "Run analyse_dataset.py first."
-            )
-
-        logger.info("No existing split log found. Calculating new stratified split...")
-
-        stats = pd.read_csv(self.config.PER_CASE_TRAIN_STATS_FILE)
-
-        # add classification
-        stats["burden_bin"] = stats.apply(self._assign_bin, axis=1)
-        # Map volume filename → burden bin
-        bin_lookup = dict(zip(stats["case_name"], stats["burden_bin"]))
-        # produces a mapping like {"volume-01.nii": "low", "volume-02.nii": "high", ...}
-
-        # --- Group datasources by bin ---
-        bins: dict[str, list] = defaultdict(list)
-
-        for ds in self.datasources:
-            fname = Path(ds["image"]).name
-            b = bin_lookup.get(fname)
-            if b is None:
-                raise ValueError(f"No stats entry for {fname}. Check if the filename matches the case_name in the CSV.")
-            else:
-                bins[b].append(ds)
-
-        # --- Stratified split: partition each bin independently ---
-        train_files, val_files = [], []
-        bin_order = ["none", "micro", "low", "mid", "high"]
-
-        for bin_name in bin_order:
-            group = bins.get(bin_name, [])
-            if not group:
-                logger.warning("No samples found for bin '%s'. Skipping this bin.", bin_name)
-                continue
-            t, v = partition_dataset(
-                data=group,
-                ratios=[train_ratio, 1.0 - train_ratio],
-                shuffle=True,
-                seed=self.config.RANDOM_SEED
-            )
-            train_files.extend(t)
-            val_files.extend(v)
-            logger.debug(
-                "Bin %-5s: %2d total → %2d train / %2d val",
-                bin_name, len(group), len(t), len(v)
-            )
-
-        file_path.write_text(
-            json.dumps(
-                {
-                    "train": [Path(f["image"]).name for f in train_files],
-                    "val":   [Path(f["image"]).name for f in val_files],
-                    "creation_date": datetime.datetime.now().isoformat(),
-                    "stratified_by": "tumor_to_liver_ratio_bin",
-                    "bins": {
-                        b: [Path(f["image"]).name for f in bins[b]]
-                        for b in bin_order if b in bins
-                    }
-                },
-                indent=2
-            ),
-            encoding="utf-8"
-        )
-        logger.info("Split logged to %s. Next time you run the script, it will use this split.", file_path)
-        return train_files, val_files
-
     def _load_split(self, file_path: Path) -> tuple[list, list]:
         logger.info("Existing split log found at %s. Loading split...", file_path)
         with open(file_path, "r", encoding="utf-8") as f:
@@ -368,10 +232,13 @@ class DataCollector:
 
         json_file_name = f"{self.d_sets[0].ds_source}_split_seed{self.config.RANDOM_SEED}.json"
         json_file_path = self.config.SPLIT_DIR / json_file_name
-        if json_file_path.exists():
-            train_files, val_files = self._load_split(json_file_path)
-        else:
-            train_files, val_files = self._calc_and_write(json_file_path)
+        if not json_file_path.exists():
+            raise FileNotFoundError(
+                f"Stratified split JSON file not found at {json_file_path}. "
+                "Please run the stratification notebook to generate the split and log it."
+            )
+
+        train_files, val_files = self._load_split(json_file_path)
 
 
         logger.info(
