@@ -40,8 +40,7 @@ def _analyse_dataset(
         train_datasource: Path,
         test_datasource: Path,
         per_case_csv_path: Path,
-        aggregate_csv_path: Path,
-        verbose: bool):
+    ):
     # Load and pair data
     logger.info("Discovering and pairing image-label volumes...")
     collector = DataCollector()
@@ -52,12 +51,7 @@ def _analyse_dataset(
     logger.info("Found %d paired volumes.\n", len(collector.datasources))
 
     # Run analysis
-    analyse_dataset(
-        datasources=collector.datasources,
-        output_csv=str(per_case_csv_path),
-        output_agg_csv=str(aggregate_csv_path),
-        verbose=verbose
-    )
+    analyse_dataset(collector.datasources, per_case_csv_path)
 
 
 def main():
@@ -80,17 +74,6 @@ def main():
         logger.error("STATS_DIR is not configured. Please set the 'STATS_DIR' "
                      "environment variable to enable statistics export.")
         return
-
-    parser = argparse.ArgumentParser(
-        description="Analyse LiTS dataset and produce summary statistics"
-    )
-    parser.add_argument(
-        "--no-verbose",
-        action="store_true",
-        help="Suppress terminal output (useful for batch processing)"
-    )
-
-    args = parser.parse_args()
 
     logger.debug("=" * 80)
     logger.info("LiTS Dataset-Wide Analysis")
@@ -115,9 +98,7 @@ def main():
         logger,
         cfg.CT_ROOT,
         cfg.CT_TEST,
-        per_case_csv_path_train,
-        aggregate_csv_path_train,
-        not args.no_verbose)
+        per_case_csv_path_train,)
 
     logger.info("Analysis complete!")
 

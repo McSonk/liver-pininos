@@ -517,151 +517,6 @@ class DatasetSummary:
 
         return self.per_case_rows
 
-    def get_aggregate_stats(self) -> Dict[str, Any]:
-        '''
-        Compute dataset-level aggregate statistics from analyzed per-case rows.
-        Must call analyse_all() first.
-        
-        Returns
-        -------
-        dict
-            Dictionary containing aggregate statistics:
-            - num_volumes
-            - shape_mean, shape_median, shape_std (per axis)
-            - spacing_mean, spacing_std (per axis)
-            - orientation_distribution (count per affine code tuple)
-            - tumor_proportion (fraction of volumes with tumor)
-            - slice_range stats (liver/tumor span mean/std)
-            - foreground_imbalance (mean liver/tumor ratios)
-            - ct_intensity_mean (mean min/max across volumes)
-        '''
-        if not self.per_case_rows:
-            raise ValueError("No data analysed. Call analyse_all() first.")
-
-        rows = self.per_case_rows
-        n = len(rows)
-
-        # Shape statistics (D, H, W)
-        shapes = np.array([r['image_shape'] for r in rows])
-        shape_mean = shapes.mean(axis=0).tolist()
-        shape_median = np.median(shapes, axis=0).tolist()
-        shape_std = shapes.std(axis=0).tolist()
-
-        # Spacing statistics
-        spacing_x = [r['spacing_x'] for r in rows]
-        spacing_y = [r['spacing_y'] for r in rows]
-        spacing_z = [r['spacing_z'] for r in rows]
-
-        spacing_mean = [np.mean(spacing_x), np.mean(spacing_y), np.mean(spacing_z)]
-        spacing_std = [np.std(spacing_x), np.std(spacing_y), np.std(spacing_z)]
-
-        # Orientation distribution
-        orientation_counts: Dict[str, int] = {}
-        for r in rows:
-            key = str(r['affine_codes'])
-            orientation_counts[key] = orientation_counts.get(key, 0) + 1
-
-        # Tumor proportion
-        num_with_tumor = sum(1 for r in rows if r['has_tumor'])
-        tumor_proportion = num_with_tumor / n
-
-        # Slice range statistics
-        liver_spans = []
-        tumor_spans = []
-        for r in rows:
-            if r['liver_first'] is not None and r['liver_last'] is not None:
-                liver_spans.append(r['liver_last'] - r['liver_first'] + 1)
-            if r['tumor_first'] is not None and r['tumor_last'] is not None:
-                tumor_spans.append(r['tumor_last'] - r['tumor_first'] + 1)
-
-        liver_span_mean = np.mean(liver_spans) if liver_spans else 0.0
-        liver_span_std = np.std(liver_spans) if liver_spans else 0.0
-        tumor_span_mean = np.mean(tumor_spans) if tumor_spans else 0.0
-        tumor_span_std = np.std(tumor_spans) if tumor_spans else 0.0
-
-        # Foreground imbalance metrics
-        liver_ratios = [r['liver_to_total_ratio'] for r in rows]
-        tumor_ratios = [r['tumor_to_liver_ratio'] for r in rows]
-        liver_ratio_mean = np.mean(liver_ratios)
-        liver_ratio_std = np.std(liver_ratios)
-        tumor_ratio_mean = np.mean(tumor_ratios)
-        tumor_ratio_std = np.std(tumor_ratios)
-
-        # CT intensity statistics
-        ct_mins = [r['ct_min'] for r in rows]
-        ct_maxs = [r['ct_max'] for r in rows]
-        ct_min_mean = np.mean(ct_mins)
-        ct_max_mean = np.mean(ct_maxs)
-
-        self.aggregate_stats = {
-            'num_volumes': n,
-            'shape_mean': shape_mean,
-            'shape_median': shape_median,
-            'shape_std': shape_std,
-            'spacing_mean': spacing_mean,
-            'spacing_std': spacing_std,
-            'orientation_distribution': orientation_counts,
-            'tumor_proportion': tumor_proportion,
-            'num_with_tumor': num_with_tumor,
-            'liver_span_mean': liver_span_mean,
-            'liver_span_std': liver_span_std,
-            'tumor_span_mean': tumor_span_mean,
-            'tumor_span_std': tumor_span_std,
-            'liver_ratio_mean': liver_ratio_mean,
-            'liver_ratio_std': liver_ratio_std,
-            'tumor_ratio_mean': tumor_ratio_mean,
-            'tumor_ratio_std': tumor_ratio_std,
-            'ct_min_mean': ct_min_mean,
-            'ct_max_mean': ct_max_mean
-        }
-
-        return self.aggregate_stats
-
-    def print_table(self) -> None:
-        '''
-        Print a terminal table-like summary of the dataset analysis.
-        '''
-        if not self.per_case_rows:
-            logger.warning("No data analyzed. Call analyse_all() first.")
-            return
-
-        logger.info("")
-        logger.info("=" * 50)
-        logger.info("AGGREGATE STATISTICS")
-        logger.info("=" * 50)
-
-        if self.aggregate_stats is None:
-            self.get_aggregate_stats()
-
-        agg = self.aggregate_stats
-        logger.info("Number of volumes:           %d", agg['num_volumes'])
-        logger.info("Volumes with tumor:          %d (%.1f%%)", agg['num_with_tumor'],
-                    agg['tumor_proportion']*100)
-        logger.info("")
-        logger.info("Mean shape (X,Y,Z):          %s", agg['shape_mean'])
-        logger.info("Median shape (X,Y,Z):        %s", agg['shape_median'])
-        logger.info("Shape std (X,Y,Z):           %s", agg['shape_std'])
-        logger.info("")
-        logger.info("Mean spacing (mm) (X,Y,Z):   %s", agg['spacing_mean'])
-        logger.info("Spacing std (mm) (X,Y,Z):    %s", agg['spacing_std'])
-        logger.info("")
-        logger.info("Orientation distribution:")
-        for orient, count in agg['orientation_distribution'].items():
-            logger.info("  %s: %d volumes (%.1f%%)", orient, count, count/agg['num_volumes']*100)
-        logger.info("")
-        logger.info("Liver span (slices):         mean=%.1f, std=%.1f",
-                    agg['liver_span_mean'], agg['liver_span_std'])
-        logger.info("Tumor span (slices):         mean=%.1f, std=%.1f",
-                    agg['tumor_span_mean'], agg['tumor_span_std'])
-        logger.info("")
-        logger.info("Liver voxel ratio:           mean=%.3f%%, std=%.3f%%",
-                    agg['liver_ratio_mean']*100, agg['liver_ratio_std']*100)
-        logger.info("Tumor voxel ratio:           mean=%.4f%%, std=%.4f%%",
-                    agg['tumor_ratio_mean']*100, agg['tumor_ratio_std']*100)
-        logger.info("")
-        logger.info("CT intensity (mean range):   %d to %d", agg['ct_min_mean'], agg['ct_max_mean'])
-        logger.info("=" * 50)
-
     def _flatten_dict(self, d: Dict[str, Any], parent_key: str = '', sep: str = '_') -> Dict[str, Any]:
         """
         Recursively flatten a nested dictionary for CSV export.
@@ -682,13 +537,13 @@ class DatasetSummary:
                 items.append((new_key, v))
         return dict(items)
 
-    def export_csv_auto(self, output_path: str, exclude_keys: Optional[List[str]] = None) -> None:
+    def export_csv_auto(self, output_path: Path, exclude_keys: List[str] = None) -> None:
         """
         Export per-case rows to CSV using automatic flattening.
         
         Parameters
         ----------
-        output_path : str
+        output_path : Path
             Path to the output CSV file.
         exclude_keys : list of str, optional
             Keys to exclude from export (e.g., large arrays, paths).
@@ -696,8 +551,11 @@ class DatasetSummary:
         if not self.per_case_rows:
             raise ValueError("No data analysed. Call analyse_all() first.")
 
+        # Exclude long paths by default
         if exclude_keys is None:
-            exclude_keys = ['image_path', 'label_path']  # Exclude long paths by default
+            exclude_keys = ['image_path', 'label_path']
+        else:
+            exclude_keys.extend(['image_path', 'label_path'])
 
         flattened_rows = []
         for r in self.per_case_rows:
@@ -712,160 +570,10 @@ class DatasetSummary:
         df.to_csv(output_path, index=False)
         print(f"CSV exported to: {output_path} ({len(df)} rows, {len(df.columns)} columns)")
 
-    def export_csv(self, output_path: str) -> None:
-        '''
-        DEPRECATED: Use export_csv_auto() instead for more robust handling of nested structures and data types.
-        Export per-case rows to a CSV file for thesis analysis.
-        
-        Parameters
-        ----------
-        output_path : str
-            Path to the output CSV file.
-        '''
-        logger.warning("export_csv() is deprecated. Use export_csv_auto() for better "
-                       "handling of nested data and types.")
-        if not self.per_case_rows:
-            raise ValueError("No data analysed. Call analyse_all() first.")
-
-        # Flatten some fields for CSV
-        csv_rows = []
-        for r in self.per_case_rows:
-            csv_row = {
-                'case_index': r['case_index'],
-                'case_name': r['case_name'],
-                'image_path': r['image_path'],
-                'label_path': r['label_path'],
-                'image_x': r['image_shape'][0],
-                'image_y': r['image_shape'][1],
-                'image_z': r['image_shape'][2],
-                'label_x': r['label_shape'][0],
-                'label_y': r['label_shape'][1],
-                'label_z': r['label_shape'][2],
-                'ct_min': r['ct_min'],
-                'ct_max': r['ct_max'],
-                'spacing_x': r['spacing_x'],
-                'spacing_y': r['spacing_y'],
-                'spacing_z': r['spacing_z'],
-                'affine_R': r['affine_codes'][0],
-                'affine_A': r['affine_codes'][1],
-                'affine_S': r['affine_codes'][2],
-                'unique_labels': ';'.join(map(str, r['unique_labels'])),
-                'liver_first': r['liver_first'] if r['liver_first'] is not None else '',
-                'liver_last': r['liver_last'] if r['liver_last'] is not None else '',
-                'tumor_first': r['tumor_first'] if r['tumor_first'] is not None else '',
-                'tumor_last': r['tumor_last'] if r['tumor_last'] is not None else '',
-                'liver_voxels': r['liver_voxels'],
-                'tumor_voxels': r['tumor_voxels'],
-                'liver_to_total_ratio': r['liver_to_total_ratio'],
-                'tumor_to_total_ratio': r['tumor_to_total_ratio'],
-                'tumor_to_liver_ratio': r['tumor_to_liver_ratio'],
-                'liver_hu_mean': r['liver_hu_mean'],
-                'liver_hu_std': r['liver_hu_std'],
-                'liver_hu_p01': r['liver_hu_p01'],
-                'liver_hu_p99': r['liver_hu_p99'],
-                'liver_hu_min': r['liver_hu_min'],
-                'liver_hu_max': r['liver_hu_max'],
-                # Tumour intensity statistics
-                'tumour_hu_mean': r['tumour_hu_mean'],
-                'tumour_hu_std': r['tumour_hu_std'],
-                'tumour_hu_median': r['tumour_hu_median'],
-                'tumour_hu_skewness': r['tumour_hu_skew'],
-                'tumour_hu_p01': r['hu_p01'],
-                'tumour_hu_p99': r['hu_p99'],
-                'tumour_hu_min': r['tumour_hu_min'],
-                'tumour_hu_max': r['tumour_hu_max'],
-
-                # Volume in clinical units
-                'voxel_volume_mm3': r['voxel_volume_mm3'],
-                'liver_volume_ml': r['liver_volume_ml'],
-                'tumour_volume_ml': r['tumour_volume_ml'],
-
-                # Lesion-level metrics
-                'num_lesions': r['num_lesions'],
-                'lesion_volumes_ml': r['lesion_volumes_ml'],
-                'lesion_equiv_diameters_mm': r['lesion_equiv_diameters_mm'],
-                'lesion_sphericities': r['lesion_sphericities'],
-                'min_lesion_diameter_mm': r['min_lesion_diameter_mm'],
-                'max_lesion_diameter_mm': r['max_lesion_diameter_mm'],
-                'mean_lesion_diameter_mm': r['mean_lesion_diameter_mm'],
-
-                # Liver texture and noise
-                'liver_texture_variance': r['liver_texture_variance'],
-                'liver_noise_estimate': r['liver_noise_estimate'],
-
-                # Include tumor presence as a simple boolean for easier analysis
-                'has_tumor': r['has_tumor']
-            }
-            csv_rows.append(csv_row)
-
-        # Write CSV
-        fieldnames = list(csv_rows[0].keys())
-        with open(output_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(csv_rows)
-
-        print(f"CSV exported to: {output_path}")
-
-    def export_aggregate_csv(self, output_path: str) -> None:
-        '''
-        Export aggregate statistics to a CSV file.
-        
-        Parameters
-        ----------
-        output_path : str
-            Path to the output CSV file.
-        '''
-        if self.aggregate_stats is None:
-            self.get_aggregate_stats()
-
-        agg = self.aggregate_stats
-
-        # Convert nested structures to strings
-        row = {
-            'num_volumes': agg['num_volumes'],
-            'num_with_tumor': agg['num_with_tumor'],
-            'tumor_proportion': agg['tumor_proportion'],
-            'shape_mean_X': agg['shape_mean'][0],
-            'shape_mean_Y': agg['shape_mean'][1],
-            'shape_mean_Z': agg['shape_mean'][2],
-            'shape_median_X': agg['shape_median'][0],
-            'shape_median_Y': agg['shape_median'][1],
-            'shape_median_Z': agg['shape_median'][2],
-            'shape_std_X': agg['shape_std'][0],
-            'shape_std_Y': agg['shape_std'][1],
-            'shape_std_Z': agg['shape_std'][2],
-            'spacing_mean_x': agg['spacing_mean'][0],
-            'spacing_mean_y': agg['spacing_mean'][1],
-            'spacing_mean_z': agg['spacing_mean'][2],
-            'spacing_std_x': agg['spacing_std'][0],
-            'spacing_std_y': agg['spacing_std'][1],
-            'spacing_std_z': agg['spacing_std'][2],
-            'orientation_distribution': str(agg['orientation_distribution']),
-            'liver_span_mean': agg['liver_span_mean'],
-            'liver_span_std': agg['liver_span_std'],
-            'tumor_span_mean': agg['tumor_span_mean'],
-            'tumor_span_std': agg['tumor_span_std'],
-            'liver_ratio_mean': agg['liver_ratio_mean'],
-            'liver_ratio_std': agg['liver_ratio_std'],
-            'tumor_ratio_mean': agg['tumor_ratio_mean'],
-            'tumor_ratio_std': agg['tumor_ratio_std'],
-            'ct_min_mean': agg['ct_min_mean'],
-            'ct_max_mean': agg['ct_max_mean']
-        }
-
-        with open(output_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-            writer.writeheader()
-            writer.writerow(row)
-
-        logger.info("Aggregate stats exported to: %s", output_path)
-
-
-def analyse_dataset(datasources: List[Dict[str, str]],
-                         output_csv: Optional[str] = None,
-                         output_agg_csv: Optional[str] = None,
-                         verbose: bool = True) -> DatasetSummary:
+def analyse_dataset(
+        datasources: List[Dict[str, str]],
+        output_csv: Path
+    ) -> DatasetSummary:
     '''
     Convenience function to run a complete LiTS dataset analysis.
     
@@ -887,15 +595,6 @@ def analyse_dataset(datasources: List[Dict[str, str]],
     '''
     summary = DatasetSummary(datasources)
     summary.analyse_all()
-    summary.get_aggregate_stats()
-
-    if verbose:
-        summary.print_table()
-
-    if output_csv:
-        summary.export_csv_auto(output_csv)
-
-    if output_agg_csv:
-        summary.export_aggregate_csv(output_agg_csv)
+    summary.export_csv_auto(output_csv)
 
     return summary
