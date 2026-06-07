@@ -35,8 +35,12 @@ class VolumeWrapper:
 
         self.image_data = self.image.get_fdata()
         self.label_data = self.label.get_fdata()
-
         logger.info("Data loaded successfully.")
+
+        logger.info("Doing some basic checks...")
+        if not np.allclose(self.image.affine, self.label.affine, atol=1e-3):
+            raise ValueError("Image and label affines do not match")
+
         logger.info("Calculating unique values in the label data...")
         self.mask_unique_values = np.unique(self.label_data)
         self.convert_mask_to_long()
@@ -114,17 +118,7 @@ class VolumeWrapper:
         Returns
         -------
         dict
-            Dictionary containing volume metadata and statistics:
-            - image_path, label_path
-            - image_shape, label_shape
-            - ct_min, ct_max (CT intensity range)
-            - spacing_x, spacing_y, spacing_z (voxel spacing in mm)
-            - affine_codes (human-readable axis codes)
-            - unique_labels
-            - liver_first, liver_last, tumor_first, tumor_last (slice thresholds)
-            - liver_voxels, tumor_voxels (voxel counts)
-            - liver_to_total_ratio, tumor_to_total_ratio, tumor_to_liver_ratio (foreground ratios)
-            - has_tumor (boolean)
+            Dictionary containing volume metadata and statistics
         '''
         if self.image_data is None or self.label_data is None:
             raise ValueError("Data not loaded. Call load_data() first.")
@@ -141,7 +135,7 @@ class VolumeWrapper:
         spacing = self.image.header.get_zooms()
         spacing_x, spacing_y, spacing_z = float(spacing[0]), float(spacing[1]), float(spacing[2])
 
-        # Affine axis codes
+        # Affine axis codes (eg: LAS)
         affine_codes = nib.aff2axcodes(self.image.affine)
 
         # Unique labels
@@ -195,9 +189,10 @@ class VolumeWrapper:
             tumour_hu_mean = tumour_hu_std = tumour_hu_median = tumour_hu_skew = None
             hu_p01 = hu_p99 = tumour_hu_min = tumour_hu_max = None
 
-        # Voxel volume for ml conversion
-        zooms = self.image.header.get_zooms()
-        voxel_volume_mm3 = zooms[0] * zooms[1] * zooms[2]
+        # tuple of floats  representing the size in mm for the x, y, and z axes
+        voxel_sizes = nib.affines.voxel_sizes(self.label.affine)
+        # 1 voxel volume = x * y * z
+        voxel_volume_mm3 = float(np.prod(voxel_sizes))
 
         # Volume in millilitres
         liver_volume_ml = liver_voxels * voxel_volume_mm3 / 1000.0
@@ -464,7 +459,6 @@ class DatasetSummary:
     
     Usage
     -----
-    # From code:
     collector = DataCollector()
     collector.read_dir(config.CT_ROOT, ds_source='LiTS')
     collector.extract_images_and_labels()
@@ -489,7 +483,7 @@ class DatasetSummary:
         self.per_case_rows: List[Dict[str, Any]] = []
         self.aggregate_stats: Optional[Dict[str, Any]] = None
 
-    def analyse_all(self, verbose: bool = False) -> List[Dict[str, Any]]:
+    def analyse_all(self) -> List[Dict[str, Any]]:
         '''
         Iterate over all paired volumes and extract per-case summaries.
         
@@ -506,8 +500,7 @@ class DatasetSummary:
         self.per_case_rows = []
 
         for i, pair in enumerate(self.datasources):
-            if verbose:
-                logger.info("[%d/%d] Analysing %s...", i + 1, len(self.datasources), pair['image'])
+            logger.debug("[%d/%d] Analysing %s...", i + 1, len(self.datasources), pair['image'])
 
             wrapper = VolumeWrapper(pair['image'], pair['label'])
             wrapper.load_data()
@@ -520,8 +513,7 @@ class DatasetSummary:
 
             self.per_case_rows.append(row)
 
-        if verbose:
-            logger.info("Completed analysis of %d volumes.", len(self.per_case_rows))
+        logger.debug("Completed analysis of %d volumes.", len(self.per_case_rows))
 
         return self.per_case_rows
 
@@ -870,7 +862,7 @@ class DatasetSummary:
         logger.info("Aggregate stats exported to: %s", output_path)
 
 
-def analyse_dataset(datasources: List[Dict[str, str]], 
+def analyse_dataset(datasources: List[Dict[str, str]],
                          output_csv: Optional[str] = None,
                          output_agg_csv: Optional[str] = None,
                          verbose: bool = True) -> DatasetSummary:
@@ -894,7 +886,7 @@ def analyse_dataset(datasources: List[Dict[str, str]],
         The summary object with per_case_rows and aggregate_stats populated
     '''
     summary = DatasetSummary(datasources)
-    summary.analyse_all(verbose=verbose)
+    summary.analyse_all()
     summary.get_aggregate_stats()
 
     if verbose:
