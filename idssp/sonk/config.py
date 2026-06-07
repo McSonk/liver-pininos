@@ -31,9 +31,10 @@ class Mode(str, Enum):
 
 # Some constant definitions
 
-VERSION_STR = "2.4"
+VERSION_STR = "2.4.1"
 '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
-MODEL_TO_USE = AvailableModels.U_NET
+MODEL_TO_USE = AvailableModels.SEG_RES_NET
+'''The model architecture to use. Choose from the AvailableModels enum.'''
 @dataclass(frozen=True)
 class Config:
     # Environment & Device
