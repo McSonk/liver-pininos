@@ -646,7 +646,16 @@ class ModelBuilder:
                 logger.debug("Torch CUDA RNG state restored.")
             if rng.get("numpy") is not None:
                 try:
-                    np.random.set_state(rng["numpy"])
+                    np_state = rng["numpy"]
+                    # Reconstruct the tuple with a numpy array for np.random.set_state
+                    restored_state = (
+                        np_state[0],
+                        np.array(np_state[1], dtype=np.uint32),
+                        np_state[2],
+                        np_state[3],
+                        np_state[4]
+                    )
+                    np.random.set_state(restored_state)
                     logger.debug("NumPy RNG state restored.")
                 except Exception as e:
                     logger.debug("Failed to restore NumPy RNG state: %s", e)
@@ -654,7 +663,8 @@ class ModelBuilder:
                 random.setstate(rng["python"])
                 logger.debug("Python RNG state restored.")
         else:
-            logger.warning("RNG states not found in checkpoint. Deterministic restart not guaranteed.")
+            logger.warning("RNG states not found in checkpoint. "
+                           "Deterministic restart not guaranteed.")
 
         # Step 7: Seed EarlyStopper with saved metrics
         early_stopper.best_mean_dice = checkpoint.get("best_dice", -1.0)
@@ -1155,6 +1165,18 @@ class EarlyStopper:
                 # Fallback if get_rng_state_all fails in some environments
                 cuda_rng_states = [torch.cuda.get_rng_state()]
 
+        # np.random.get_state() returns a tuple containing a numpy array, which 
+        # triggers a WeightsUnpickler error with weights_only=True.
+        # We convert the array to a standard Python list for safe serialisation.
+        np_state = np.random.get_state()
+        safe_np_state = (
+            np_state[0],
+            np_state[1].tolist(),  # Convert uint32 array to list
+            np_state[2],
+            np_state[3],
+            np_state[4]
+        )
+
         torch.save({
             "version": self.config.VERSION,
             "epoch": self.best_epoch if is_best else current_epoch,
@@ -1180,7 +1202,7 @@ class EarlyStopper:
             # RNG states for deterministic restart (added in v2.3.2+)
             "rng_state": {
                 "python": random.getstate(),
-                "numpy": np.random.get_state(),
+                "numpy": safe_np_state,
                 "torch_cpu": torch.get_rng_state(),
                 "torch_cuda": cuda_rng_states,
             },
