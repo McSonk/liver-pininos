@@ -22,12 +22,11 @@ python analyze_lits_dataset.py --output-csv my_per_case.csv --output-agg-csv my_
 python analyze_lits_dataset.py --no-verbose --output-csv data.csv
 """
 print("[analyse_dataset.py] Importing torch. This may take a moment...")
+import argparse
 import logging
+from pathlib import Path
 
 import torch
-import argparse
-
-from pathlib import Path
 
 from idssp.sonk import config
 from idssp.sonk.disk.loader import DataCollector
@@ -35,16 +34,19 @@ from idssp.sonk.model.data import analyse_dataset
 from idssp.sonk.utils.logger import (configure_logging, get_logger,
                                      install_global_exception_handlers)
 
+
 def _analyse_dataset(
         logger: logging.Logger,
-        datasource: Path,
+        train_datasource: Path,
+        test_datasource: Path,
         per_case_csv_path: Path,
         aggregate_csv_path: Path,
         verbose: bool):
     # Load and pair data
     logger.info("Discovering and pairing image-label volumes...")
     collector = DataCollector()
-    collector.read_dir(datasource, ds_source='LiTS')
+    collector.read_dir(train_datasource, ds_source='LiTS')
+    collector.read_dir(test_datasource, ds_source='LiTS')
     collector.extract_images_and_labels()
 
     logger.info("Found %d paired volumes.\n", len(collector.datasources))
@@ -108,20 +110,13 @@ def main():
     per_case_csv_path_test.parent.mkdir(parents=True, exist_ok=True)
     aggregate_csv_path_test.parent.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Starting analysis of LiTS Train Set...")
+    logger.info("Starting analysis of LiTS Set...")
     _analyse_dataset(
         logger,
         cfg.CT_ROOT,
+        cfg.CT_TEST,
         per_case_csv_path_train,
         aggregate_csv_path_train,
-        not args.no_verbose)
-
-    logger.info("Starting analysis of LiTS Test Set...")
-    _analyse_dataset(
-        logger,
-        cfg.CT_TEST,
-        per_case_csv_path_test,
-        aggregate_csv_path_test,
         not args.no_verbose)
 
     logger.info("Analysis complete!")

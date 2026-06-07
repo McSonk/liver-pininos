@@ -128,7 +128,7 @@ class DataCollector:
 
     def read_dir(self, ds_dir: Path, ds_source: str):
         '''
-        Reads the directory specified in config.CT_ROOT and lists all files.
+        Reads the directory specified and lists all files.
 
         Params
         -----
