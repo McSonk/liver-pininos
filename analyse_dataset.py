@@ -22,7 +22,6 @@ python analyze_lits_dataset.py --output-csv my_per_case.csv --output-agg-csv my_
 python analyze_lits_dataset.py --no-verbose --output-csv data.csv
 """
 print("[analyse_dataset.py] Importing torch. This may take a moment...")
-import argparse
 import logging
 from pathlib import Path
 

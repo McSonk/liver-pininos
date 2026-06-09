@@ -32,8 +32,10 @@ class VolumeWrapper:
         message = None
         logger.info("Loading data for volume...")
         self.image = nib.load(self.img_path)
+        logger.debug("Loading label data for volume...")
         self.label = nib.load(self.label_path)
 
+        logger.debug("Extracting data arrays from the loaded NIfTI files...")
         self.image_data = self.image.get_fdata()
         self.label_data = np.asanyarray(self.label.dataobj).astype(np.uint8)
         logger.info("Data loaded successfully.")
@@ -50,9 +52,7 @@ class VolumeWrapper:
                 "Image and label affines do not match natively. "
                 "Forcing label affine to match image affine for volume calculations."
             )
-            logger.debug("Image affine:\n%s", self.image.affine)
-            logger.debug("Label affine:\n%s", self.label.affine)
-            message = "Warning: Image and label affines did not match. "
+            message = "Warning: Image and label affines did not match. "\
                       "Label affine was overwritten to match image affine for this volume."
 
         logger.info("Calculating unique values in the label data...")
