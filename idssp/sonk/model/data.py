@@ -34,7 +34,7 @@ class VolumeWrapper:
         self.label = nib.load(self.label_path)
 
         self.image_data = self.image.get_fdata()
-        self.label_data = self.label.get_fdata()
+        self.label_data = np.asanyarray(self.label.dataobj).astype(np.uint8)
         logger.info("Data loaded successfully.")
 
         logger.info("Doing some basic checks...")
@@ -43,7 +43,6 @@ class VolumeWrapper:
 
         logger.info("Calculating unique values in the label data...")
         self.mask_unique_values = np.unique(self.label_data)
-        self.convert_mask_to_long()
         logger.info("Finding slice information...")
         self.find_slice_thresholds()
         logger.info("done!")
@@ -59,6 +58,7 @@ class VolumeWrapper:
         last_liver_slice = None
         last_tumor_slice = None
 
+        # TODO: this function assumes LiTS. Update for general datasets.
         num_of_slices = self.image_data.shape[2]
 
         for i in range(num_of_slices):
@@ -84,23 +84,6 @@ class VolumeWrapper:
                 "last": last_tumor_slice
             }
         }
-
-    def load_image(self):
-        if self.image is None:
-            self.image = nib.load(self.img_path)
-        return self.image
-
-    def load_label(self):
-        if self.label is None:
-            self.label = nib.load(self.label_path)
-        return self.label
-
-    def convert_mask_to_long(self):
-        if self.label_data is not None:
-            self.label_data = self.label_data.astype(np.uint8)
-        else:
-            logger.warning("Label data is not loaded. Please load the label"
-                           " data before converting to long.")
 
     def print_slice_summary(self):
         logger.info("Volume has %d slices.", self.image_data.shape[2])
@@ -132,8 +115,9 @@ class VolumeWrapper:
         ct_max = float(self.image_data.max())
 
         # Voxel spacing
-        spacing = self.image.header.get_zooms()
-        spacing_x, spacing_y, spacing_z = float(spacing[0]), float(spacing[1]), float(spacing[2])
+        # Voxel spacing (authoritative)
+        voxel_sizes = nib.affines.voxel_sizes(self.image.affine)
+        spacing_x, spacing_y, spacing_z = float(voxel_sizes[0]), float(voxel_sizes[1]), float(voxel_sizes[2])
 
         # Affine axis codes (eg: LAS)
         affine_codes = nib.aff2axcodes(self.image.affine)
@@ -163,12 +147,12 @@ class VolumeWrapper:
             liver_hu = self.image_data[liver_mask]
             liver_hu_mean = liver_hu.mean()
             liver_hu_std = liver_hu.std()
-            hu_p01 = float(np.percentile(liver_hu, 0.5))
-            hu_p99 = float(np.percentile(liver_hu, 99.5))
+            liver_hu_p01 = float(np.percentile(liver_hu, 0.5))
+            liver_hu_p99 = float(np.percentile(liver_hu, 99.5))
             liver_hu_min = liver_hu.min()
             liver_hu_max = liver_hu.max()
         else:
-            hu_p01, hu_p99 = None, None
+            liver_hu_p01, liver_hu_p99 = None, None
             liver_hu_mean, liver_hu_std = None, None
             liver_hu_min, liver_hu_max = None, None
             logger.warning("No liver voxels found in volume. Cannot compute liver HU statistics.")
@@ -181,13 +165,13 @@ class VolumeWrapper:
             tumour_hu_std = tumour_hu.std()
             tumour_hu_median = np.median(tumour_hu)
             tumour_hu_skew = skew(tumour_hu)
-            hu_p01 = float(np.percentile(tumour_hu, 0.5))
-            hu_p99 = float(np.percentile(tumour_hu, 99.5))
+            tumour_hu_p01 = float(np.percentile(tumour_hu, 0.5))
+            tumour_hu_p99 = float(np.percentile(tumour_hu, 99.5))
             tumour_hu_min = tumour_hu.min()
             tumour_hu_max = tumour_hu.max()
         else:
             tumour_hu_mean = tumour_hu_std = tumour_hu_median = tumour_hu_skew = None
-            hu_p01 = hu_p99 = tumour_hu_min = tumour_hu_max = None
+            tumour_hu_p01 = tumour_hu_p99 = tumour_hu_min = tumour_hu_max = None
 
         # tuple of floats  representing the size in mm for the x, y, and z axes
         voxel_sizes = nib.affines.voxel_sizes(self.label.affine)
@@ -243,8 +227,8 @@ class VolumeWrapper:
             'has_tumor': tumor_voxels > 0,
             'liver_hu_mean': liver_hu_mean,
             'liver_hu_std': liver_hu_std,
-            'liver_hu_p01': hu_p01,
-            'liver_hu_p99': hu_p99,
+            'liver_hu_p01': liver_hu_p01,
+            'liver_hu_p99': liver_hu_p99,
             'liver_hu_min': liver_hu_min,
             'liver_hu_max': liver_hu_max,
             # Tumour intensity statistics
@@ -252,8 +236,8 @@ class VolumeWrapper:
             'tumour_hu_std': tumour_hu_std,
             'tumour_hu_median': tumour_hu_median,
             'tumour_hu_skewness': tumour_hu_skew,
-            'tumour_hu_p01': hu_p01,
-            'tumour_hu_p99': hu_p99,
+            'tumour_hu_p01': tumour_hu_p01,
+            'tumour_hu_p99': tumour_hu_p99,
             'tumour_hu_min': tumour_hu_min,
             'tumour_hu_max': tumour_hu_max,
 
@@ -305,14 +289,10 @@ class VolumeWrapper:
         # Connected component labelling (26-connectivity for 3D)
         structure = ndimage.generate_binary_structure(3, 3)
         labelled, num = ndimage.label(tumour_mask, structure=structure)
-
-        voxel_volume_mm3 = self.image.header.get_zooms()[0] * \
-                        self.image.header.get_zooms()[1] * \
-                        self.image.header.get_zooms()[2]
+        voxel_volume_mm3 = float(np.prod(nib.affines.voxel_sizes(self.label.affine)))
 
         lesion_volumes_ml = []
         lesion_equiv_diameters_mm = []
-        lesion_sphericities = []
 
         for label_idx in range(1, num + 1):
             lesion_mask = (labelled == label_idx)
@@ -326,23 +306,10 @@ class VolumeWrapper:
             equiv_diameter_mm = 2 * ((3 * volume_mm3) / (4 * np.pi)) ** (1/3)
             lesion_equiv_diameters_mm.append(equiv_diameter_mm)
 
-            # Sphericity: 4πV / A² (requires surface area approximation)
-            # Approximate surface via morphological gradient
-            erosion = ndimage.binary_erosion(lesion_mask, structure=structure)
-            surface_voxels = np.sum(lesion_mask & ~erosion)
-            surface_area_mm2 = surface_voxels * voxel_volume_mm3 ** (2/3)  # Approximation
-            if surface_area_mm2 > 0:
-                sphericity = (4 * np.pi * volume_mm3) / (surface_area_mm2 ** 2)
-                sphericity = min(1.0, max(0.0, sphericity))  # Clamp to [0,1]
-            else:
-                sphericity = None
-            lesion_sphericities.append(sphericity)
-
         return {
             'num_lesions': num,
             'lesion_volumes_ml': lesion_volumes_ml,
             'lesion_equiv_diameters_mm': lesion_equiv_diameters_mm,
-            'lesion_sphericities': lesion_sphericities,
             'min_lesion_diameter_mm': min(lesion_equiv_diameters_mm) if lesion_equiv_diameters_mm else None,
             'max_lesion_diameter_mm': max(lesion_equiv_diameters_mm) if lesion_equiv_diameters_mm else None,
             'mean_lesion_diameter_mm': np.mean(lesion_equiv_diameters_mm) if lesion_equiv_diameters_mm else None
