@@ -25,10 +25,11 @@ class VolumeWrapper:
         self.mask_unique_values = None
         self.slice_thresholds = None
 
-    def load_data(self):
+    def load_data(self) -> str | None:
         '''
         Loads the image and label data for the volume.
         '''
+        message = None
         logger.info("Loading data for volume...")
         self.image = nib.load(self.img_path)
         self.label = nib.load(self.label_path)
@@ -37,15 +38,30 @@ class VolumeWrapper:
         self.label_data = np.asanyarray(self.label.dataobj).astype(np.uint8)
         logger.info("Data loaded successfully.")
 
+        if self.image_data.shape != self.label_data.shape:
+            raise ValueError(
+                f"Shape mismatch: Image {self.image_data.shape} vs "
+                f"Label {self.label_data.shape}"
+            )
+
         logger.info("Doing some basic checks...")
-        if not np.allclose(self.image.affine, self.label.affine, atol=1e-3):
-            raise ValueError("Image and label affines do not match")
+        if not np.allclose(self.image.affine, self.label.affine, atol=1e-2):
+            logger.warning(
+                "Image and label affines do not match natively. "
+                "Forcing label affine to match image affine for volume calculations."
+            )
+            logger.debug("Image affine:\n%s", self.image.affine)
+            logger.debug("Label affine:\n%s", self.label.affine)
+            message = "Warning: Image and label affines did not match. "
+                      "Label affine was overwritten to match image affine for this volume."
 
         logger.info("Calculating unique values in the label data...")
         self.mask_unique_values = np.unique(self.label_data)
         logger.info("Finding slice information...")
         self.find_slice_thresholds()
         logger.info("done!")
+
+        return message
 
 
     def find_slice_thresholds(self):
@@ -174,7 +190,7 @@ class VolumeWrapper:
             tumour_hu_p01 = tumour_hu_p99 = tumour_hu_min = tumour_hu_max = None
 
         # tuple of floats  representing the size in mm for the x, y, and z axes
-        voxel_sizes = nib.affines.voxel_sizes(self.label.affine)
+        voxel_sizes = nib.affines.voxel_sizes(self.image.affine)
         # 1 voxel volume = x * y * z
         voxel_volume_mm3 = float(np.prod(voxel_sizes))
 
@@ -250,7 +266,6 @@ class VolumeWrapper:
             'num_lesions': lesion_metrics['num_lesions'],
             'lesion_volumes_ml': lesion_metrics['lesion_volumes_ml'],
             'lesion_equiv_diameters_mm': lesion_metrics['lesion_equiv_diameters_mm'],
-            'lesion_sphericities': lesion_metrics['lesion_sphericities'],
             'min_lesion_diameter_mm': lesion_metrics['min_lesion_diameter_mm'],
             'max_lesion_diameter_mm': lesion_metrics['max_lesion_diameter_mm'],
             'mean_lesion_diameter_mm': lesion_metrics['mean_lesion_diameter_mm'],
@@ -271,7 +286,6 @@ class VolumeWrapper:
             - num_lesions: int
             - lesion_volumes_ml: list[float]
             - lesion_equiv_diameters_mm: list[float]
-            - lesion_sphericities: list[float] (if computable)
         """
         tumour_mask = (label_data == 2).astype(np.uint8)
 
@@ -280,7 +294,6 @@ class VolumeWrapper:
                 'num_lesions': 0,
                 'lesion_volumes_ml': [],
                 'lesion_equiv_diameters_mm': [],
-                'lesion_sphericities': [],
                 'min_lesion_diameter_mm': None,
                 'max_lesion_diameter_mm': None,
                 'mean_lesion_diameter_mm': None
@@ -289,7 +302,7 @@ class VolumeWrapper:
         # Connected component labelling (26-connectivity for 3D)
         structure = ndimage.generate_binary_structure(3, 3)
         labelled, num = ndimage.label(tumour_mask, structure=structure)
-        voxel_volume_mm3 = float(np.prod(nib.affines.voxel_sizes(self.label.affine)))
+        voxel_volume_mm3 = float(np.prod(nib.affines.voxel_sizes(self.image.affine)))
 
         lesion_volumes_ml = []
         lesion_equiv_diameters_mm = []
@@ -467,21 +480,36 @@ class DatasetSummary:
         self.per_case_rows = []
 
         for i, pair in enumerate(self.datasources):
-            logger.debug("[%d/%d] Analysing %s...", i + 1, len(self.datasources), pair['image'])
+            case_name = Path(pair['image']).name
+            logger.debug("[%d/%d] Analysing %s...", i + 1, len(self.datasources), case_name)
 
-            wrapper = VolumeWrapper(pair['image'], pair['label'])
-            wrapper.load_data()
-            row = wrapper.get_volume_summary()
+            try:
+                wrapper = VolumeWrapper(pair['image'], pair['label'])
+                message = wrapper.load_data()
+                row = wrapper.get_volume_summary()
 
-            # Add case index for convenience
-            row['case_index'] = i
-            # Extract filename for easier reading
-            row['case_name'] = Path(pair['image']).name
+                # Add case index for convenience
+                row['case_index'] = i
+                # Extract filename for easier reading
+                row['case_name'] = Path(pair['image']).name
+                row['status'] = 'success'
+                row['obs'] = message
 
-            self.per_case_rows.append(row)
+                self.per_case_rows.append(row)
+            except Exception as e:
+                logger.error("Failed to analyse %s: ", case_name)
+                logger.error("Exception details:", exc_info=True)
+                # Append a failure row so your CSV still accounts for this case
+                self.per_case_rows.append({
+                    'case_index': i,
+                    'case_name': case_name,
+                    'status': 'failed',
+                    'obs': str(e)
+                })
 
-        logger.debug("Completed analysis of %d volumes.", len(self.per_case_rows))
-
+        logger.debug("Completed analysis. %d succeeded, %d failed.", 
+                     sum(1 for r in self.per_case_rows if r.get('status') == 'success'),
+                     sum(1 for r in self.per_case_rows if r.get('status') == 'failed'))
         return self.per_case_rows
 
     def _flatten_dict(self, d: Dict[str, Any], parent_key: str = '', sep: str = '_') -> Dict[str, Any]:
