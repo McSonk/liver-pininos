@@ -124,6 +124,7 @@ def _main(args: argparse.Namespace):
     evaluator.load_checkpoint()
     results = evaluator.run_inference(test_files)
     evaluator.generate_report(results)
+    return 0
 
 
 if __name__ == "__main__":

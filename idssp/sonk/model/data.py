@@ -48,12 +48,8 @@ class VolumeWrapper:
 
         logger.info("Doing some basic checks...")
         if not np.allclose(self.image.affine, self.label.affine, atol=1e-2):
-            logger.warning(
-                "Image and label affines do not match natively. "
-                "Forcing label affine to match image affine for volume calculations."
-            )
-            message = "Warning: Image and label affines did not match. "\
-                      "Label affine was overwritten to match image affine for this volume."
+            logger.warning("Image and label affines do not match natively. ")
+            message = "Warning: Image and label affines did not match. "
 
         logger.info("Calculating unique values in the label data...")
         self.mask_unique_values = np.unique(self.label_data)
@@ -163,12 +159,12 @@ class VolumeWrapper:
             liver_hu = self.image_data[liver_mask]
             liver_hu_mean = liver_hu.mean()
             liver_hu_std = liver_hu.std()
-            liver_hu_p01 = float(np.percentile(liver_hu, 0.5))
-            liver_hu_p99 = float(np.percentile(liver_hu, 99.5))
+            liver_hu_p005 = float(np.percentile(liver_hu, 0.5))
+            liver_hu_p995 = float(np.percentile(liver_hu, 99.5))
             liver_hu_min = liver_hu.min()
             liver_hu_max = liver_hu.max()
         else:
-            liver_hu_p01, liver_hu_p99 = None, None
+            liver_hu_p005, liver_hu_p995 = None, None
             liver_hu_mean, liver_hu_std = None, None
             liver_hu_min, liver_hu_max = None, None
             logger.warning("No liver voxels found in volume. Cannot compute liver HU statistics.")
@@ -181,13 +177,13 @@ class VolumeWrapper:
             tumour_hu_std = tumour_hu.std()
             tumour_hu_median = np.median(tumour_hu)
             tumour_hu_skew = skew(tumour_hu)
-            tumour_hu_p01 = float(np.percentile(tumour_hu, 0.5))
-            tumour_hu_p99 = float(np.percentile(tumour_hu, 99.5))
+            tumour_hu_p005 = float(np.percentile(tumour_hu, 0.5))
+            tumour_hu_p995 = float(np.percentile(tumour_hu, 99.5))
             tumour_hu_min = tumour_hu.min()
             tumour_hu_max = tumour_hu.max()
         else:
             tumour_hu_mean = tumour_hu_std = tumour_hu_median = tumour_hu_skew = None
-            tumour_hu_p01 = tumour_hu_p99 = tumour_hu_min = tumour_hu_max = None
+            tumour_hu_p005 = tumour_hu_p995 = tumour_hu_min = tumour_hu_max = None
 
         # tuple of floats  representing the size in mm for the x, y, and z axes
         voxel_sizes = nib.affines.voxel_sizes(self.image.affine)
@@ -243,8 +239,8 @@ class VolumeWrapper:
             'has_tumor': tumor_voxels > 0,
             'liver_hu_mean': liver_hu_mean,
             'liver_hu_std': liver_hu_std,
-            'liver_hu_p01': liver_hu_p01,
-            'liver_hu_p99': liver_hu_p99,
+            'liver_hu_p005': liver_hu_p005,
+            'liver_hu_p995': liver_hu_p995,
             'liver_hu_min': liver_hu_min,
             'liver_hu_max': liver_hu_max,
             # Tumour intensity statistics
@@ -252,8 +248,8 @@ class VolumeWrapper:
             'tumour_hu_std': tumour_hu_std,
             'tumour_hu_median': tumour_hu_median,
             'tumour_hu_skewness': tumour_hu_skew,
-            'tumour_hu_p01': tumour_hu_p01,
-            'tumour_hu_p99': tumour_hu_p99,
+            'tumour_hu_p005': tumour_hu_p005,
+            'tumour_hu_p995': tumour_hu_p995,
             'tumour_hu_min': tumour_hu_min,
             'tumour_hu_max': tumour_hu_max,
 
@@ -532,7 +528,7 @@ class DatasetSummary:
                 items.append((new_key, v))
         return dict(items)
 
-    def export_csv_auto(self, output_path: Path, exclude_keys: List[str] = None) -> None:
+    def export_csv_auto(self, output_path: Path, exclude_keys: List[str] | None = None) -> None:
         """
         Export per-case rows to CSV using automatic flattening.
         
@@ -546,11 +542,12 @@ class DatasetSummary:
         if not self.per_case_rows:
             raise ValueError("No data analysed. Call analyse_all() first.")
 
-        # Exclude long paths by default
+        # Exclude long paths by default; avoid mutating caller's list
+        default_excludes = ['image_path', 'label_path']
         if exclude_keys is None:
-            exclude_keys = ['image_path', 'label_path']
+            exclude_keys = default_excludes
         else:
-            exclude_keys.extend(['image_path', 'label_path'])
+            exclude_keys = list(exclude_keys) + default_excludes
 
         flattened_rows = []
         for r in self.per_case_rows:
@@ -576,13 +573,9 @@ def analyse_dataset(
     ----------
     datasources : list of dict
         Paired image/label paths from DataCollector
-    output_csv : str, optional
-        If provided, export per-case rows to this CSV path
-    output_agg_csv : str, optional
-        If provided, export aggregate stats to this CSV path
-    verbose : bool
-        If True, print progress and results
-    
+    output_csv : Path
+        Path to export per-case rows to this CSV path
+
     Returns
     -------
     DatasetSummary
