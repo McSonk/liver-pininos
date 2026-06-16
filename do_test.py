@@ -43,7 +43,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 def log_environment_info(config_obj: config.Config, logger: logging.Logger) -> None:
-    '''Logs detailed information about the training environment, including PyTorch version,
+    '''Logs detailed information about the runtime environment, including PyTorch version,
     CUDA availability and devices, and key configuration parameters.'''
     cuda_properties = None
     logger.info("Model (code) Version: %s", config_obj.VERSION)

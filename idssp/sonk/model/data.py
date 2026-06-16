@@ -463,11 +463,6 @@ class DatasetSummary:
         '''
         Iterate over all paired volumes and extract per-case summaries.
         
-        Parameters
-        ----------
-        verbose : bool
-            If True, print progress messages during analysis.
-        
         Returns
         -------
         list of dict
