@@ -25,24 +25,39 @@ class VolumeWrapper:
         self.mask_unique_values = None
         self.slice_thresholds = None
 
-    def load_data(self):
+    def load_data(self) -> str | None:
         '''
         Loads the image and label data for the volume.
         '''
+        message = None
         logger.info("Loading data for volume...")
         self.image = nib.load(self.img_path)
+        logger.debug("Loading label data for volume...")
         self.label = nib.load(self.label_path)
 
+        logger.debug("Extracting data arrays from the loaded NIfTI files...")
         self.image_data = self.image.get_fdata()
-        self.label_data = self.label.get_fdata()
-
+        self.label_data = np.asanyarray(self.label.dataobj).astype(np.uint8)
         logger.info("Data loaded successfully.")
+
+        if self.image_data.shape != self.label_data.shape:
+            raise ValueError(
+                f"Shape mismatch: Image {self.image_data.shape} vs "
+                f"Label {self.label_data.shape}"
+            )
+
+        logger.info("Doing some basic checks...")
+        if not np.allclose(self.image.affine, self.label.affine, atol=1e-2):
+            logger.warning("Image and label affines do not match natively. ")
+            message = "Warning: Image and label affines did not match. "
+
         logger.info("Calculating unique values in the label data...")
         self.mask_unique_values = np.unique(self.label_data)
-        self.convert_mask_to_long()
         logger.info("Finding slice information...")
         self.find_slice_thresholds()
         logger.info("done!")
+
+        return message
 
 
     def find_slice_thresholds(self):
@@ -55,6 +70,7 @@ class VolumeWrapper:
         last_liver_slice = None
         last_tumor_slice = None
 
+        # TODO: this function assumes LiTS. Update for general datasets.
         num_of_slices = self.image_data.shape[2]
 
         for i in range(num_of_slices):
@@ -81,23 +97,6 @@ class VolumeWrapper:
             }
         }
 
-    def load_image(self):
-        if self.image is None:
-            self.image = nib.load(self.img_path)
-        return self.image
-
-    def load_label(self):
-        if self.label is None:
-            self.label = nib.load(self.label_path)
-        return self.label
-
-    def convert_mask_to_long(self):
-        if self.label_data is not None:
-            self.label_data = self.label_data.astype(np.uint8)
-        else:
-            logger.warning("Label data is not loaded. Please load the label"
-                           " data before converting to long.")
-
     def print_slice_summary(self):
         logger.info("Volume has %d slices.", self.image_data.shape[2])
         logger.info("Liver slices range from %d to %d",
@@ -114,17 +113,7 @@ class VolumeWrapper:
         Returns
         -------
         dict
-            Dictionary containing volume metadata and statistics:
-            - image_path, label_path
-            - image_shape, label_shape
-            - ct_min, ct_max (CT intensity range)
-            - spacing_x, spacing_y, spacing_z (voxel spacing in mm)
-            - affine_codes (human-readable axis codes)
-            - unique_labels
-            - liver_first, liver_last, tumor_first, tumor_last (slice thresholds)
-            - liver_voxels, tumor_voxels (voxel counts)
-            - liver_to_total_ratio, tumor_to_total_ratio, tumor_to_liver_ratio (foreground ratios)
-            - has_tumor (boolean)
+            Dictionary containing volume metadata and statistics
         '''
         if self.image_data is None or self.label_data is None:
             raise ValueError("Data not loaded. Call load_data() first.")
@@ -138,10 +127,11 @@ class VolumeWrapper:
         ct_max = float(self.image_data.max())
 
         # Voxel spacing
-        spacing = self.image.header.get_zooms()
-        spacing_x, spacing_y, spacing_z = float(spacing[0]), float(spacing[1]), float(spacing[2])
+        # Voxel spacing (authoritative)
+        voxel_sizes = nib.affines.voxel_sizes(self.image.affine)
+        spacing_x, spacing_y, spacing_z = float(voxel_sizes[0]), float(voxel_sizes[1]), float(voxel_sizes[2])
 
-        # Affine axis codes
+        # Affine axis codes (eg: LAS)
         affine_codes = nib.aff2axcodes(self.image.affine)
 
         # Unique labels
@@ -169,12 +159,12 @@ class VolumeWrapper:
             liver_hu = self.image_data[liver_mask]
             liver_hu_mean = liver_hu.mean()
             liver_hu_std = liver_hu.std()
-            hu_p01 = float(np.percentile(liver_hu, 0.5))
-            hu_p99 = float(np.percentile(liver_hu, 99.5))
+            liver_hu_p005 = float(np.percentile(liver_hu, 0.5))
+            liver_hu_p995 = float(np.percentile(liver_hu, 99.5))
             liver_hu_min = liver_hu.min()
             liver_hu_max = liver_hu.max()
         else:
-            hu_p01, hu_p99 = None, None
+            liver_hu_p005, liver_hu_p995 = None, None
             liver_hu_mean, liver_hu_std = None, None
             liver_hu_min, liver_hu_max = None, None
             logger.warning("No liver voxels found in volume. Cannot compute liver HU statistics.")
@@ -187,17 +177,18 @@ class VolumeWrapper:
             tumour_hu_std = tumour_hu.std()
             tumour_hu_median = np.median(tumour_hu)
             tumour_hu_skew = skew(tumour_hu)
-            hu_p01 = float(np.percentile(tumour_hu, 0.5))
-            hu_p99 = float(np.percentile(tumour_hu, 99.5))
+            tumour_hu_p005 = float(np.percentile(tumour_hu, 0.5))
+            tumour_hu_p995 = float(np.percentile(tumour_hu, 99.5))
             tumour_hu_min = tumour_hu.min()
             tumour_hu_max = tumour_hu.max()
         else:
             tumour_hu_mean = tumour_hu_std = tumour_hu_median = tumour_hu_skew = None
-            hu_p01 = hu_p99 = tumour_hu_min = tumour_hu_max = None
+            tumour_hu_p005 = tumour_hu_p995 = tumour_hu_min = tumour_hu_max = None
 
-        # Voxel volume for ml conversion
-        zooms = self.image.header.get_zooms()
-        voxel_volume_mm3 = zooms[0] * zooms[1] * zooms[2]
+        # tuple of floats  representing the size in mm for the x, y, and z axes
+        voxel_sizes = nib.affines.voxel_sizes(self.image.affine)
+        # 1 voxel volume = x * y * z
+        voxel_volume_mm3 = float(np.prod(voxel_sizes))
 
         # Volume in millilitres
         liver_volume_ml = liver_voxels * voxel_volume_mm3 / 1000.0
@@ -248,8 +239,8 @@ class VolumeWrapper:
             'has_tumor': tumor_voxels > 0,
             'liver_hu_mean': liver_hu_mean,
             'liver_hu_std': liver_hu_std,
-            'liver_hu_p01': hu_p01,
-            'liver_hu_p99': hu_p99,
+            'liver_hu_p005': liver_hu_p005,
+            'liver_hu_p995': liver_hu_p995,
             'liver_hu_min': liver_hu_min,
             'liver_hu_max': liver_hu_max,
             # Tumour intensity statistics
@@ -257,8 +248,8 @@ class VolumeWrapper:
             'tumour_hu_std': tumour_hu_std,
             'tumour_hu_median': tumour_hu_median,
             'tumour_hu_skewness': tumour_hu_skew,
-            'tumour_hu_p01': hu_p01,
-            'tumour_hu_p99': hu_p99,
+            'tumour_hu_p005': tumour_hu_p005,
+            'tumour_hu_p995': tumour_hu_p995,
             'tumour_hu_min': tumour_hu_min,
             'tumour_hu_max': tumour_hu_max,
 
@@ -271,7 +262,6 @@ class VolumeWrapper:
             'num_lesions': lesion_metrics['num_lesions'],
             'lesion_volumes_ml': lesion_metrics['lesion_volumes_ml'],
             'lesion_equiv_diameters_mm': lesion_metrics['lesion_equiv_diameters_mm'],
-            'lesion_sphericities': lesion_metrics['lesion_sphericities'],
             'min_lesion_diameter_mm': lesion_metrics['min_lesion_diameter_mm'],
             'max_lesion_diameter_mm': lesion_metrics['max_lesion_diameter_mm'],
             'mean_lesion_diameter_mm': lesion_metrics['mean_lesion_diameter_mm'],
@@ -292,7 +282,6 @@ class VolumeWrapper:
             - num_lesions: int
             - lesion_volumes_ml: list[float]
             - lesion_equiv_diameters_mm: list[float]
-            - lesion_sphericities: list[float] (if computable)
         """
         tumour_mask = (label_data == 2).astype(np.uint8)
 
@@ -301,7 +290,6 @@ class VolumeWrapper:
                 'num_lesions': 0,
                 'lesion_volumes_ml': [],
                 'lesion_equiv_diameters_mm': [],
-                'lesion_sphericities': [],
                 'min_lesion_diameter_mm': None,
                 'max_lesion_diameter_mm': None,
                 'mean_lesion_diameter_mm': None
@@ -310,14 +298,10 @@ class VolumeWrapper:
         # Connected component labelling (26-connectivity for 3D)
         structure = ndimage.generate_binary_structure(3, 3)
         labelled, num = ndimage.label(tumour_mask, structure=structure)
-
-        voxel_volume_mm3 = self.image.header.get_zooms()[0] * \
-                        self.image.header.get_zooms()[1] * \
-                        self.image.header.get_zooms()[2]
+        voxel_volume_mm3 = float(np.prod(nib.affines.voxel_sizes(self.image.affine)))
 
         lesion_volumes_ml = []
         lesion_equiv_diameters_mm = []
-        lesion_sphericities = []
 
         for label_idx in range(1, num + 1):
             lesion_mask = (labelled == label_idx)
@@ -331,23 +315,10 @@ class VolumeWrapper:
             equiv_diameter_mm = 2 * ((3 * volume_mm3) / (4 * np.pi)) ** (1/3)
             lesion_equiv_diameters_mm.append(equiv_diameter_mm)
 
-            # Sphericity: 4πV / A² (requires surface area approximation)
-            # Approximate surface via morphological gradient
-            erosion = ndimage.binary_erosion(lesion_mask, structure=structure)
-            surface_voxels = np.sum(lesion_mask & ~erosion)
-            surface_area_mm2 = surface_voxels * voxel_volume_mm3 ** (2/3)  # Approximation
-            if surface_area_mm2 > 0:
-                sphericity = (4 * np.pi * volume_mm3) / (surface_area_mm2 ** 2)
-                sphericity = min(1.0, max(0.0, sphericity))  # Clamp to [0,1]
-            else:
-                sphericity = None
-            lesion_sphericities.append(sphericity)
-
         return {
             'num_lesions': num,
             'lesion_volumes_ml': lesion_volumes_ml,
             'lesion_equiv_diameters_mm': lesion_equiv_diameters_mm,
-            'lesion_sphericities': lesion_sphericities,
             'min_lesion_diameter_mm': min(lesion_equiv_diameters_mm) if lesion_equiv_diameters_mm else None,
             'max_lesion_diameter_mm': max(lesion_equiv_diameters_mm) if lesion_equiv_diameters_mm else None,
             'mean_lesion_diameter_mm': np.mean(lesion_equiv_diameters_mm) if lesion_equiv_diameters_mm else None
@@ -464,7 +435,6 @@ class DatasetSummary:
     
     Usage
     -----
-    # From code:
     collector = DataCollector()
     collector.read_dir(config.CT_ROOT, ds_source='LiTS')
     collector.extract_images_and_labels()
@@ -489,14 +459,9 @@ class DatasetSummary:
         self.per_case_rows: List[Dict[str, Any]] = []
         self.aggregate_stats: Optional[Dict[str, Any]] = None
 
-    def analyse_all(self, verbose: bool = False) -> List[Dict[str, Any]]:
+    def analyse_all(self) -> List[Dict[str, Any]]:
         '''
         Iterate over all paired volumes and extract per-case summaries.
-        
-        Parameters
-        ----------
-        verbose : bool
-            If True, print progress messages during analysis.
         
         Returns
         -------
@@ -506,169 +471,37 @@ class DatasetSummary:
         self.per_case_rows = []
 
         for i, pair in enumerate(self.datasources):
-            if verbose:
-                logger.info("[%d/%d] Analysing %s...", i + 1, len(self.datasources), pair['image'])
+            case_name = Path(pair['image']).name
+            logger.debug("[%d/%d] Analysing %s...", i + 1, len(self.datasources), case_name)
 
-            wrapper = VolumeWrapper(pair['image'], pair['label'])
-            wrapper.load_data()
-            row = wrapper.get_volume_summary()
+            try:
+                wrapper = VolumeWrapper(pair['image'], pair['label'])
+                message = wrapper.load_data()
+                row = wrapper.get_volume_summary()
 
-            # Add case index for convenience
-            row['case_index'] = i
-            # Extract filename for easier reading
-            row['case_name'] = Path(pair['image']).name
+                # Add case index for convenience
+                row['case_index'] = i
+                # Extract filename for easier reading
+                row['case_name'] = Path(pair['image']).name
+                row['status'] = 'success'
+                row['obs'] = message
 
-            self.per_case_rows.append(row)
+                self.per_case_rows.append(row)
+            except Exception as e:
+                logger.error("Failed to analyse %s: ", case_name)
+                logger.error("Exception details:", exc_info=True)
+                # Append a failure row so your CSV still accounts for this case
+                self.per_case_rows.append({
+                    'case_index': i,
+                    'case_name': case_name,
+                    'status': 'failed',
+                    'obs': str(e)
+                })
 
-        if verbose:
-            logger.info("Completed analysis of %d volumes.", len(self.per_case_rows))
-
+        logger.debug("Completed analysis. %d succeeded, %d failed.", 
+                     sum(1 for r in self.per_case_rows if r.get('status') == 'success'),
+                     sum(1 for r in self.per_case_rows if r.get('status') == 'failed'))
         return self.per_case_rows
-
-    def get_aggregate_stats(self) -> Dict[str, Any]:
-        '''
-        Compute dataset-level aggregate statistics from analyzed per-case rows.
-        Must call analyse_all() first.
-        
-        Returns
-        -------
-        dict
-            Dictionary containing aggregate statistics:
-            - num_volumes
-            - shape_mean, shape_median, shape_std (per axis)
-            - spacing_mean, spacing_std (per axis)
-            - orientation_distribution (count per affine code tuple)
-            - tumor_proportion (fraction of volumes with tumor)
-            - slice_range stats (liver/tumor span mean/std)
-            - foreground_imbalance (mean liver/tumor ratios)
-            - ct_intensity_mean (mean min/max across volumes)
-        '''
-        if not self.per_case_rows:
-            raise ValueError("No data analysed. Call analyse_all() first.")
-
-        rows = self.per_case_rows
-        n = len(rows)
-
-        # Shape statistics (D, H, W)
-        shapes = np.array([r['image_shape'] for r in rows])
-        shape_mean = shapes.mean(axis=0).tolist()
-        shape_median = np.median(shapes, axis=0).tolist()
-        shape_std = shapes.std(axis=0).tolist()
-
-        # Spacing statistics
-        spacing_x = [r['spacing_x'] for r in rows]
-        spacing_y = [r['spacing_y'] for r in rows]
-        spacing_z = [r['spacing_z'] for r in rows]
-
-        spacing_mean = [np.mean(spacing_x), np.mean(spacing_y), np.mean(spacing_z)]
-        spacing_std = [np.std(spacing_x), np.std(spacing_y), np.std(spacing_z)]
-
-        # Orientation distribution
-        orientation_counts: Dict[str, int] = {}
-        for r in rows:
-            key = str(r['affine_codes'])
-            orientation_counts[key] = orientation_counts.get(key, 0) + 1
-
-        # Tumor proportion
-        num_with_tumor = sum(1 for r in rows if r['has_tumor'])
-        tumor_proportion = num_with_tumor / n
-
-        # Slice range statistics
-        liver_spans = []
-        tumor_spans = []
-        for r in rows:
-            if r['liver_first'] is not None and r['liver_last'] is not None:
-                liver_spans.append(r['liver_last'] - r['liver_first'] + 1)
-            if r['tumor_first'] is not None and r['tumor_last'] is not None:
-                tumor_spans.append(r['tumor_last'] - r['tumor_first'] + 1)
-
-        liver_span_mean = np.mean(liver_spans) if liver_spans else 0.0
-        liver_span_std = np.std(liver_spans) if liver_spans else 0.0
-        tumor_span_mean = np.mean(tumor_spans) if tumor_spans else 0.0
-        tumor_span_std = np.std(tumor_spans) if tumor_spans else 0.0
-
-        # Foreground imbalance metrics
-        liver_ratios = [r['liver_to_total_ratio'] for r in rows]
-        tumor_ratios = [r['tumor_to_liver_ratio'] for r in rows]
-        liver_ratio_mean = np.mean(liver_ratios)
-        liver_ratio_std = np.std(liver_ratios)
-        tumor_ratio_mean = np.mean(tumor_ratios)
-        tumor_ratio_std = np.std(tumor_ratios)
-
-        # CT intensity statistics
-        ct_mins = [r['ct_min'] for r in rows]
-        ct_maxs = [r['ct_max'] for r in rows]
-        ct_min_mean = np.mean(ct_mins)
-        ct_max_mean = np.mean(ct_maxs)
-
-        self.aggregate_stats = {
-            'num_volumes': n,
-            'shape_mean': shape_mean,
-            'shape_median': shape_median,
-            'shape_std': shape_std,
-            'spacing_mean': spacing_mean,
-            'spacing_std': spacing_std,
-            'orientation_distribution': orientation_counts,
-            'tumor_proportion': tumor_proportion,
-            'num_with_tumor': num_with_tumor,
-            'liver_span_mean': liver_span_mean,
-            'liver_span_std': liver_span_std,
-            'tumor_span_mean': tumor_span_mean,
-            'tumor_span_std': tumor_span_std,
-            'liver_ratio_mean': liver_ratio_mean,
-            'liver_ratio_std': liver_ratio_std,
-            'tumor_ratio_mean': tumor_ratio_mean,
-            'tumor_ratio_std': tumor_ratio_std,
-            'ct_min_mean': ct_min_mean,
-            'ct_max_mean': ct_max_mean
-        }
-
-        return self.aggregate_stats
-
-    def print_table(self) -> None:
-        '''
-        Print a terminal table-like summary of the dataset analysis.
-        '''
-        if not self.per_case_rows:
-            logger.warning("No data analyzed. Call analyse_all() first.")
-            return
-
-        logger.info("")
-        logger.info("=" * 50)
-        logger.info("AGGREGATE STATISTICS")
-        logger.info("=" * 50)
-
-        if self.aggregate_stats is None:
-            self.get_aggregate_stats()
-
-        agg = self.aggregate_stats
-        logger.info("Number of volumes:           %d", agg['num_volumes'])
-        logger.info("Volumes with tumor:          %d (%.1f%%)", agg['num_with_tumor'],
-                    agg['tumor_proportion']*100)
-        logger.info("")
-        logger.info("Mean shape (X,Y,Z):          %s", agg['shape_mean'])
-        logger.info("Median shape (X,Y,Z):        %s", agg['shape_median'])
-        logger.info("Shape std (X,Y,Z):           %s", agg['shape_std'])
-        logger.info("")
-        logger.info("Mean spacing (mm) (X,Y,Z):   %s", agg['spacing_mean'])
-        logger.info("Spacing std (mm) (X,Y,Z):    %s", agg['spacing_std'])
-        logger.info("")
-        logger.info("Orientation distribution:")
-        for orient, count in agg['orientation_distribution'].items():
-            logger.info("  %s: %d volumes (%.1f%%)", orient, count, count/agg['num_volumes']*100)
-        logger.info("")
-        logger.info("Liver span (slices):         mean=%.1f, std=%.1f",
-                    agg['liver_span_mean'], agg['liver_span_std'])
-        logger.info("Tumor span (slices):         mean=%.1f, std=%.1f",
-                    agg['tumor_span_mean'], agg['tumor_span_std'])
-        logger.info("")
-        logger.info("Liver voxel ratio:           mean=%.3f%%, std=%.3f%%",
-                    agg['liver_ratio_mean']*100, agg['liver_ratio_std']*100)
-        logger.info("Tumor voxel ratio:           mean=%.4f%%, std=%.4f%%",
-                    agg['tumor_ratio_mean']*100, agg['tumor_ratio_std']*100)
-        logger.info("")
-        logger.info("CT intensity (mean range):   %d to %d", agg['ct_min_mean'], agg['ct_max_mean'])
-        logger.info("=" * 50)
 
     def _flatten_dict(self, d: Dict[str, Any], parent_key: str = '', sep: str = '_') -> Dict[str, Any]:
         """
@@ -690,13 +523,13 @@ class DatasetSummary:
                 items.append((new_key, v))
         return dict(items)
 
-    def export_csv_auto(self, output_path: str, exclude_keys: Optional[List[str]] = None) -> None:
+    def export_csv_auto(self, output_path: Path, exclude_keys: List[str] | None = None) -> None:
         """
         Export per-case rows to CSV using automatic flattening.
         
         Parameters
         ----------
-        output_path : str
+        output_path : Path
             Path to the output CSV file.
         exclude_keys : list of str, optional
             Keys to exclude from export (e.g., large arrays, paths).
@@ -704,8 +537,12 @@ class DatasetSummary:
         if not self.per_case_rows:
             raise ValueError("No data analysed. Call analyse_all() first.")
 
+        # Exclude long paths by default; avoid mutating caller's list
+        default_excludes = ['image_path', 'label_path']
         if exclude_keys is None:
-            exclude_keys = ['image_path', 'label_path']  # Exclude long paths by default
+            exclude_keys = default_excludes
+        else:
+            exclude_keys = list(exclude_keys) + default_excludes
 
         flattened_rows = []
         for r in self.per_case_rows:
@@ -720,160 +557,10 @@ class DatasetSummary:
         df.to_csv(output_path, index=False)
         print(f"CSV exported to: {output_path} ({len(df)} rows, {len(df.columns)} columns)")
 
-    def export_csv(self, output_path: str) -> None:
-        '''
-        DEPRECATED: Use export_csv_auto() instead for more robust handling of nested structures and data types.
-        Export per-case rows to a CSV file for thesis analysis.
-        
-        Parameters
-        ----------
-        output_path : str
-            Path to the output CSV file.
-        '''
-        logger.warning("export_csv() is deprecated. Use export_csv_auto() for better "
-                       "handling of nested data and types.")
-        if not self.per_case_rows:
-            raise ValueError("No data analysed. Call analyse_all() first.")
-
-        # Flatten some fields for CSV
-        csv_rows = []
-        for r in self.per_case_rows:
-            csv_row = {
-                'case_index': r['case_index'],
-                'case_name': r['case_name'],
-                'image_path': r['image_path'],
-                'label_path': r['label_path'],
-                'image_x': r['image_shape'][0],
-                'image_y': r['image_shape'][1],
-                'image_z': r['image_shape'][2],
-                'label_x': r['label_shape'][0],
-                'label_y': r['label_shape'][1],
-                'label_z': r['label_shape'][2],
-                'ct_min': r['ct_min'],
-                'ct_max': r['ct_max'],
-                'spacing_x': r['spacing_x'],
-                'spacing_y': r['spacing_y'],
-                'spacing_z': r['spacing_z'],
-                'affine_R': r['affine_codes'][0],
-                'affine_A': r['affine_codes'][1],
-                'affine_S': r['affine_codes'][2],
-                'unique_labels': ';'.join(map(str, r['unique_labels'])),
-                'liver_first': r['liver_first'] if r['liver_first'] is not None else '',
-                'liver_last': r['liver_last'] if r['liver_last'] is not None else '',
-                'tumor_first': r['tumor_first'] if r['tumor_first'] is not None else '',
-                'tumor_last': r['tumor_last'] if r['tumor_last'] is not None else '',
-                'liver_voxels': r['liver_voxels'],
-                'tumor_voxels': r['tumor_voxels'],
-                'liver_to_total_ratio': r['liver_to_total_ratio'],
-                'tumor_to_total_ratio': r['tumor_to_total_ratio'],
-                'tumor_to_liver_ratio': r['tumor_to_liver_ratio'],
-                'liver_hu_mean': r['liver_hu_mean'],
-                'liver_hu_std': r['liver_hu_std'],
-                'liver_hu_p01': r['liver_hu_p01'],
-                'liver_hu_p99': r['liver_hu_p99'],
-                'liver_hu_min': r['liver_hu_min'],
-                'liver_hu_max': r['liver_hu_max'],
-                # Tumour intensity statistics
-                'tumour_hu_mean': r['tumour_hu_mean'],
-                'tumour_hu_std': r['tumour_hu_std'],
-                'tumour_hu_median': r['tumour_hu_median'],
-                'tumour_hu_skewness': r['tumour_hu_skew'],
-                'tumour_hu_p01': r['hu_p01'],
-                'tumour_hu_p99': r['hu_p99'],
-                'tumour_hu_min': r['tumour_hu_min'],
-                'tumour_hu_max': r['tumour_hu_max'],
-
-                # Volume in clinical units
-                'voxel_volume_mm3': r['voxel_volume_mm3'],
-                'liver_volume_ml': r['liver_volume_ml'],
-                'tumour_volume_ml': r['tumour_volume_ml'],
-
-                # Lesion-level metrics
-                'num_lesions': r['num_lesions'],
-                'lesion_volumes_ml': r['lesion_volumes_ml'],
-                'lesion_equiv_diameters_mm': r['lesion_equiv_diameters_mm'],
-                'lesion_sphericities': r['lesion_sphericities'],
-                'min_lesion_diameter_mm': r['min_lesion_diameter_mm'],
-                'max_lesion_diameter_mm': r['max_lesion_diameter_mm'],
-                'mean_lesion_diameter_mm': r['mean_lesion_diameter_mm'],
-
-                # Liver texture and noise
-                'liver_texture_variance': r['liver_texture_variance'],
-                'liver_noise_estimate': r['liver_noise_estimate'],
-
-                # Include tumor presence as a simple boolean for easier analysis
-                'has_tumor': r['has_tumor']
-            }
-            csv_rows.append(csv_row)
-
-        # Write CSV
-        fieldnames = list(csv_rows[0].keys())
-        with open(output_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(csv_rows)
-
-        print(f"CSV exported to: {output_path}")
-
-    def export_aggregate_csv(self, output_path: str) -> None:
-        '''
-        Export aggregate statistics to a CSV file.
-        
-        Parameters
-        ----------
-        output_path : str
-            Path to the output CSV file.
-        '''
-        if self.aggregate_stats is None:
-            self.get_aggregate_stats()
-
-        agg = self.aggregate_stats
-
-        # Convert nested structures to strings
-        row = {
-            'num_volumes': agg['num_volumes'],
-            'num_with_tumor': agg['num_with_tumor'],
-            'tumor_proportion': agg['tumor_proportion'],
-            'shape_mean_X': agg['shape_mean'][0],
-            'shape_mean_Y': agg['shape_mean'][1],
-            'shape_mean_Z': agg['shape_mean'][2],
-            'shape_median_X': agg['shape_median'][0],
-            'shape_median_Y': agg['shape_median'][1],
-            'shape_median_Z': agg['shape_median'][2],
-            'shape_std_X': agg['shape_std'][0],
-            'shape_std_Y': agg['shape_std'][1],
-            'shape_std_Z': agg['shape_std'][2],
-            'spacing_mean_x': agg['spacing_mean'][0],
-            'spacing_mean_y': agg['spacing_mean'][1],
-            'spacing_mean_z': agg['spacing_mean'][2],
-            'spacing_std_x': agg['spacing_std'][0],
-            'spacing_std_y': agg['spacing_std'][1],
-            'spacing_std_z': agg['spacing_std'][2],
-            'orientation_distribution': str(agg['orientation_distribution']),
-            'liver_span_mean': agg['liver_span_mean'],
-            'liver_span_std': agg['liver_span_std'],
-            'tumor_span_mean': agg['tumor_span_mean'],
-            'tumor_span_std': agg['tumor_span_std'],
-            'liver_ratio_mean': agg['liver_ratio_mean'],
-            'liver_ratio_std': agg['liver_ratio_std'],
-            'tumor_ratio_mean': agg['tumor_ratio_mean'],
-            'tumor_ratio_std': agg['tumor_ratio_std'],
-            'ct_min_mean': agg['ct_min_mean'],
-            'ct_max_mean': agg['ct_max_mean']
-        }
-
-        with open(output_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-            writer.writeheader()
-            writer.writerow(row)
-
-        logger.info("Aggregate stats exported to: %s", output_path)
-
-
-def analyse_dataset(datasources: List[Dict[str, str]], 
-                         output_csv: Optional[str] = None,
-                         output_agg_csv: Optional[str] = None,
-                         verbose: bool = True) -> DatasetSummary:
+def analyse_dataset(
+        datasources: List[Dict[str, str]],
+        output_csv: Path
+    ) -> DatasetSummary:
     '''
     Convenience function to run a complete LiTS dataset analysis.
     
@@ -881,29 +568,16 @@ def analyse_dataset(datasources: List[Dict[str, str]],
     ----------
     datasources : list of dict
         Paired image/label paths from DataCollector
-    output_csv : str, optional
-        If provided, export per-case rows to this CSV path
-    output_agg_csv : str, optional
-        If provided, export aggregate stats to this CSV path
-    verbose : bool
-        If True, print progress and results
-    
+    output_csv : Path
+        Path to export per-case rows to this CSV path
+
     Returns
     -------
     DatasetSummary
         The summary object with per_case_rows and aggregate_stats populated
     '''
     summary = DatasetSummary(datasources)
-    summary.analyse_all(verbose=verbose)
-    summary.get_aggregate_stats()
-
-    if verbose:
-        summary.print_table()
-
-    if output_csv:
-        summary.export_csv_auto(output_csv)
-
-    if output_agg_csv:
-        summary.export_aggregate_csv(output_agg_csv)
+    summary.analyse_all()
+    summary.export_csv_auto(output_csv)
 
     return summary
