@@ -10,18 +10,15 @@ set -euo pipefail
 # Adjust to your GPU's PCI bus ID (this will limit the script to run on that specific GPU)
 GPU_PCI_BUS="00000000:C2:00.0"
 
-# The project and auxiliary files are generated in the home dir
-HOME_DIR="/home/misael"
-
 # This is the name of the project directory (where main.py is located)
 PROJECT_NAME="liver-pininos"
 
 # Virtual environment dir
-VENV_DIR="${HOME_DIR}/denv"
-PROJECT_DIR="${HOME_DIR}/${PROJECT_NAME}"
+VENV_DIR="${HOME}/denv"
+PROJECT_DIR="${HOME}/${PROJECT_NAME}"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-LOG_DIR="${HOME_DIR}/jobs"
+LOG_DIR="${HOME}/jobs"
 LOG_FILE="${LOG_DIR}/train_${TIMESTAMP}.log"
 
 TMUX_SESSION_PREFIX="thesis_train"
@@ -50,6 +47,7 @@ Examples:
 EOF
 }
 
+# Parse optional arguments
 VERBOSE_FLAG=""
 FAST_RUN_FLAG=""
 RESUME_PATH=""
