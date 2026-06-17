@@ -101,13 +101,28 @@ fi
 
 # 1. GPU selection
 GPU_INDEX=$(nvidia-smi --query-gpu=index,pci.bus_id --format=csv,noheader | awk -F', ' -v bus_id="$GPU_PCI_BUS" '$2 == bus_id { print $1; exit }')
+GPU_FOUND=false
+
 if [ -z "$GPU_INDEX" ]; then
-    echo "Error: No GPU found with PCI bus ID $GPU_PCI_BUS" >&2
-    exit 1
+    echo "WARNING: No GPU found with PCI bus ID $GPU_PCI_BUS"
+    
+    # Prompt user if interactive
+    if [[ -t 0 ]]; then
+        read -r -p "Do you still want to continue without a fixed GPU? [Y/n] " gpu_response
+        gpu_response=${gpu_response,,} # Convert to lowercase
+        if [[ -n "$gpu_response" && "$gpu_response" != "y" && "$gpu_response" != "yes" ]]; then
+            echo "Execution aborted by user."
+            exit 1
+        fi
+    else
+        echo "Non-interactive shell detected; continuing without fixed GPU."
+    fi
+else
+    GPU_FOUND=true
+    export CUDA_DEVICE_ORDER=PCI_BUS_ID
+    export CUDA_VISIBLE_DEVICES="$GPU_INDEX"
+    echo "Using GPU with PCI bus ID: $GPU_PCI_BUS (CUDA index: $GPU_INDEX)"
 fi
-export CUDA_DEVICE_ORDER=PCI_BUS_ID
-export CUDA_VISIBLE_DEVICES="$GPU_INDEX"
-echo "Using GPU with PCI bus ID: $GPU_PCI_BUS (CUDA index: $GPU_INDEX)"
 
 # 2. Paths & Environment
 mkdir -p "$LOG_DIR"
@@ -148,13 +163,34 @@ done
 
 echo "Validation arguments: ${NOHUP_PY_ARGS[*]}"
 
+# Build the GPU export command for tmux (only if a specific GPU was selected)
+# This prevents accidentally exporting an empty CUDA_VISIBLE_DEVICES which would hide all GPUs
+GPU_EXPORT_CMD=""
+if [ "$GPU_FOUND" = true ]; then
+    # A100 Environment: Specific GPU locked via PCI Bus ID
+    GPU_EXPORT_CMD="export CUDA_DEVICE_ORDER=\"${CUDA_DEVICE_ORDER}\" CUDA_VISIBLE_DEVICES=\"${CUDA_VISIBLE_DEVICES}\" && "
+else
+    # TWCC Environment: PCI mapping skipped, but V100 GPUs are present.
+    # Apply the memory fragmentation fix here to prevent OOM errors.
+    GPU_EXPORT_CMD="export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && "
+
+    echo "TWCC environment detected. Applying PyTorch CUDA memory fragmentation fix"
+    echo "(PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True)."
+
+    # Optional but recommended: Restrict to the first V100. 
+    # If left unset, PyTorch will initialise CUDA contexts on both V100s, 
+    # which wastes ~1-2 GB of VRAM per unused GPU.
+    GPU_EXPORT_CMD+="export CUDA_VISIBLE_DEVICES=0 && "
+    echo "Restricting to first GPU (CUDA_VISIBLE_DEVICES=0) to save VRAM on TWCC."
+fi
+
 # 5. Launch with tmux (falls back to nohup if tmux unavailable)
 if command -v tmux &> /dev/null; then
     SESSION="${TMUX_SESSION_PREFIX}_${TIMESTAMP}"
     
     # Construct the command
     CMD="cd \"${PROJECT_DIR}\" && \
-        export CUDA_DEVICE_ORDER=\"${CUDA_DEVICE_ORDER}\" CUDA_VISIBLE_DEVICES=\"${CUDA_VISIBLE_DEVICES}\" && \
+        ${GPU_EXPORT_CMD} \
         . \"${VENV_DIR}/bin/activate\" && \
         python -u do_test.py ${TMUX_PY_ARGS} 2>&1 | tee \"${LOG_FILE}\""
 
@@ -166,18 +202,18 @@ if command -v tmux &> /dev/null; then
     echo "Follow logs live:    tail -f ${LOG_FILE}"
     echo "Graceful stop:       tmux send-keys -t ${SESSION} C-c"
 
-# Prompt user to attach to the tmux session automatically (only when interactive)
-if [[ -t 0 ]]; then
-    read -r -p "Do you wish to attach to the tmux session now? [Y/n] " attach_response
-    attach_response=${attach_response,,} # Convert to lowercase
-    if [[ -z "$attach_response" || "$attach_response" == "y" || "$attach_response" == "yes" ]]; then
-        tmux attach-session -t "$SESSION"
+    # Prompt user to attach to the tmux session automatically (only when interactive)
+    if [[ -t 0 ]]; then
+        read -r -p "Do you wish to attach to the tmux session now? [Y/n] " attach_response
+        attach_response=${attach_response,,} # Convert to lowercase
+        if [[ -z "$attach_response" || "$attach_response" == "y" || "$attach_response" == "yes" ]]; then
+            tmux attach-session -t "$SESSION"
+        else
+            echo "Detached mode. Use 'tmux attach -t ${SESSION}' to connect later."
+        fi
     else
-        echo "Detached mode. Use 'tmux attach -t ${SESSION}' to connect later."
+        echo "Non-interactive shell detected; leaving tmux session detached."
     fi
-else
-    echo "Non-interactive shell detected; leaving tmux session detached."
-fi
 else
     echo "tmux not found. Falling back to nohup..."
     nohup python -u do_test.py "${NOHUP_PY_ARGS[@]}" > "${LOG_FILE}" 2>&1 &
