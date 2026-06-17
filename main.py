@@ -91,9 +91,14 @@ def log_environment_info(config_obj: config.Config, logger: logging.Logger) -> N
 
     logger.info("Device: %s", config_obj.DEVICE)
     logger.info("Batch Size: %d", config_obj.BATCH_SIZE)
-    logger.info("RAND_CROP_NUM_SAMPLES: %d (Effective Batch Size: %d)",
+    logger.info("RAND_CROP_NUM_SAMPLES: %d | Accumulation Steps: %d | "
+                    "True Effective Batch Size: %d",
                     config_obj.RAND_CROP_NUM_SAMPLES,
-                    config_obj.BATCH_SIZE * config_obj.RAND_CROP_NUM_SAMPLES)
+                    getattr(config_obj, 'ACCUMULATION_STEPS', 1),
+                    config_obj.BATCH_SIZE *
+                        config_obj.RAND_CROP_NUM_SAMPLES *
+                        getattr(config_obj, 'ACCUMULATION_STEPS', 1)
+                )
     logger.info("Val Batch Size: %d", config_obj.VAL_BATCH_SIZE)
     if config_obj.USE_CACHE_TRAIN_DATASET or config_obj.USE_CACHE_VAL_DATASET:
         logger.info("Cache Num Workers: %d", config_obj.CACHE_NUM_WORKERS)

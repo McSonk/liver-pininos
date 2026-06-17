@@ -31,7 +31,7 @@ class Mode(str, Enum):
 
 # Some constant definitions
 
-VERSION_STR = "2.4.2"
+VERSION_STR = "2.4.3"
 '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
 MODEL_TO_USE = AvailableModels.SWIN_UNETR
 '''The model architecture to use. Choose from the AvailableModels enum.'''
@@ -126,6 +126,10 @@ class Config:
        is higher to emphasise learning the tumour class. For example, for `NUM_CLASSES=3`
        and `TUMOUR_CLASS_INDEX=2`'''
 
+    ACCUMULATION_STEPS: int = 1
+    '''This property is only used on low VRAM environments to simulate a larger
+       batch size by accumulating gradients over multiple steps.'''
+
     # For SwinUNETR: 2e-4
     # Everything else: 1e-4
     LEARNING_RATE: float = 1e-4
@@ -196,6 +200,7 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     hc_gpu = False
+    super_hc_gpu = False
     cpu_memory = psutil.virtual_memory().total / (1024 ** 3)  # GB
     container_memory_bytes = get_cgroup_memory_limit_bytes()
     container_memory = (
@@ -204,10 +209,13 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
     process_memory_limit = container_memory if container_memory > 0 else cpu_memory
     lots_of_ram = process_memory_limit >= 100
 
+
+    
     if device == "cuda":
         if torch.cuda.is_available():
             vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             hc_gpu = vram_gb >= 30
+            super_hc_gpu = vram_gb >= 70
 
     run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -247,6 +255,7 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
         "dl_num_workers": 0,
         "pin_memory": False,
         "batch_size": 1,
+        "accumulation_steps": 1,
         "num_epochs": 5,
         "train_patch_size": (64, 64, 64),
         "val_patch_size": (64, 64, 64),
@@ -257,7 +266,8 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
         "cache_num_workers": 8 if lots_of_ram else 1,
         "dl_num_workers": min(gpu_num_workers, cpu_count),
         "pin_memory": True,
-        "batch_size": 4 if hc_gpu else 2,
+        "batch_size": 4 if super_hc_gpu else 2,
+        "accumulation_steps": 1 if super_hc_gpu else 2,
         "num_epochs": 200 if hc_gpu else 5,
         "train_patch_size": (128, 128, 128) if hc_gpu else (64, 64, 64),
         # Not used but kept for config/logging consistency
@@ -453,6 +463,7 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
         pin_memory = local_specific["pin_memory"]
         batch_size = local_specific["batch_size"]
         num_epochs = local_specific["num_epochs"]
+        accumulation_steps = local_specific["accumulation_steps"]
         train_patch_size = local_specific["train_patch_size"]
         val_patch_size = local_specific["val_patch_size"]
         iso_spacing = local_specific["iso_spacing"]
@@ -464,6 +475,7 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
         pin_memory = cloud_specific["pin_memory"]
         batch_size = cloud_specific["batch_size"]
         num_epochs = cloud_specific["num_epochs"]
+        accumulation_steps = cloud_specific["accumulation_steps"]
         train_patch_size = cloud_specific["train_patch_size"]
         val_patch_size = cloud_specific["val_patch_size"]
         iso_spacing = cloud_specific["iso_spacing"]
@@ -547,6 +559,7 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
         CT_TEST=ct_test,
         NUM_CLASSES=num_classes,
         DICE_CE_WEIGHTS=dice_ce_weights,
+        ACCUMULATION_STEPS=accumulation_steps,
         OUTPUT_DIR=output_dir,
         RUN_DIR=run_dir,
         CHECKPOINT_DIR=checkpoint_dir,
@@ -658,6 +671,7 @@ def to_dict() -> dict:
         "CACHE_NUM_WORKERS": config.CACHE_NUM_WORKERS,
         "DL_NUM_WORKERS": config.DL_NUM_WORKERS,
         "PIN_MEMORY": config.PIN_MEMORY,
+        "ACCUMULATION_STEPS": config.ACCUMULATION_STEPS,
         "NUM_EPOCHS": config.NUM_EPOCHS,
         "NUM_CLASSES": config.NUM_CLASSES,
         "DICE_CE_WEIGHTS": config.DICE_CE_WEIGHTS,
