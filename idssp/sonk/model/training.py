@@ -688,7 +688,7 @@ class ModelBuilder:
         if "current_lr" in checkpoint and checkpoint["current_lr"] is not None:
             logger.debug("Checkpoint LR at save: %.6f", checkpoint["current_lr"])
 
-    def back_propagate(self, loss):
+    def back_propagate(self, loss, is_update_step: bool = True):
         '''
         Performs backpropagation with optional mixed precision scaling.
 
@@ -705,34 +705,40 @@ class ModelBuilder:
                     .backward()
             # ^ And then back propagate (∇(scaled_loss) )
 
-            # Un-scales gradients (∇(original_loss) = ∇(scaled_loss) / scale_factor)
-            # and checks for inf/NaN values.
-            # ("_" means in-place operation)
-            self.scaler.unscale_(self.optimizer)
+            if is_update_step:
+                # Un-scales gradients (∇(original_loss) = ∇(scaled_loss) / scale_factor)
+                # and checks for inf/NaN values.
+                # ("_" means in-place operation)
+                self.scaler.unscale_(self.optimizer)
 
-            # Limit the magnitude of the gradients to prevent them from exploding
-            # This will compute a global norm over all parameters
-            clip_grad_norm_(
-                self.model.parameters(),
-                # If global norm exceeds 1.0, all gradients are scaled down
-                max_norm=1.0
-            )
+                # Limit the magnitude of the gradients to prevent them from exploding
+                # This will compute a global norm over all parameters
+                clip_grad_norm_(
+                    self.model.parameters(),
+                    # If global norm exceeds 1.0, all gradients are scaled down
+                    max_norm=1.0
+                )
 
-            # Now we have safe gradient values. Optimiser will do safe updates.
-            # Step the optimiser with scaled gradients
-            # Scaler checks if gradients has inf/NaN values. If they do,
-            # optimizer step is skipped to avoid corrupting the model weights.
-            self.scaler.step(self.optimizer)
+                # Now we have safe gradient values. Optimiser will do safe updates.
+                # Step the optimiser with scaled gradients
+                # Scaler checks if gradients has inf/NaN values. If they do,
+                # optimizer step is skipped to avoid corrupting the model weights.
+                self.scaler.step(self.optimizer)
 
-            # Updates scaling factor. It can either duplicate, halve or keep it as is.
-            self.scaler.update()
+                # Updates scaling factor. It can either duplicate, halve or keep it as is.
+                self.scaler.update()
+
+                self.optimizer.zero_grad(set_to_none=True)
 
         else:
             # Standard backpropagation for CPU or if mixed precision is not enabled
             # calc gradients
             loss.backward()
-            # Update weights
-            self.optimizer.step()
+            if is_update_step:
+                clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                # Update weights
+                self.optimizer.step()
+                self.optimizer.zero_grad(set_to_none=True)
 
     def _train_epoch(self):
         '''Performs one epoch of training over the entire training dataset.
@@ -746,7 +752,10 @@ class ModelBuilder:
         self.model.train()
         train_loss = 0
 
-        for batch in self.train_dl:
+        # Zero gradients at the start of the epoch
+        self.optimizer.zero_grad(set_to_none=True)
+
+        for step, batch in enumerate(self.train_dl):
             # Batch is a dictionary with keys "image" and "label", each containing a tensor of shape
             # (batch_size, channels, depth, height, width).
 
@@ -755,17 +764,22 @@ class ModelBuilder:
             images = batch["image"].to(self.device)
             labels = batch["label"].to(self.device)
 
-            # Set gradients to None
-            self.optimizer.zero_grad(set_to_none=True)
-
             # Mixed precision training for potential speed up on CUDA
             with autocast(device_type="cuda", enabled=self.config.DEVICE == "cuda"):
                 predictions = self.model(images)
                 loss = self.loss_fn(predictions, labels)
 
-            self.back_propagate(loss)
+            # Scale loss to ensure gradient magnitude remains identical
+            loss = loss / self.config.ACCUMULATION_STEPS
 
-            train_loss += loss.item()
+            # Determine if we should update weights on this step
+            is_update_step = ((step + 1) % self.config.ACCUMULATION_STEPS == 0) or \
+                             (step + 1 == len(self.train_dl))
+
+            self.back_propagate(loss, is_update_step)
+
+            # Accumulate unscaled loss for logging
+            train_loss += loss.item() * self.config.ACCUMULATION_STEPS
 
         return train_loss / len(self.train_dl)
 
