@@ -132,11 +132,11 @@ class Config:
 
     # For SwinUNETR: 2e-4
     # Everything else: 1e-4
-    LEARNING_RATE: float = 1e-4
+    LEARNING_RATE: float = 2e-4
 
     # For SwinUNETR: 4
     # Everything else: 16
-    SLIDING_WINDOW_BATCH_SIZE: int = 16
+    SLIDING_WINDOW_BATCH_SIZE: int = 4
 
     # Early Stopping
     EARLY_STOPPING_PATIENCE: int = 35
@@ -145,7 +145,7 @@ class Config:
     '''Minimum change in the monitored metric to qualify as an improvement.'''
     # For SwinUNETR: 15
     # Everything else: 10
-    WARMUP_EPOCHS: int = 10
+    WARMUP_EPOCHS: int = 15
     '''Number of epochs for linear learning rate warmup (CosineSchedule).'''
 
     # For SwinUNETR: 1e-6
