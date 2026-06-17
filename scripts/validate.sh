@@ -167,7 +167,21 @@ echo "Validation arguments: ${NOHUP_PY_ARGS[*]}"
 # This prevents accidentally exporting an empty CUDA_VISIBLE_DEVICES which would hide all GPUs
 GPU_EXPORT_CMD=""
 if [ "$GPU_FOUND" = true ]; then
+    # A100 Environment: Specific GPU locked via PCI Bus ID
     GPU_EXPORT_CMD="export CUDA_DEVICE_ORDER=\"${CUDA_DEVICE_ORDER}\" CUDA_VISIBLE_DEVICES=\"${CUDA_VISIBLE_DEVICES}\" && "
+else
+    # TWCC Environment: PCI mapping skipped, but V100 GPUs are present.
+    # Apply the memory fragmentation fix here to prevent OOM errors.
+    GPU_EXPORT_CMD="export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && "
+
+    echo "TWCC environment detected. Applying PyTorch CUDA memory fragmentation fix"
+    echo "(PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True)."
+
+    # Optional but recommended: Restrict to the first V100. 
+    # If left unset, PyTorch will initialise CUDA contexts on both V100s, 
+    # which wastes ~1-2 GB of VRAM per unused GPU.
+    GPU_EXPORT_CMD+="export CUDA_VISIBLE_DEVICES=0 && "
+    echo "Restricting to first GPU (CUDA_VISIBLE_DEVICES=0) to save VRAM on TWCC."
 fi
 
 # 5. Launch with tmux (falls back to nohup if tmux unavailable)
