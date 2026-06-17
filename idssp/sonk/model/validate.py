@@ -96,7 +96,8 @@ class TestEvaluator:
         self.device = torch.device(self.config.DEVICE)
         self.checkpoint_path = checkpoint_path
         self.model = None
-        self.inferer = None
+        self.inferer: SlidingWindowInferer = None
+        self.fallback_inferer: SlidingWindowInferer = None
         self.test_transforms = None
         self.pred_postprocess = None
         self.post_process = post_process
@@ -174,6 +175,16 @@ class TestEvaluator:
             progress=False
         )
 
+        # Fallback inferer for limited GPU memory (smaller batch size)
+        self.fallback_inferer = SlidingWindowInferer(
+            roi_size=self.config.TRAIN_PATCH_SIZE,
+            sw_batch_size=max(4, self.config.SLIDING_WINDOW_BATCH_SIZE // 4),
+            overlap=0.5,
+            mode="gaussian",
+            device=self.device,
+            progress=False
+        )
+
     def run_inference(self, test_files: List[Dict[str, str]]) -> pd.DataFrame:
         """
         Run full-volume inference on test dataset.
@@ -203,9 +214,22 @@ class TestEvaluator:
 
                 images = batch["image"].to(self.device)
 
+                logger.debug("Input image shape (after to device): %s", images.shape)
+
                 # Full-volume sliding window inference
-                with torch.amp.autocast(device_type="cuda", enabled=self.device.type == "cuda"):
-                    preds = self.inferer(inputs=images, network=self.model)
+                with torch.amp.autocast(
+                                    device_type="cuda",
+                                    enabled=self.device.type == "cuda"):
+                    try:
+                        preds = self.inferer(inputs=images, network=self.model)
+                    except torch.cuda.OutOfMemoryError as e:
+                        torch.cuda.empty_cache()
+                        logger.warning("CUDA OOM during inference on case %s. Error: %s",
+                                       case_name, str(e))
+                        logger.warning("Retrying inference with smaller batch size "
+                                       "(fallback inferer).")
+                        preds = self.fallback_inferer(inputs=images, network=self.model)
+
                 labels = batch["label"].to(self.device)
 
                 # Decollate to per-volume tensors
