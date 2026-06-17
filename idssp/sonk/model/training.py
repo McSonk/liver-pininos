@@ -1,13 +1,13 @@
+import random
 import time
 from pathlib import Path
-import random
 from typing import Optional
 
 import numpy as np
 import torch
 import torch.optim as optim
 from monai.data import (CacheDataset, DataLoader, Dataset, PersistentDataset,
-                        decollate_batch)
+                        decollate_batch, list_data_collate)
 from monai.inferers import SlidingWindowInferer
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
@@ -283,6 +283,7 @@ class ModelBuilder:
             # This prevents run-first memory problems on shared computer
             # but also takes more memory (which is never freed until the end of training)
             persistent_workers=True if self.config.DL_NUM_WORKERS > 0 else False,
+            collate_fn=list_data_collate
         )
 
         logger.debug("Creating validation dataloader...")
