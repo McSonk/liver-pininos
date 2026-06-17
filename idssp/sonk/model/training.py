@@ -304,7 +304,7 @@ class ModelBuilder:
             # (so workers are no recreated every epoch as usual)
             # This prevents run-first memory problems on shared computer
             # but also takes more memory (which is never freed until the end of training)
-            persistent_workers=True if self.config.DL_NUM_WORKERS > 0 else False,
+            persistent_workers=self.config.DL_NUM_WORKERS > 0,
         )
 
         logger.debug("Creating validation dataloader...")
@@ -314,7 +314,7 @@ class ModelBuilder:
             shuffle=False,
             num_workers=self.config.DL_NUM_WORKERS,
             pin_memory=self.config.PIN_MEMORY,
-            persistent_workers=True if self.config.DL_NUM_WORKERS > 0 else False,
+            persistent_workers=self.config.DL_NUM_WORKERS > 0,
         )
 
         # Initialise a fixed validation batch for logging overlays during training
