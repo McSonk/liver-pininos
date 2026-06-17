@@ -178,7 +178,7 @@ class TestEvaluator:
         # Fallback inferer for limited GPU memory (smaller batch size)
         self.fallback_inferer = SlidingWindowInferer(
             roi_size=self.config.TRAIN_PATCH_SIZE,
-            sw_batch_size=4,
+            sw_batch_size=max(4, self.config.SLIDING_WINDOW_BATCH_SIZE // 4),
             overlap=0.5,
             mode="gaussian",
             device=self.device,
