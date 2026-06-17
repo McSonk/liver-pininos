@@ -6,7 +6,6 @@ from typing import Optional
 import numpy as np
 import torch
 import torch.optim as optim
-from monai.data.utils import list_data_collate
 from monai.data import (CacheDataset, DataLoader, Dataset, PersistentDataset,
                         decollate_batch)
 from monai.inferers import SlidingWindowInferer
@@ -30,22 +29,6 @@ from idssp.sonk.utils.notifications import send_alert
 from idssp.sonk.view.utils import log_segmentation_overlay
 
 logger = get_logger(__name__)
-
-def safe_list_data_collate(batch):
-    """Flattens list-of-dicts from RandCropByPosNegLabeld and enforces 
-    uniform tensor types before PyTorch collation. Prevents mixed 
-    numpy/tensor batches that crash default_collate."""
-    flat_batch = []
-    for item in batch:
-        flat_batch.extend(item) if isinstance(item, list) else flat_batch.append(item)
-
-    for d in flat_batch:
-        if isinstance(d, dict):
-            for k, v in d.items():
-                if isinstance(v, np.ndarray):
-                    d[k] = torch.from_numpy(v).float() if np.issubdtype(v.dtype, np.floating) else torch.from_numpy(v).long()
-                    
-    return list_data_collate(flat_batch)
 
 class AugmentedDataset(Dataset):
     '''
@@ -264,6 +247,18 @@ class ModelBuilder:
                     ),
                     train_ran_trans
                 )
+
+                ###### Temp code #####
+                sample = train_ds[0]
+                if isinstance(sample, list):
+                    logger.info("Sample type: %s, Image dtype: %s", type(sample[0]["image"]), sample[0]["image"].dtype)
+                    logger.info("DIAGNOSTIC: Dataset returned a list of %d items.", len(sample))
+                    logger.info("DIAGNOSTIC: Item 0 image type: %s", type(sample[0]["image"]))
+                    logger.info("DIAGNOSTIC: Item 1 image type: %s", type(sample[1]["image"]))
+                else:
+                    logger.info("DIAGNOSTIC: Dataset returned a single dict. Image type: %s", type(sample["image"]))
+                    logger.info("Sample type: %s, Image dtype: %s", type(sample["image"]), sample["image"].dtype)
+
             # end if-else for train dataset
             if self.config.USE_CACHE_VAL_DATASET:
                 logger.debug("[Val] Using MONAI CacheDataset.")
@@ -300,7 +295,6 @@ class ModelBuilder:
             # This prevents run-first memory problems on shared computer
             # but also takes more memory (which is never freed until the end of training)
             persistent_workers=True if self.config.DL_NUM_WORKERS > 0 else False,
-            collate_fn=safe_list_data_collate
         )
 
         logger.debug("Creating validation dataloader...")
@@ -311,7 +305,6 @@ class ModelBuilder:
             num_workers=self.config.DL_NUM_WORKERS,
             pin_memory=self.config.PIN_MEMORY,
             persistent_workers=True if self.config.DL_NUM_WORKERS > 0 else False,
-            collate_fn=safe_list_data_collate
         )
 
         # Initialise a fixed validation batch for logging overlays during training
@@ -322,7 +315,7 @@ class ModelBuilder:
                 logger.debug(
                     "Overlay volume selected — label shape: %s, tumour voxels: %d",
                     batch["label"].shape,
-                    (batch["label"] == 2).sum().item()
+                    (batch["label"] == self.config.TUMOUR_CLASS_INDEX).sum().item()
                 )
                 break
 
