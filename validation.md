@@ -24,7 +24,7 @@ The Dice coefficient measures the volumetric overlap between the predicted segme
 #### 95th Percentile Hausdorff Distance (HD95)
 The standard Hausdorff Distance (HD) measures the absolute maximum distance between a point on the predicted boundary and its nearest point on the ground truth boundary. While mathematically rigorous, standard HD is extremely sensitive to outliers; a single stray predicted voxel located far from the true organ can result in a catastrophically high score (e.g., hundreds of millimetres), which misrepresents the overall segmentation quality.
 
-To mitigate this, the 95th percentile Hausdorff Distance (HD95) is utilised. Instead of the absolute maximum distance, HD95 calculates the 95th percentile of all pairwise boundary distances. This effectively ignores the top 5% of extreme outlier distances—often caused by sliding window artifacts or minor fragmented predictions—while still providing a rigorous assessment of boundary alignment. Because the volumes are resampled to an isotropic spacing during preprocessing, this distance is accurately measured in physical space using SI units (millimetres, mm). In this metric, **the lower, the better**.
+To mitigate this, the 95th percentile Hausdorff Distance (HD95) is utilised. Instead of the absolute maximum distance, HD95 calculates the 95th percentile of all pairwise boundary distances. This effectively ignores the top 5% of extreme outlier distances—often caused by sliding window artifacts or minor fragmented predictions—while still providing a rigorous assessment of boundary alignment. Because the volumes are resampled to an isotropic spacing during preprocessing, this distance is accurately measured in physical space using SI units (millimetres, mm). In this metric, **lower is better**.
 
 #### Sliding Window Inference
 Medical CT volumes are typically too large to be processed in a single forward pass due to GPU memory constraints. Sliding window inference addresses this by dividing the full 3D volume into smaller, overlapping patches (defined by the `TRAIN_PATCH_SIZE` configuration). The model processes each patch independently, and the predictions are blended back together using a Gaussian weighting function. This ensures that the model can maintain high-resolution contextual awareness while operating within strict VRAM limits, smoothly transitioning between overlapping regions to prevent border artifacts.
@@ -41,6 +41,22 @@ The evaluation script generates the following outputs in the designated run dire
 | `test_predictions/<case_name>_pred.nii.gz` | The predicted 3D segmentation maps for each test volume, saved in the NIfTI format with the original affine matrix for spatial alignment. |
 | `reports/test_evaluation_results.csv` | A granular, per-case report containing the Dice and HD95 scores for the liver and tumour for every individual test volume. |
 | `reports/test_aggregated_metrics.csv` | A summary report containing the aggregated statistics (mean ± standard deviation) for each anatomical structure across the entire test cohort. |
+
+### Structure of `test_evaluation_results.csv`
+
+The `test_evaluation_results.csv` file provides a case-by-case breakdown of the model's performance. Each row corresponds to a single test volume, identified by its filename stem. The exact columns present in the file depend on the segmentation configuration (multi-class vs. binary). 
+
+Missing metric values (e.g., when a structure is entirely absent in either the ground truth or the prediction, resulting in an undefined metric) are recorded as empty cells.
+
+**Multi-Class Configuration (3 Classes: Background, Liver, Tumour)**
+
+| Column Name | Data Type | Description |
+| :--- | :--- | :--- |
+| `case_name` | String | The unique identifier of the test volume, extracted from the original NIfTI filename. |
+| `dice_liver` | Float | The Dice similarity coefficient for the liver segmentation. |
+| `dice_tumour` | Float | The Dice similarity coefficient for the tumour segmentation. |
+| `hd95_liver_mm` | Float | The 95th percentile Hausdorff distance for the liver boundary, measured in millimetres (mm). |
+| `hd95_tumour_mm` | Float | The 95th percentile Hausdorff distance for the tumour boundary, measured in millimetres (mm). |
 
 ## 3. Post-Processing Steps
 
