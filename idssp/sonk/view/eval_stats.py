@@ -270,7 +270,7 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model", attach_hd95:
         fig, ax1 = plt.subplots(1, 1, figsize=(7, 6))
 
     _draw_metric_boxplot(ax1, [d_liv, d_tum], [COLOR_LIVER, COLOR_TUMOUR],
-                        f'{model_name} Test Set: Dice Score Distribution',
+                        f'{model_name}: Test Set',
                         'Dice Similarity Coefficient', y_lim=[-0.05, 1.1])
 
     return fig
