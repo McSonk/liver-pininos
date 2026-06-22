@@ -2,6 +2,8 @@ import re
 from dataclasses import dataclass
 
 import matplotlib.pyplot as plt
+from matplotlib.patches import Arc, Wedge, Circle, Rectangle
+import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
 
@@ -201,23 +203,28 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model"):
             if len(data) == 0:
                 continue  # Skip empty data to avoid errors
 
-            # Jitter for all points
-            x_jitter = np.random.normal(i, 0.06, size=len(data))
-            ax.scatter(x_jitter, data, alpha=0.5, color='#333333', s=20, zorder=2, edgecolors='none')
-
-            # Re-plot ALL outliers (both upper and lower) specifically in RED
+            # Calculate bounds first so we know which points are outliers
             q1_val, q3_val = np.percentile(data, [25, 75])
             iqr = q3_val - q1_val
             upper_bound = q3_val + 1.5 * iqr
             lower_bound = q1_val - 1.5 * iqr
 
             # Identify outliers in BOTH tails
-            outliers = data[(data > upper_bound) | (data < lower_bound)]
+            is_outlier = (data > upper_bound) | (data < lower_bound)
+            
+            # Filter out the outliers from the main dataset for the grey jitter
+            non_outlier_data = data[~is_outlier]
 
-            if len(outliers) > 0:
-                print(f"Plotting {len(outliers)} outliers for '{ylabel}' at position {i} (values: {outliers})")
-                x_outliers = np.random.normal(i, 0.06, size=len(outliers))
-                ax.scatter(x_outliers, outliers, color=COLOR_OUTLIER, s=60, zorder=5, 
+            # Jitter ONLY for non-outlier points (Grey)
+            if len(non_outlier_data) > 0:
+                x_jitter = np.random.normal(i, 0.06, size=len(non_outlier_data))
+                ax.scatter(x_jitter, non_outlier_data, alpha=0.5, color='#333333', s=20, zorder=2, edgecolors='none')
+
+            # Re-plot ALL outliers specifically in RED
+            outlier_values = data[is_outlier]
+            if len(outlier_values) > 0:
+                x_outliers = np.random.normal(i, 0.06, size=len(outlier_values))
+                ax.scatter(x_outliers, outlier_values, color=COLOR_OUTLIER, s=60, zorder=5, 
                            edgecolors='white', linewidth=1.5)
 
             # --- STATISTICAL LABELS ---
@@ -271,4 +278,74 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model"):
                         f'{model_name} Test Set: Boundary Distance (HD95)',
                         '95th Percentile Hausdorff Distance (mm)')
 
+    return fig
+
+
+# ==========================================
+# 2. CONCEPTUAL SCHEMATIC (FOR THESIS TEXT)
+# ==========================================
+def plot_hd95_conceptual_schematic():
+    """
+    Generates a conceptual 2D diagram to include in the thesis text.
+    It visually explains why a single missed slice causes a massive HD95 spike 
+    but barely affects the 3D Dice score.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+    fig.suptitle("Conceptual Interpretation of HD95 vs. Dice", 
+                 fontsize=14, fontweight='bold', color=FONT_COLOUR, y=0.95)
+
+    for ax in axes:
+        ax.set_xlim(0, 10)
+        ax.set_ylim(0, 10)
+        ax.set_aspect('equal')
+        ax.axis('off')
+        ax.set_facecolor('#1E1E1E') # Dark background for schematic
+
+    # --- LEFT: Minor Boundary Jitter ---
+    ax1 = axes[0]
+    # Ground Truth (Blue)
+    gt1 = Circle((5, 5), 3, fill=False, edgecolor=COLOR_LIVER, linewidth=3, label='Ground Truth')
+    # Prediction (Red, slightly wobbly/offset)
+    pred1 = Circle((5.2, 4.8), 3.1, fill=False, edgecolor=COLOR_TUMOUR, linewidth=2, linestyle='--', label='Prediction')
+    
+    ax1.add_patch(gt1)
+    ax1.add_patch(pred1)
+    ax1.set_title("Scenario A: Minor Boundary Jitter", fontsize=12, color=FONT_COLOUR, pad=10)
+    ax1.text(5, 1.5, "Dice: High (e.g., 0.90)\nHD95: Low (e.g., 2.0 mm)", 
+             ha='center', fontsize=11, color=FONT_COLOUR, fontweight='bold')
+    ax1.text(5, -0.5, "Typical prediction noise.", ha='center', fontsize=10, style='italic', color='#AAAAAA')
+
+    # --- RIGHT: Catastrophic Slice Failure ---
+    ax2 = axes[1]
+    # Ground Truth (Blue)
+    gt2 = Circle((5, 5), 3, fill=False, edgecolor=COLOR_LIVER, linewidth=3)
+    # Prediction (Red, completely misses a chunk/slice)
+    # We simulate a missed slice by drawing a prediction that is shifted or missing a section
+    pred2_arc = Arc((5, 5), 6, 6, angle=0, theta1=30, theta2=300,
+                edgecolor=COLOR_TUMOUR, linewidth=2, linestyle='--')
+    # Draw a "missed" region indicator
+    missed_rect = Rectangle((6.5, 2), 2, 4, edgecolor=COLOR_OUTLIER, facecolor=COLOR_OUTLIER, alpha=0.3, linewidth=2)
+    # Shade the missed wedge region inside the GT circle
+    missed_wedge = Wedge((5, 5), 3, 300, 60, 
+                        facecolor=COLOR_OUTLIER, alpha=0.35, edgecolor='none')
+
+    ax2.add_patch(missed_wedge)
+    ax2.add_patch(gt2)
+    ax2.add_patch(pred2_arc)
+    ax2.add_patch(missed_rect)
+    
+    ax2.set_title("Scenario B: Catastrophic Slice Failure", fontsize=12, color=FONT_COLOUR, pad=10)
+    ax2.text(5, 1.5, "Dice: Moderate (e.g., 0.75)\nHD95: MASSIVE (e.g., 80.0 mm)", 
+             ha='center', fontsize=11, color=FONT_COLOUR, fontweight='bold')
+    ax2.text(5, -0.5, "A single missed slice destroys HD95,\nbut 3D volume overlap (Dice) remains okay.", 
+             ha='center', fontsize=10, style='italic', color='#AAAAAA')
+
+    # Legend
+    legend_handles = [mpatches.Patch(color=COLOR_LIVER, label='Ground Truth'),
+                      mpatches.Patch(color=COLOR_TUMOUR, label='Prediction'),
+                      mpatches.Patch(color=COLOR_OUTLIER, alpha=0.5, label='Missed Region')]
+    fig.legend(handles=legend_handles, loc='lower center', ncol=3, 
+               frameon=False, fontsize=11, labelcolor=FONT_COLOUR, bbox_to_anchor=(0.5, 0.05))
+
+    plt.tight_layout(rect=[0, 0.1, 1, 0.92])
     return fig
