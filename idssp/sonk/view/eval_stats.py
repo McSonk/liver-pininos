@@ -150,7 +150,7 @@ def resolve_overlaps(positions, min_gap):
 
 def _draw_metric_boxplot(ax, data_list, colors, title, ylabel, y_lim=None):
     # 1. Draw the boxplot
-    bp = ax.boxplot(data_list, patch_artist=True, widths=0.5,
+    bp = ax.boxplot(data_list, patch_artist=True, widths=0.4,
                     showfliers=False,
                     boxprops=dict(linewidth=1.5, edgecolor='white'),
                     whiskerprops=dict(linewidth=1.5, color='white', linestyle='--'),
@@ -267,7 +267,7 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model", attach_hd95:
                             f'{model_name} Test Set: Boundary Distance (HD95)',
                             '95th Percentile Hausdorff Distance (mm)')
     else:
-        fig, ax1 = plt.subplots(1, 1, figsize=(11, 6))
+        fig, ax1 = plt.subplots(1, 1, figsize=(7, 6))
 
     _draw_metric_boxplot(ax1, [d_liv, d_tum], [COLOR_LIVER, COLOR_TUMOUR],
                         f'{model_name} Test Set: Dice Score Distribution',
