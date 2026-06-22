@@ -174,13 +174,12 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model"):
     def draw_metric_boxplot(ax, data_list, colors, title, ylabel, y_lim=None):
         # 1. Draw the boxplot
         bp = ax.boxplot(data_list, patch_artist=True, widths=0.5,
+                        showfliers=False, 
                         boxprops=dict(linewidth=1.5, edgecolor='white'),
                         whiskerprops=dict(linewidth=1.5, color='white', linestyle='--'),
                         capprops=dict(linewidth=1.5, color='white'),
-                        medianprops=dict(linewidth=2, color=FONT_COLOUR),
-                        flierprops=dict(marker='o', markerfacecolor=COLOR_OUTLIER, 
-                                        markersize=8, markeredgecolor='white', linewidth=1.5))
-        
+                        medianprops=dict(linewidth=2, color=FONT_COLOUR))
+
         for patch, color in zip(bp['boxes'], colors):
             patch.set_facecolor(color)
             patch.set_alpha(0.8)
@@ -205,13 +204,18 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model"):
             # Jitter for all points
             x_jitter = np.random.normal(i, 0.06, size=len(data))
             ax.scatter(x_jitter, data, alpha=0.5, color='#333333', s=20, zorder=2, edgecolors='none')
-            
-            # Re-plot outliers in RED
+
+            # Re-plot ALL outliers (both upper and lower) specifically in RED
             q1_val, q3_val = np.percentile(data, [25, 75])
             iqr = q3_val - q1_val
             upper_bound = q3_val + 1.5 * iqr
-            outliers = data[data > upper_bound]
+            lower_bound = q1_val - 1.5 * iqr
+
+            # Identify outliers in BOTH tails
+            outliers = data[(data > upper_bound) | (data < lower_bound)]
+
             if len(outliers) > 0:
+                print(f"Plotting {len(outliers)} outliers for '{ylabel}' at position {i} (values: {outliers})")
                 x_outliers = np.random.normal(i, 0.06, size=len(outliers))
                 ax.scatter(x_outliers, outliers, color=COLOR_OUTLIER, s=60, zorder=5, 
                            edgecolors='white', linewidth=1.5)
@@ -268,4 +272,3 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model"):
                         '95th Percentile Hausdorff Distance (mm)')
 
     return fig
-
