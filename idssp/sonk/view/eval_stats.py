@@ -2,8 +2,6 @@ import re
 from dataclasses import dataclass
 
 import matplotlib.pyplot as plt
-from matplotlib.patches import Arc, Wedge, Circle, Rectangle
-import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
 
@@ -157,7 +155,7 @@ def resolve_overlaps(positions, min_gap):
 # ==========================================
 # STATISTICAL BOXPLOTS (WITH SMART LABELS)
 # ==========================================
-def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model"):
+def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model", attach_hd95: bool=False):
     """
     Generates boxplots with overlaid strip plots (jitter). 
     Outliers are highlighted in red. Labels for Q1, Median, Q3, and Mean 
@@ -170,8 +168,11 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model"):
     h_liv = df['hd95_liver_mm'].dropna().values
     h_tum = df['hd95_tumour_mm'].dropna().values
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), 
-                                   gridspec_kw={'height_ratios': [1, 1], 'hspace': 0.3})
+    if attach_hd95:
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10),
+                                    gridspec_kw={'height_ratios': [1, 1], 'hspace': 0.3})
+    else:
+        fig, ax1 = plt.subplots(1, 1, figsize=(10, 6))
 
     def draw_metric_boxplot(ax, data_list, colors, title, ylabel, y_lim=None):
         # 1. Draw the boxplot
@@ -272,80 +273,10 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model"):
     draw_metric_boxplot(ax1, [d_liv, d_tum], [COLOR_LIVER, COLOR_TUMOUR],
                         f'{model_name} Test Set: Dice Score Distribution',
                         'Dice Similarity Coefficient', y_lim=[-0.05, 1.1])
+    if attach_hd95:
+        # --- BOTTOM PLOT: HAUSDORFF DISTANCE (HD95) ---
+        draw_metric_boxplot(ax2, [h_liv, h_tum], [COLOR_LIVER, COLOR_TUMOUR],
+                            f'{model_name} Test Set: Boundary Distance (HD95)',
+                            '95th Percentile Hausdorff Distance (mm)')
 
-    # --- BOTTOM PLOT: HAUSDORFF DISTANCE (HD95) ---
-    draw_metric_boxplot(ax2, [h_liv, h_tum], [COLOR_LIVER, COLOR_TUMOUR],
-                        f'{model_name} Test Set: Boundary Distance (HD95)',
-                        '95th Percentile Hausdorff Distance (mm)')
-
-    return fig
-
-
-# ==========================================
-# 2. CONCEPTUAL SCHEMATIC (FOR THESIS TEXT)
-# ==========================================
-def plot_hd95_conceptual_schematic():
-    """
-    Generates a conceptual 2D diagram to include in the thesis text.
-    It visually explains why a single missed slice causes a massive HD95 spike 
-    but barely affects the 3D Dice score.
-    """
-    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-    fig.suptitle("Conceptual Interpretation of HD95 vs. Dice", 
-                 fontsize=14, fontweight='bold', color=FONT_COLOUR, y=0.95)
-
-    for ax in axes:
-        ax.set_xlim(0, 10)
-        ax.set_ylim(0, 10)
-        ax.set_aspect('equal')
-        ax.axis('off')
-        ax.set_facecolor('#1E1E1E') # Dark background for schematic
-
-    # --- LEFT: Minor Boundary Jitter ---
-    ax1 = axes[0]
-    # Ground Truth (Blue)
-    gt1 = Circle((5, 5), 3, fill=False, edgecolor=COLOR_LIVER, linewidth=3, label='Ground Truth')
-    # Prediction (Red, slightly wobbly/offset)
-    pred1 = Circle((5.2, 4.8), 3.1, fill=False, edgecolor=COLOR_TUMOUR, linewidth=2, linestyle='--', label='Prediction')
-    
-    ax1.add_patch(gt1)
-    ax1.add_patch(pred1)
-    ax1.set_title("Scenario A: Minor Boundary Jitter", fontsize=12, color=FONT_COLOUR, pad=10)
-    ax1.text(5, 1.5, "Dice: High (e.g., 0.90)\nHD95: Low (e.g., 2.0 mm)", 
-             ha='center', fontsize=11, color=FONT_COLOUR, fontweight='bold')
-    ax1.text(5, -0.5, "Typical prediction noise.", ha='center', fontsize=10, style='italic', color='#AAAAAA')
-
-    # --- RIGHT: Catastrophic Slice Failure ---
-    ax2 = axes[1]
-    # Ground Truth (Blue)
-    gt2 = Circle((5, 5), 3, fill=False, edgecolor=COLOR_LIVER, linewidth=3)
-    # Prediction (Red, completely misses a chunk/slice)
-    # We simulate a missed slice by drawing a prediction that is shifted or missing a section
-    pred2_arc = Arc((5, 5), 6, 6, angle=0, theta1=30, theta2=300,
-                edgecolor=COLOR_TUMOUR, linewidth=2, linestyle='--')
-    # Draw a "missed" region indicator
-    missed_rect = Rectangle((6.5, 2), 2, 4, edgecolor=COLOR_OUTLIER, facecolor=COLOR_OUTLIER, alpha=0.3, linewidth=2)
-    # Shade the missed wedge region inside the GT circle
-    missed_wedge = Wedge((5, 5), 3, 300, 60, 
-                        facecolor=COLOR_OUTLIER, alpha=0.35, edgecolor='none')
-
-    ax2.add_patch(missed_wedge)
-    ax2.add_patch(gt2)
-    ax2.add_patch(pred2_arc)
-    ax2.add_patch(missed_rect)
-    
-    ax2.set_title("Scenario B: Catastrophic Slice Failure", fontsize=12, color=FONT_COLOUR, pad=10)
-    ax2.text(5, 1.5, "Dice: Moderate (e.g., 0.75)\nHD95: MASSIVE (e.g., 80.0 mm)", 
-             ha='center', fontsize=11, color=FONT_COLOUR, fontweight='bold')
-    ax2.text(5, -0.5, "A single missed slice destroys HD95,\nbut 3D volume overlap (Dice) remains okay.", 
-             ha='center', fontsize=10, style='italic', color='#AAAAAA')
-
-    # Legend
-    legend_handles = [mpatches.Patch(color=COLOR_LIVER, label='Ground Truth'),
-                      mpatches.Patch(color=COLOR_TUMOUR, label='Prediction'),
-                      mpatches.Patch(color=COLOR_OUTLIER, alpha=0.5, label='Missed Region')]
-    fig.legend(handles=legend_handles, loc='lower center', ncol=3, 
-               frameon=False, fontsize=11, labelcolor=FONT_COLOUR, bbox_to_anchor=(0.5, 0.05))
-
-    plt.tight_layout(rect=[0, 0.1, 1, 0.92])
     return fig
