@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -70,7 +71,7 @@ def get_unet(config_obj: config.Config) -> UNet:
     # channels=(64, 128, 256, 512)
     channels = (32, 64, 128, 256)
     strides = (2, 2, 2)
-    num_res_units = 1 if config.is_limited_env() else 2
+    num_res_units = 1 if config.is_limited_env(config=config_obj) else 2
     norm="INSTANCE"
     act="PRELU"
     logger.debug("UNet architecture parameters: Spatial Dims: %d, In Channels: %d, "
@@ -188,10 +189,10 @@ def get_swin_unetr_pretrain(config_obj: config.Config) -> SwinUNETR:
 
     return model
 
-def get_model() -> nn.Module:
+def get_model(cfg: Optional[config.Config] = None) -> nn.Module:
     '''Factory function to create the segmentation model based
        on the current configuration.'''
-    cfg = config.get()
+    cfg = cfg or config.get()
     if cfg.MODEL == config.AvailableModels.U_NET:
         return get_unet(cfg)
     elif cfg.MODEL == config.AvailableModels.SEG_RES_NET:

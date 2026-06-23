@@ -17,8 +17,7 @@ from monai.metrics import DiceMetric, HausdorffDistanceMetric
 from scipy import ndimage
 
 from idssp.sonk import config
-from idssp.sonk.model.models import (get_seg_res_net,
-                                     get_swin_unetr, get_unet)
+from idssp.sonk.model.models import get_model
 from idssp.sonk.model.transforms import (get_activations_transforms,
                                          get_label_transform,
                                          get_validation_transforms)
@@ -104,9 +103,8 @@ class TestEvaluator:
         self.pred_postprocess = None
         self.post_process = post_process
 
-         # EXACT post-processing used in training.py
-        self.pred_transform = get_activations_transforms(self.config)
-        self.label_transform = get_label_transform(self.config)
+        self.pred_transform = get_activations_transforms(self.config.NUM_CLASSES)
+        self.label_transform = get_label_transform(self.config.NUM_CLASSES)
 
         # Metrics expect decollated lists of tensors
         self.dice_metric = DiceMetric(include_background=False, reduction="none")
@@ -156,6 +154,9 @@ class TestEvaluator:
                 # Config is a frozen dataclass, so we create a new instance with the updated fields
                 self.config = dataclasses.replace(self.config, **updates)
                 logger.info("NEW CONFIG CREATED: %s", config.to_dict(self.config))
+                logger.debug('Reloading transforms with updated config...')
+                self.pred_transform = get_activations_transforms(self.config.NUM_CLASSES)
+                self.label_transform = get_label_transform(self.config.NUM_CLASSES)
 
             # 2. WARNINGS: Non-critical mismatches
             # These do not break the pipeline but might affect performance or logging.
@@ -172,13 +173,7 @@ class TestEvaluator:
 
         # Initialise model architecture matching training
         # model will now use the aligned self.config (e.g. correct MODEL and NUM_CLASSES)
-        model_map = {
-            config.AvailableModels.U_NET: get_unet,
-            config.AvailableModels.SEG_RES_NET: get_seg_res_net,
-            config.AvailableModels.SWIN_UNETR: get_swin_unetr,
-        }
-        factory = model_map[self.config.MODEL]
-        self.model = factory(self.config).to(self.device)
+        self.model = get_model(self.config).to(self.device)
 
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.model.eval()

@@ -624,7 +624,7 @@ def get() -> Config:
 # 6. Helper Functions
 # -----------------------------------------------------------------------------
 
-def is_limited_env(include_vram=True) -> bool:
+def is_limited_env(include_vram: bool = True, config: Optional[Config] = None) -> bool:
     '''
     Returns True if the current environment is a limited resource
     environment (e.g., local with no GPU).
@@ -633,7 +633,7 @@ def is_limited_env(include_vram=True) -> bool:
     the amount of memory of GPU so a CUDA device with less than 30GB of VRAM
     will be considered a limited environment.
     '''
-    config = get()
+    config = config or get()
     if config.ENV == "local" or config.DEVICE == "cpu":
         return True
 
