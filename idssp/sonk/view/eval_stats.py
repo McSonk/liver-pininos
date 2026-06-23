@@ -165,8 +165,9 @@ def _draw_metric_boxplot(ax, data_list, colors, title, ylabel, y_lim=None):
     if y_lim is not None:
         final_y_min, final_y_max = y_lim
     else:
-        all_data = np.concatenate([d for d in data_list if len(d) > 0])
-        max_val = np.nanmax(all_data) if len(all_data) > 0 else 1.0
+        non_empty = [d for d in data_list if len(d) > 0]
+        all_data = np.concatenate(non_empty) if non_empty else np.array([])
+        max_val = np.nanmax(all_data) if all_data.size > 0 else 1.0
         final_y_min = 0
         final_y_max = max_val * 1.35 if max_val > 0 else 1.0
 
