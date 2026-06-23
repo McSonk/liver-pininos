@@ -7,10 +7,12 @@ import warnings
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import Optional
 
 import psutil
 import torch
 from dotenv import load_dotenv
+
 
 class AvailableModels(str, Enum):
     """
@@ -637,9 +639,9 @@ def is_limited_env(include_vram=True) -> bool:
 
     return include_vram and config.HC_GPU is False
 
-def to_dict() -> dict:
+def to_dict(config: Optional[Config] = None) -> dict:
     """Returns a serialisable snapshot of all configuration constants."""
-    config = get()
+    config = config or get()
     return {
         "RUN_ID": config.RUN_ID,
         "MODEL": config.MODEL.value,
