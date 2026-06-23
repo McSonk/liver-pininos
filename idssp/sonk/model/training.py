@@ -5,6 +5,7 @@ from typing import Optional
 
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.optim as optim
 from monai.data import (CacheDataset, DataLoader, Dataset, PersistentDataset,
                         decollate_batch)
@@ -68,9 +69,9 @@ class ModelBuilder:
     def __init__(self):
         self.train_dl = None
         self.val_dl = None
-        self.model = None
+        self.model: nn.Module
         self.loss_fn = None
-        self.optimizer = None
+        self.optimizer: optim.AdamW
         self.scheduler = None
         self.inferer: SlidingWindowInferer = None
         self.config = config.get()
@@ -79,7 +80,7 @@ class ModelBuilder:
         '''This will store a fixed validation image for logging to tensorboard'''
 
         # Post-processing & Metrics
-        self.pred_trans = get_activations_transforms(self.config)
+        self.pred_trans = get_activations_transforms(self.config.NUM_CLASSES)
         '''`Compose` of transforms applied to model predictions so we have
         a probability distribution [0-1] for each voxel per class (`config.NUM_CLASSES`).
         To be used in validation step.
@@ -93,7 +94,7 @@ class ModelBuilder:
            encoding format.
         '''
 
-        self.label_trans = get_label_transform(self.config)
+        self.label_trans = get_label_transform(self.config.NUM_CLASSES)
         '''Transform applied to ground truth labels so they're represented as one-hot
            encoded tensors to each class before metric calculation.
            It only contains `AsDiscrete(to_onehot=self.config.NUM_CLASSES)`, which converts
@@ -909,7 +910,7 @@ class ModelBuilder:
         return avg_val_loss
 
 
-    def _validate(self, epoch: int, best_dice: float = None) -> tuple[float, float, float, float]:
+    def _validate(self, epoch: int, best_dice: Optional[float] = None) -> tuple[float, float, Optional[float], float]:
         # Activate inference mode
         self.model.eval()
         # Reset metric from previous epochs
@@ -932,7 +933,7 @@ class ModelBuilder:
         per_class_dice: list = torch.nanmean(per_sample_dice, dim=0).cpu().tolist()
         # Also compute the global mean dice
         mean_dice: float = torch.nanmean(per_sample_dice).item()
-        liver_dice: float = None
+        liver_dice: Optional[float] = None
         if self.config.NUM_CLASSES == 3:
             liver_dice = per_class_dice[self.config.TUMOUR_CLASS_INDEX - 2]
         # -1 because per_class_dice doesn't include background class
@@ -981,7 +982,7 @@ class ModelBuilder:
         return avg_val_loss, mean_dice, liver_dice, tumour_dice
 
 
-    def _run_epoch(self, epoch: int, best_dice: float = None) -> float:
+    def _run_epoch(self, epoch: int, best_dice: Optional[float] = None) -> tuple[float, Optional[float], float]:
         """Runs one full training + validation epoch.
 
         Params
@@ -993,6 +994,10 @@ class ModelBuilder:
         ------
         `epoch_dice`: float
             Mean validation Dice score for the epoch.
+        `liver_dice`: Optional[float]
+            Liver Dice score for the epoch (if NUM_CLASSES=3, else None).
+        `tumour_dice`: float
+            Tumour Dice score for the epoch.
         """
         epoch_start_time = time.time()
 
@@ -1023,9 +1028,9 @@ class ModelBuilder:
         logger.info("  Epoch Time: %f seconds", epoch_duration)
 
         # Track history
-        self.history["train_loss"].append(avg_train_loss)
-        self.history["val_loss"].append(avg_val_loss)
-        self.history["val_dice"].append(epoch_dice)
+        self.history["train_loss"].append(float(avg_train_loss))
+        self.history["val_loss"].append(float(avg_val_loss))
+        self.history["val_dice"].append(float(epoch_dice))
 
         return epoch_dice, liver_dice, tumour_dice
 
@@ -1146,7 +1151,7 @@ class EarlyStopper:
         logger.info("  -> Early stopping triggered at epoch %d", epoch + 1)
         return True  # No improvement
 
-    def save_checkpoint(self, is_best: bool = True, current_epoch: int = None):
+    def save_checkpoint(self, is_best: bool = True, current_epoch: Optional[int] = None):
         '''Saves a checkpoint of the current model state.
 
         Checkpoint schema includes:
@@ -1164,7 +1169,7 @@ class EarlyStopper:
         - Distributed training state (DDP/FSDP shards, world_size, rank)
         - Custom scheduler state (if not using standard PyTorch schedulers)
         '''
-        path: Path = None
+        path: Path
         if is_best:
             path = self.checkpoint_path
         else:
@@ -1181,16 +1186,16 @@ class EarlyStopper:
                 # Fallback if get_rng_state_all fails in some environments
                 cuda_rng_states = [torch.cuda.get_rng_state()]
 
-        # np.random.get_state() returns a tuple containing a numpy array, which 
+        # np.random.get_state() returns a tuple containing a numpy array, which
         # triggers a WeightsUnpickler error with weights_only=True.
         # We convert the array to a standard Python list for safe serialisation.
         np_state = np.random.get_state()
         safe_np_state = (
-            np_state[0],
-            np_state[1].tolist(),  # Convert uint32 array to list
-            np_state[2],
-            np_state[3],
-            np_state[4]
+            str(np_state[0]),
+            np_state[1].tolist() if hasattr(np_state[1], 'tolist') else list(np_state[1]),
+            int(np_state[2]),
+            int(np_state[3]),
+            float(np_state[4])
         )
 
         torch.save({

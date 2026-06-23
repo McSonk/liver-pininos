@@ -10,23 +10,36 @@ from idssp.sonk.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-def get_activations_transforms(config_obj: config.Config) -> Compose:
+def get_activations_transforms(num_classes: int) -> Compose:
     '''Returns the transforms that are applied to the model's raw output logits
        during validation/test evaluation to convert them into class predictions
+
+       Params
+       ------
+       `num_classes`: int
+            The number of classes in the segmentation task. This is used to determine
+            the number of channels in the one-hot encoded output.
        '''
     return Compose([
         # Apply softmax Transform to get class probabilities for each voxel
         Activations(softmax=True),
         # Select the class with the highest probability for each voxel
         # and convert to one-hot encoding
-        AsDiscrete(argmax=True, to_onehot=config_obj.NUM_CLASSES)
+        AsDiscrete(argmax=True, to_onehot=num_classes)
     ])
 
-def get_label_transform(config_obj: config.Config):
+def get_label_transform(num_classes: int) -> AsDiscrete:
     '''Returns the transforms that are applied to the ground truth labels
        during validation/test evaluation to ensure they are in the correct format
-       for metric calculation.'''
-    return AsDiscrete(to_onehot=config_obj.NUM_CLASSES)
+       for metric calculation.
+
+       Params
+       ------
+       `num_classes`: int
+            The number of classes in the segmentation task. This is used to determine
+            the number of channels in the one-hot encoded output.
+       '''
+    return AsDiscrete(to_onehot=num_classes)
 
 
 def get_deterministic_transforms(config_obj: config.Config) -> list[Transform]:

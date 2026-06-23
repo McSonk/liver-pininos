@@ -2,6 +2,7 @@
 Test-time evaluation module for automated tumour segmentation.
 Designed for full-volume inference, metric aggregation, and NIfTI export.
 """
+import dataclasses
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -102,9 +103,8 @@ class TestEvaluator:
         self.pred_postprocess = None
         self.post_process = post_process
 
-         # EXACT post-processing used in training.py
-        self.pred_transform = get_activations_transforms(self.config)
-        self.label_transform = get_label_transform(self.config)
+        self.pred_transform = get_activations_transforms(self.config.NUM_CLASSES)
+        self.label_transform = get_label_transform(self.config.NUM_CLASSES)
 
         # Metrics expect decollated lists of tensors
         self.dice_metric = DiceMetric(include_background=False, reduction="none")
@@ -124,41 +124,56 @@ class TestEvaluator:
 
         if "config_snapshot" in checkpoint:
             ckpt_config = checkpoint["config_snapshot"]
-            curr_config = self.config
+            # STRICT INHERITANCE: Preprocessing & Architecture
+            # These MUST match the training environment exactly for valid inference.
+            strict_keys = [
+                "NUM_CLASSES", "ISO_SPACING", "HU_WINDOW_MIN", "HU_WINDOW_MAX",
+                "TRAIN_PATCH_SIZE", "MODEL", "TUMOUR_CLASS_INDEX"
+            ]
 
-            # Keys to verify for consistency between training and inference
-            keys_to_check = ["NUM_CLASSES", "ISO_SPACING", "HU_WINDOW_MIN", "HU_WINDOW_MAX"]
+            updates = {}
+            for key in strict_keys:
+                if key in ckpt_config:
+                    val = ckpt_config[key]
 
-            for key in keys_to_check:
+                    # Cast lists back to tuples for spatial dimensions
+                    # (JSON/dict saves them as lists)
+                    list_properties = ["ISO_SPACING", "TRAIN_PATCH_SIZE", "VAL_PATCH_SIZE"]
+                    if key in list_properties and isinstance(val, list):
+                        val = tuple(val)
+
+                    # Cast string back to Enum for MODEL
+                    if key == "MODEL" and isinstance(val, str):
+                        val = config.AvailableModels(val)
+
+                    updates[key] = val
+
+            if updates:
+                logger.info("Aligning inference config with checkpoint training "
+                            "parameters: %s", updates)
+                # Config is a frozen dataclass, so we create a new instance with the updated fields
+                self.config = dataclasses.replace(self.config, **updates)
+                logger.info("NEW CONFIG CREATED: %s", config.to_dict(self.config))
+                logger.debug('Reloading transforms with updated config...')
+                self.pred_transform = get_activations_transforms(self.config.NUM_CLASSES)
+                self.label_transform = get_label_transform(self.config.NUM_CLASSES)
+
+            # 2. WARNINGS: Non-critical mismatches
+            # These do not break the pipeline but might affect performance or logging.
+            warn_keys = ["SLIDING_WINDOW_BATCH_SIZE", "RAND_CROP_NUM_SAMPLES"]
+            for key in warn_keys:
                 ckpt_val = ckpt_config.get(key)
-                curr_val = getattr(curr_config, key, None)
-
-                if ckpt_val is None or curr_val is None:
+                curr_val = getattr(self.config, key, None)
+                if ckpt_val is not None and curr_val is not None and ckpt_val != curr_val:
                     logger.warning(
-                        "Config key '%s' missing in checkpoint or current config. Skipping check.",
-                        key)
-                    continue
-
-                # Normalise values to lists for comparison to handle both scalars and tuples/lists
-                # e.g. NUM_CLASSES (int) -> [3], ISO_SPACING (tuple) -> [1.0, 1.0, 1.0]
-                def to_list(val):
-                    if isinstance(val, (list, tuple)):
-                        return list(val)
-                    else:
-                        return [val]
-
-                if to_list(ckpt_val) != to_list(curr_val):
-                    logger.warning(
-                        "Config mismatch detected for '%s': Checkpoint=%s, Current=%s. "
-                        "This may cause errors if architecture or preprocessing differs.",
+                        "Config mismatch for '%s': Checkpoint=%s, Current=%s. "
+                        "Using current environment settings.",
                         key, ckpt_val, curr_val
                     )
-                else:
-                    logger.debug("Config match for '%s': %s", key, curr_val)
 
         # Initialise model architecture matching training
-        # Ensure get_model() uses the current config to build the right architecture
-        self.model = get_model().to(self.device)
+        # model will now use the aligned self.config (e.g. correct MODEL and NUM_CLASSES)
+        self.model = get_model(self.config).to(self.device)
 
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.model.eval()
