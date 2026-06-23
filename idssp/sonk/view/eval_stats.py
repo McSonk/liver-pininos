@@ -257,10 +257,10 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model", attach_hd95:
     # Drop NaNs safely (happens when a structure is absent)
     d_liv = df['dice_liver'].dropna().values
     d_tum = df['dice_tumour'].dropna().values
-    h_liv = df['hd95_liver_mm'].dropna().values
-    h_tum = df['hd95_tumour_mm'].dropna().values
 
     if attach_hd95:
+        h_liv = df['hd95_liver_mm'].dropna().values
+        h_tum = df['hd95_tumour_mm'].dropna().values
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10),
                                     gridspec_kw={'height_ratios': [1, 1], 'hspace': 0.3})
         _draw_metric_boxplot(ax2, [h_liv, h_tum], [COLOR_LIVER, COLOR_TUMOUR],

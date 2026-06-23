@@ -31,7 +31,9 @@ The remaining continuous variables are converted into discrete, clinically meani
 These bins are concatenated to form a **Composite Stratification Key** (e.g., `thin_high_medium`). 
 
 ## Step 4: Stratified Partitioning
-A stratified shuffling algorithm divides the remaining dataset into Train, Validation, and Test sets. The algorithm ensures that the proportion of every unique Composite Key is identical across all three splits. 
+A stratified shuffling algorithm divides the remaining dataset into Train, Validation,
+and Test sets. The algorithm ensures that the proportion of every unique Composite
+Key is *approximately preserved* across all three splits. 
 
 ## Step 5: Statistical Validation of Dataset Stratification
 
@@ -123,7 +125,7 @@ The parameters chosen for this statistical validation were not selected at rando
 | Tumour Volume (mL)* | 16.43 [2.78–119.12] | 6.19 [0.76–27.31] | 16.99 [1.76–44.31] | 0.332 |
 | Number of Lesions | 5.00 [1.00–10.00] | 2.00 [1.00–5.00] | 2.00 [1.00–7.00] | 0.053 |
 | Liver Texture Variance | 833.11 [599.74–1189.63] | 754.63 [467.04–1122.79] | 732.11 [539.84–935.33] | 0.486 |
-| Tumour to Liver Ratio     | 0.01 [0.00-0.06]       | 0.00 [0.00-0.02]       | 0.01 [0.00-0.03]       | 0.364 
+| Tumour to Liver Ratio     | 0.01 [0.00-0.06]       | 0.00 [0.00-0.02]       | 0.01 [0.00-0.03]       | 0.364 |
 | **Categorical Variables** | n (%) | n (%) | n (%) | |
 | Has Tumour | | | | 0.516 |
 | &nbsp;&nbsp;False | 6 (7.6%) | 4 (14.8%) | 3 (12.0%) | |

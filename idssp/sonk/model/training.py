@@ -247,18 +247,8 @@ class ModelBuilder:
                     ),
                     train_ran_trans
                 )
+            # end if-else cache train dataset
 
-                sample = train_ds[0]
-                if isinstance(sample, list):
-                    logger.debug("Sample type: %s, Image dtype: %s", type(sample[0]["image"]), sample[0]["image"].dtype)
-                    logger.debug("DIAGNOSTIC: Dataset returned a list of %d items.", len(sample))
-                    logger.debug("DIAGNOSTIC: Item 0 image type: %s", type(sample[0]["image"]))
-                    logger.debug("DIAGNOSTIC: Item 1 image type: %s", type(sample[1]["image"]))
-                else:
-                    logger.debug("DIAGNOSTIC: Dataset returned a single dict. Image type: %s", type(sample["image"]))
-                    logger.debug("Sample type: %s, Image dtype: %s", type(sample["image"]), sample["image"].dtype)
-
-            # end if-else for train dataset
             if self.config.USE_CACHE_VAL_DATASET:
                 logger.debug("[Val] Using MONAI CacheDataset.")
                 val_ds = CacheDataset(
@@ -278,18 +268,8 @@ class ModelBuilder:
                                   f"hmin_{self.config.HU_WINDOW_MIN}"
                                   f"_hmax_{self.config.HU_WINDOW_MAX}_val_cache")
                 )
+            # end if-else cache val dataset
 
-                sample = val_ds[0]
-                logger.debug('---validation---')
-                if isinstance(sample, list):
-                    logger.debug("Sample type: %s, Image dtype: %s", type(sample[0]["image"]), sample[0]["image"].dtype)
-                    logger.debug("DIAGNOSTIC: Dataset returned a list of %d items.", len(sample))
-                    logger.debug("DIAGNOSTIC: Item 0 image type: %s", type(sample[0]["image"]))
-                    logger.debug("DIAGNOSTIC: Item 1 image type: %s", type(sample[1]["image"]))
-                else:
-                    logger.debug("DIAGNOSTIC: Dataset returned a single dict. Image type: %s", type(sample["image"]))
-                    logger.debug("Sample type: %s, Image dtype: %s", type(sample["image"]), sample["image"].dtype)
-            # end if-else for val dataset
             logger.info("Datasets initialized in %.2f seconds.", time.time() - time_at_start)
         # end if-else for is limited environment
 
