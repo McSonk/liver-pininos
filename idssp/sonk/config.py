@@ -31,7 +31,7 @@ class Mode(str, Enum):
 
 # Some constant definitions
 
-VERSION_STR = "2.4.3"
+VERSION_STR = "2.4.4"
 '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
 MODEL_TO_USE = AvailableModels.SWIN_UNETR
 '''The model architecture to use. Choose from the AvailableModels enum.'''
@@ -264,7 +264,9 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
 
     cloud_specific = {
         "cache_num_workers": 8 if lots_of_ram else 1,
-        "dl_num_workers": min(gpu_num_workers, cpu_count),
+        # "dl_num_workers": min(gpu_num_workers, cpu_count),
+        # TODO: change this!!! (just temporal)
+        "dl_num_workers": 0,
         "pin_memory": True,
         "batch_size": 4 if super_hc_gpu else 2,
         "accumulation_steps": 1 if super_hc_gpu else 2,

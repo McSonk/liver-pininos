@@ -6,7 +6,6 @@ from typing import Optional
 import numpy as np
 import torch
 import torch.optim as optim
-from monai.data.utils import list_data_collate
 from monai.data import (CacheDataset, DataLoader, Dataset, PersistentDataset,
                         decollate_batch)
 from monai.inferers import SlidingWindowInferer
@@ -30,22 +29,6 @@ from idssp.sonk.utils.notifications import send_alert
 from idssp.sonk.view.utils import log_segmentation_overlay
 
 logger = get_logger(__name__)
-
-def safe_list_data_collate(batch):
-    """Flattens list-of-dicts from RandCropByPosNegLabeld and enforces 
-    uniform tensor types before PyTorch collation. Prevents mixed 
-    numpy/tensor batches that crash default_collate."""
-    flat_batch = []
-    for item in batch:
-        flat_batch.extend(item) if isinstance(item, list) else flat_batch.append(item)
-
-    for d in flat_batch:
-        if isinstance(d, dict):
-            for k, v in d.items():
-                if isinstance(v, np.ndarray):
-                    d[k] = torch.from_numpy(v).float() if np.issubdtype(v.dtype, np.floating) else torch.from_numpy(v).long()
-                    
-    return list_data_collate(flat_batch)
 
 class AugmentedDataset(Dataset):
     '''
@@ -264,7 +247,8 @@ class ModelBuilder:
                     ),
                     train_ran_trans
                 )
-            # end if-else for train dataset
+            # end if-else cache train dataset
+
             if self.config.USE_CACHE_VAL_DATASET:
                 logger.debug("[Val] Using MONAI CacheDataset.")
                 val_ds = CacheDataset(
@@ -284,7 +268,8 @@ class ModelBuilder:
                                   f"hmin_{self.config.HU_WINDOW_MIN}"
                                   f"_hmax_{self.config.HU_WINDOW_MAX}_val_cache")
                 )
-            # end if-else for val dataset
+            # end if-else cache val dataset
+
             logger.info("Datasets initialized in %.2f seconds.", time.time() - time_at_start)
         # end if-else for is limited environment
 
@@ -299,8 +284,7 @@ class ModelBuilder:
             # (so workers are no recreated every epoch as usual)
             # This prevents run-first memory problems on shared computer
             # but also takes more memory (which is never freed until the end of training)
-            persistent_workers=True if self.config.DL_NUM_WORKERS > 0 else False,
-            collate_fn=safe_list_data_collate
+            persistent_workers=self.config.DL_NUM_WORKERS > 0,
         )
 
         logger.debug("Creating validation dataloader...")
@@ -310,8 +294,7 @@ class ModelBuilder:
             shuffle=False,
             num_workers=self.config.DL_NUM_WORKERS,
             pin_memory=self.config.PIN_MEMORY,
-            persistent_workers=True if self.config.DL_NUM_WORKERS > 0 else False,
-            collate_fn=safe_list_data_collate
+            persistent_workers=self.config.DL_NUM_WORKERS > 0,
         )
 
         # Initialise a fixed validation batch for logging overlays during training
@@ -322,7 +305,7 @@ class ModelBuilder:
                 logger.debug(
                     "Overlay volume selected — label shape: %s, tumour voxels: %d",
                     batch["label"].shape,
-                    (batch["label"] == 2).sum().item()
+                    (batch["label"] == self.config.TUMOUR_CLASS_INDEX).sum().item()
                 )
                 break
 
