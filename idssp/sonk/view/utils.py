@@ -1,5 +1,6 @@
 import matplotlib as mpl
 import matplotlib.colors as mcolors
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -17,7 +18,7 @@ mpl.rcParams['animation.embed_limit'] = 50 * 1024 * 1024  # 50 MB
 
 
 def print_image_plot(img_data, slice_index, include_axis=False, ax=None,
-                     use_training_window=True):
+                     use_training_window=True, inference_mode=False):
     ''' Prints a single slice of the CT image with appropriate windowing.
 
     Params
@@ -36,7 +37,14 @@ def print_image_plot(img_data, slice_index, include_axis=False, ax=None,
     '''
     cfg = config.get()
 
-    if use_training_window:
+
+    if inference_mode:
+        # Inference mode assumes the data was processed by ScaleIntensityRanged
+        # transform, so we use the window to [0, 1]
+        vmin = 0.0
+        vmax = 1.0
+        title_suffix = "(Inference Mode)"
+    elif use_training_window:
         # Window matching ScaleIntensityRanged preprocessing
         vmin = cfg.HU_WINDOW_MIN
         vmax = cfg.HU_WINDOW_MAX
@@ -52,7 +60,7 @@ def print_image_plot(img_data, slice_index, include_axis=False, ax=None,
     if ax is None:
         ax = plt.gca()  # fallback to current axes
 
-    img_obj = ax.imshow(img_data[:,:,slice_index], cmap='gray', vmin=vmin, vmax=vmax)
+    img_obj = ax.imshow(img_data[:, :, slice_index], cmap='gray', vmin=vmin, vmax=vmax)
     ax.set_title(f'CT Image - Slice {slice_index} {title_suffix}')
     ax.axis('on' if include_axis else 'off')
     return img_obj
@@ -74,6 +82,7 @@ def print_mask_plot(mask_data, slice_index, include_axis=False, is_overlay=False
         Matplotlib axes to plot on. If None, uses current axes (default: None)
         (Useful for plotting multiple subplots in the animation function)
     '''
+    cfg = config.get()
     if ax is None:
         ax = plt.gca()
 
@@ -81,15 +90,45 @@ def print_mask_plot(mask_data, slice_index, include_axis=False, is_overlay=False
         cmap = mcolors.ListedColormap(['none','green','red'])
         alpha_value = 0.4
     else:
+        # 0: Background (gray), 1: Liver (green), 2: Tumour (red)
         cmap = mcolors.ListedColormap(['gray','green','red'])
         alpha_value = 1.0
 
-    lbl_obj = ax.imshow(mask_data[:,:,slice_index], cmap=cmap, alpha=alpha_value)
+    # vmin and vmax ensure discrete classes map to the correct colors
+    # regardless of which classes are present in the specific slice.
+    # interpolation='none' prevents Matplotlib from blurring the sharp mask boundaries.
+    lbl_obj = ax.imshow(
+        mask_data[:, :, slice_index],
+        cmap=cmap, 
+        alpha=alpha_value,
+        vmin=0, 
+        vmax=cfg.NUM_CLASSES - 1,
+        interpolation='none'
+    )
+
+    # Create proxy artists for the legend
+    if is_overlay:
+        legend_handles = [
+            mpatches.Patch(color='green', label='Liver'),
+            mpatches.Patch(color='red', label='Tumour')
+        ]
+    else:
+        legend_handles = [
+            mpatches.Patch(color='gray', label='Background'),
+            mpatches.Patch(color='green', label='Liver'),
+            mpatches.Patch(color='red', label='Tumour')
+        ]
+    
+    # Place legend inside the plot to avoid clipping issues with tight_layout()
+    ax.legend(handles=legend_handles, loc='upper right', framealpha=0.4, fontsize='small')
+
+
     ax.set_title(f'Segmentation Mask - Slice {slice_index}')
     ax.axis('on' if include_axis else 'off')
     return lbl_obj
 
-def plot_slice(img_data, mask_data, slice_index, include_axis=False):
+def plot_slice(img_data, mask_data, slice_index,
+               include_axis=False, inference_mode=False, inference_data=None):
     '''
     Plots a slice of the CT image and the corresponding segmentation mask.
     (2 subplots side by side)
@@ -103,15 +142,26 @@ def plot_slice(img_data, mask_data, slice_index, include_axis=False):
         Index of the slice to display
     `include_axis` : bool, optional
         Whether to show axis ticks and labels (default: False)
+    `inference_mode` : bool, optional
+        Whether to display the image in inference mode (default: False)
+    `inference_data` : numpy.ndarray, optional
+        3D array containing the inference data (default: None)
     '''
     plt.figure(figsize=(12, 6))
 
-    plt.subplot(1, 2, 1)
-    print_image_plot(img_data, slice_index, include_axis)
-    
-    plt.subplot(1, 2, 2)
+    num_of_subplots = 2 if inference_data is None else 3
+
+    plt.subplot(1, num_of_subplots, 1)
+    print_image_plot(img_data, slice_index, include_axis, inference_mode=inference_mode)
+
+    plt.subplot(1, num_of_subplots, 2)
     print_mask_plot(mask_data, slice_index, include_axis)
-    
+
+    if inference_data is not None:
+        plt.subplot(1, num_of_subplots, 3)
+        print_mask_plot(inference_data, slice_index, include_axis, is_overlay=False)
+        plt.title(f'Inference - Slice {slice_index}')
+
     plt.show()
 
 
