@@ -485,9 +485,31 @@ class DataWrapper:
 
         print("Voxel dimensions (mm):", self.volume.image.header.get_zooms())
 
-        print("--------------------Affine information--------------------")
+        print("--------------------Affine information (image)--------------------")
         print("Image affine transformation matrix:\n", self.volume.image.affine)
         print("Human readable header affine:\n", nib.aff2axcodes(self.volume.image.affine))
+
+        print("--------------------Affine information (label)--------------------")
+        print("Label affine transformation matrix:\n", self.volume.label.affine)
+        print("Human readable header affine:\n", nib.aff2axcodes(self.volume.image.affine))
+
+        print("\n--- Raw Voxel Overlap Check ---")
+        # Find the bounding box of the liver in the raw CT (HU > -100 is a safe liver threshold)
+        ct_liver_mask = self.volume.image_data > -100
+        ct_z_min, ct_z_max = np.where(ct_liver_mask.any(axis=(0, 1)))[0][[0, -1]]
+
+        # Find the bounding box of the liver in the raw label
+        lbl_z_min, lbl_z_max = np.where(self.volume.label_data > 0)[2][[0, -1]]
+
+        print(f"Raw CT liver Z-range (axial): {ct_z_min} to {ct_z_max}")
+        print(f"Raw Label liver Z-range (axial): {lbl_z_min} to {lbl_z_max}")
+
+        if ct_z_max < lbl_z_min or lbl_z_max < ct_z_min:
+            print("\n[CRITICAL] The raw label and raw CT do not overlap in the Z-axis.")
+            print("The annotator drew the mask in the wrong physical location.")
+        else:
+            print("\n[INFO] The raw label and raw CT overlap in the Z-axis.")
+            print("The raw data is correct, but the NIfTI header (affine) is mismatched.")
 
         # Check the unique values in the label data to understand the classes present
         print("--------------------Unique labels in segmentation--------------------")
