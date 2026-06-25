@@ -120,7 +120,7 @@ def print_mask_plot(mask_data, slice_index, include_axis=False, is_overlay=False
         ]
     
     # Place legend inside the plot to avoid clipping issues with tight_layout()
-    ax.legend(handles=legend_handles, loc='upper right', framealpha=0.4, fontsize='small')
+    ax.legend(handles=legend_handles, loc='lower left', framealpha=0.4, fontsize='small')
 
 
     ax.set_title(f'Segmentation Mask - Slice {slice_index}')
@@ -188,7 +188,8 @@ def plot_mixed_slice(img_data, mask_data, slice_index, include_axis=False):
     plt.show()
 
 
-def plot_animation(img_data, mask_data, first_slice, last_slice, first_tumour_slice):
+def plot_animation(img_data, mask_data, first_slice, last_slice, first_tumour_slice,
+                   inference_mode=False, inference_data=None):
     '''Creates an animation of the CT slices with the segmentation mask overlay.
     Params
     -----
@@ -206,21 +207,37 @@ def plot_animation(img_data, mask_data, first_slice, last_slice, first_tumour_sl
 
     print(f"Creating animation for slices {first_slice} to {last_slice} (tumour starts at slice {first_tumour_slice})...")
 
+    if first_tumour_slice is None:
+        print("Warning: No tumour slices found. Animation will show only liver and background.")
+        first_tumour_slice = first_slice  # fallback to first slice
+
     # Create three subplots: CT, mask, and overlay
-    fig, (img_ax, lbl_ax, overlay_ax) = plt.subplots(1, 3, figsize=(15, 5))
+    if inference_mode:
+        fig, (img_ax, lbl_ax, inf_ax) = plt.subplots(1, 3, figsize=(15, 5))
+        overlay_ax = None
+    else:
+        fig, (img_ax, lbl_ax, overlay_ax) = plt.subplots(1, 3, figsize=(15, 5))
 
     # CT only
-    img_obj = print_image_plot(img_data, first_tumour_slice, ax=img_ax)
+    img_obj = print_image_plot(img_data, first_tumour_slice, ax=img_ax, inference_mode=inference_mode)
     img_ax.set_title('CT Image')
 
     # Mask only
     lbl_obj = print_mask_plot(mask_data, first_tumour_slice, ax=lbl_ax)
     lbl_ax.set_title('Segmentation Mask')
 
-    # Overlay: CT + mask together
-    overlay_img_obj = print_image_plot(img_data, first_tumour_slice, ax=overlay_ax)
-    overlay_lbl_obj = print_mask_plot(mask_data, first_tumour_slice, ax=overlay_ax, is_overlay=True)
-    overlay_ax.set_title('Overlay')
+
+    overlay_img_obj = None
+    overlay_lbl_obj = None
+    if inference_mode:
+        # Inference
+        inference_obj = print_mask_plot(inference_data, first_tumour_slice, ax=inf_ax)
+        inf_ax.set_title('Inference Mask')
+    else:
+        # Overlay: CT + mask together
+        overlay_img_obj = print_image_plot(img_data, first_tumour_slice, ax=overlay_ax)
+        overlay_lbl_obj = print_mask_plot(mask_data, first_tumour_slice, ax=overlay_ax, is_overlay=True)
+        overlay_ax.set_title('Overlay')
 
     index_text = fig.text(0.5, 0.05, f'Index: {first_tumour_slice}', ha='center')
 
@@ -229,11 +246,18 @@ def plot_animation(img_data, mask_data, first_slice, last_slice, first_tumour_sl
         img_obj.set_array(img_data[:, :, i])
         # Update mask
         lbl_obj.set_array(mask_data[:, :, i])
-        # Update overlay
-        overlay_img_obj.set_array(img_data[:, :, i])
-        overlay_lbl_obj.set_array(mask_data[:, :, i])
+        if inference_mode:
+            inference_obj.set_array(inference_data[:, :, i])
+        else:
+            # Update overlay
+            overlay_img_obj.set_array(img_data[:, :, i])
+            overlay_lbl_obj.set_array(mask_data[:, :, i])
+
         # Update index text
         index_text.set_text(f'Index: {i}')
+
+        if inference_mode:
+            return [img_obj, lbl_obj, inference_obj]
         return [img_obj, lbl_obj, overlay_img_obj, overlay_lbl_obj]
 
     ani = animation.FuncAnimation(fig, update, frames=range(first_slice, last_slice),

@@ -371,6 +371,36 @@ class VolumeWrapper:
         '''
         Applies the necessary transformations to the image and label data for validation.
         '''
+        # Helper to find first/last slice index for a given class
+        def get_slice_range(volume, class_idx):
+            """Find first/last slice index along the depth (D) axis for a given class.
+    
+            Assumes volume shape is (D, H, W) after channel dimension removal.
+            """
+            if volume.ndim != 3:
+                raise ValueError(
+                    f"Expected 3D volume (D, H, W), got shape {volume.shape}. "
+                    f"Channel dimension may not have been removed."
+                )
+
+            # Create a boolean mask for the class across all slices (D, H, W)
+            mask = volume == class_idx
+            if not np.any(mask):
+                return None, None
+
+            # Check for presence of class along the last axis (W/Axial)
+            # any_axis collapses D and H, leaving a 1D array of length W
+            logger.debug("Finding slice range for class index %d...", class_idx)
+            logger.debug("Mask shape: %s", mask.shape)
+            slices_with_class = np.any(mask, axis=(1, 2))
+
+            indices = np.where(slices_with_class)[0]
+            if len(indices) == 0:
+                return None, None
+
+            logger.debug("All slice indices with class %d: %s", class_idx, indices)
+
+            return int(indices[0]), int(indices[-1])
         logger.debug("Applying deterministic transforms to image, label, and inference data...")
         transforms = Compose(get_deterministic_transforms(config_obj=cfg, include_inference=True))
 
@@ -385,15 +415,22 @@ class VolumeWrapper:
         gt = data["label"][0]
         pred = data["inference"][0]
 
-        tumour_slices = np.where(gt == cfg.TUMOUR_CLASS_INDEX)[0]
-        slice_idx = tumour_slices[len(tumour_slices) // 2] if\
-              len(tumour_slices) > 0 else ct.shape[0] // 2
-        
         self.image_data = ct
         self.label_data = gt
         self.inference_data = pred
 
-        logger.info("Recommended slice index for plotting: %d (middle of tumour slices or middle of volume)", slice_idx)
+        first_tumour_pred = None
+        last_tumour_pred = None
+        first_liver_pred = None
+        last_liver_pred = None
+
+        first_tumour_pred, last_tumour_pred = get_slice_range(pred, cfg.TUMOUR_CLASS_INDEX)
+        if cfg.NUM_CLASSES == 3:
+            first_liver_pred, last_liver_pred = get_slice_range(pred, 1)
+
+        logger.info("CT Shape: %s, Label Shape: %s, Inference Shape: %s", ct.shape, gt.shape, pred.shape)
+        logger.info("First tumour slice in prediction: %s, Last tumour slice in prediction: %s", first_tumour_pred, last_tumour_pred)
+        logger.info("First liver slice in prediction: %s, Last liver slice in prediction: %s", first_liver_pred, last_liver_pred)
 class DataWrapper:
     def __init__(self):
         self.volume = None
@@ -491,7 +528,8 @@ class DataWrapper:
             inference_mode=inference_mode)
 
 
-    def get_animation_motion(self):
+    def get_animation_motion(self, start_slice: Optional[int] = None,
+                             end_slice: Optional[int] = None, tumour_start_slice: Optional[int] = None):
         '''
         Creates an animation of the slices of the image and their corresponding labels for a given volume ID.
         Returns
@@ -502,13 +540,23 @@ class DataWrapper:
         if self.volume is None:
             raise ValueError("Volume is not set. Please set the volume using set_volume() before creating an animation.")
 
+        if start_slice is None:
+            start_slice = self.volume.slice_thresholds['liver']['first']
+        if end_slice is None:
+            end_slice = self.volume.slice_thresholds['liver']['last']
+
+        if tumour_start_slice is None:
+            tumour_start_slice = self.volume.slice_thresholds['tumor']['first']
+
         logger.info("Creating animation for volume...")
         ani = utils.plot_animation(
             self.volume.image_data,
             self.volume.label_data,
-            first_slice=self.volume.slice_thresholds['liver']['first'],
-            last_slice=self.volume.slice_thresholds['liver']['last'],
-            first_tumour_slice=self.volume.slice_thresholds['tumor']['first']
+            first_slice=start_slice,
+            last_slice=end_slice,
+            first_tumour_slice=tumour_start_slice,
+            inference_mode=self.volume.inference_data is not None,
+            inference_data=self.volume.inference_data
             )
         return ani
 
