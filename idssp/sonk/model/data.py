@@ -392,15 +392,13 @@ class VolumeWrapper:
             # any_axis collapses D and H, leaving a 1D array of length W
             logger.debug("Finding slice range for class index %d...", class_idx)
             logger.debug("Mask shape: %s", mask.shape)
-            slices_with_class = np.any(mask, axis=(1, 2))
+            slices_with_class = np.any(mask, axis=(0, 1))
 
             indices = np.where(slices_with_class)[0]
             if len(indices) == 0:
                 return None, None
-
-            logger.debug("All slice indices with class %d: %s", class_idx, indices)
-
             return int(indices[0]), int(indices[-1])
+
         logger.debug("Applying deterministic transforms to image, label, and inference data...")
         transforms = Compose(get_deterministic_transforms(config_obj=cfg, include_inference=True))
 
