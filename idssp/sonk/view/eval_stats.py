@@ -256,8 +256,11 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model", attach_hd95:
     shifted apart and connected with a dotted line.
     """
     # Drop NaNs safely (happens when a structure is absent)
+    print("Dice Liver NaN Count:", df['dice_liver'].isna().sum())
+    print("Dice Tumour NaN Count:", df['dice_tumour'].isna().sum())
     d_liv = df['dice_liver'].dropna().values
     d_tum = df['dice_tumour'].dropna().values
+    print(f"Dice Liver Count: {len(d_liv)}, Dice Tumour Count: {len(d_tum)}")
 
     if attach_hd95:
         h_liv = df['hd95_liver_mm'].dropna().values
