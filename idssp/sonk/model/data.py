@@ -39,7 +39,7 @@ class VolumeWrapper:
         Loads the image and label data for the volume.
         '''
         message = None
-        logger.info("Loading data for volume...")
+        logger.debug("Loading data for volume...")
         self.image = nib.load(self.img_path)
         logger.debug("Loading label data for volume...")
         self.label = nib.load(self.label_path)
@@ -52,15 +52,19 @@ class VolumeWrapper:
         self.label_data = np.asanyarray(self.label.dataobj).astype(np.uint8)
         if self.inference_path:
             self.inference_data = self.inference.get_fdata()
-        logger.info("Data loaded successfully.")
+        logger.debug("Data loaded successfully.")
 
         if self.image_data.shape != self.label_data.shape:
             raise ValueError(
                 f"Shape mismatch: Image {self.image_data.shape} vs "
                 f"Label {self.label_data.shape}"
             )
+        
+        logger.info("Volume loaded: Image shape %s, Label shape %s", self.image_data.shape, self.label_data.shape)
+        if self.inference_path:
+            logger.info("Inference data loaded: Inference shape %s", self.inference_data.shape)
 
-        logger.info("Doing some basic checks...")
+        logger.debug("Doing some basic checks...")
         if not np.allclose(self.image.affine, self.label.affine, atol=1e-2):
             logger.warning("Image and label affines do not match natively. ")
             message = "Warning: Image and label affines did not match. "
@@ -69,11 +73,17 @@ class VolumeWrapper:
             logger.warning("Image and inference affines do not match natively. ")
             message = (message or "") + "Warning: Image and inference affines did not match. "
 
-        logger.info("Calculating unique values in the label data...")
-        self.mask_unique_values = np.unique(self.label_data)
-        logger.info("Finding slice information...")
-        self.find_slice_thresholds()
-        logger.info("done!")
+        if self.inference_path and not np.allclose(self.label.affine, self.inference.affine, atol=1e-2):
+            logger.warning("Label and inference affines do not match natively. ")
+            message = (message or "") + "Warning: Label and inference affines did not match. "
+
+        if not self.inference_path:
+            # Only useful when no inference is provided
+            logger.debug("Calculating unique values in the label data...")
+            self.mask_unique_values = np.unique(self.label_data)
+            logger.debug("Finding slice information...")
+            self.find_slice_thresholds()
+        logger.debug("done!")
 
         return message
 
@@ -88,17 +98,11 @@ class VolumeWrapper:
         last_liver_slice = None
         last_tumor_slice = None
 
-        first_inference_liver_slice = None
-        first_inference_tumor_slice = None
-        last_inference_liver_slice = None
-        last_inference_tumor_slice = None
-
         # TODO: this function assumes LiTS. Update for general datasets.
         num_of_slices = self.image_data.shape[2]
 
         for i in range(num_of_slices):
             slice_mask = self.label_data[:, :, i]
-            inference_mask = self.inference_data[:, :, i] if self.inference_path else None
 
             if np.any(slice_mask == 1):  # Check if there's any liver in the slice
                 if first_liver_slice is None:
@@ -110,17 +114,6 @@ class VolumeWrapper:
                     first_tumor_slice = i
                 last_tumor_slice = i
 
-            if self.inference_path:
-                if np.any(inference_mask == 1):  # Check if there's any liver in the inference slice
-                    if first_inference_liver_slice is None:
-                        first_inference_liver_slice = i
-                    last_inference_liver_slice = i
-
-                if np.any(inference_mask == 2):  # Check if there's any tumor in the inference slice
-                    if first_inference_tumor_slice is None:
-                        first_inference_tumor_slice = i
-                    last_inference_tumor_slice = i
-
         self.slice_thresholds = {
             "liver": {
                 "first": first_liver_slice,
@@ -130,14 +123,6 @@ class VolumeWrapper:
                 "first": first_tumor_slice,
                 "last": last_tumor_slice
             },
-            "inference_liver": {
-                "first": first_inference_liver_slice,
-                "last": last_inference_liver_slice
-            },
-            "inference_tumor": {
-                "first": first_inference_tumor_slice,
-                "last": last_inference_tumor_slice
-            }
         }
 
     def print_slice_summary(self):
@@ -145,9 +130,12 @@ class VolumeWrapper:
         logger.info("Liver slices range from %d to %d",
                     self.slice_thresholds['liver']['first'],
                     self.slice_thresholds['liver']['last'])
-        logger.info("Tumor slices range from %d to %d",
-                    self.slice_thresholds['tumor']['first'],
-                    self.slice_thresholds['tumor']['last'])
+        if self.slice_thresholds['tumor']['first'] is not None and self.slice_thresholds['tumor']['last'] is not None:
+            logger.info("Tumor slices range from %d to %d",
+                        self.slice_thresholds['tumor']['first'],
+                        self.slice_thresholds['tumor']['last'])
+        else:
+            logger.info("No tumor slices found in this volume.")
 
     def get_volume_summary(self) -> Dict[str, Any]:
         '''
@@ -398,6 +386,10 @@ class VolumeWrapper:
             if len(indices) == 0:
                 return None, None
             return int(indices[0]), int(indices[-1])
+        
+        logger.info("Image affine:\n%s", self.image.affine)
+        logger.info("Label affine:\n%s", self.label.affine)
+        logger.info("Inference affine:\n%s", self.inference.affine)
 
         logger.debug("Applying deterministic transforms to image, label, and inference data...")
         transforms = Compose(get_deterministic_transforms(config_obj=cfg, include_inference=True))
@@ -461,6 +453,10 @@ class DataWrapper:
         if self.volume is None:
             raise ValueError("Volume is not set. Please set the volume using "
                              "set_volume() before printing the summary.")
+        
+        if self.volume.inference_path:
+            raise ValueError("Inference data is present. " 
+                             "Please use load_inference_data() instead.")
 
         print("Volume summary:")
         print("--------------------File paths--------------------")
