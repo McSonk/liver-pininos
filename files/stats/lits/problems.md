@@ -20,6 +20,32 @@ The affected volumes are:
 
 *Note: For the final quantitative evaluation, these volumes must either be excluded from the test set or corrected using an affine alignment transform.*
 
+### Evidence: Volume 52 Affine Mismatch
+
+To illustrate the severity of this issue, consider the NIfTI headers for `volume-52`:
+
+**Image (CT Scan) Affine:**
+```text
+[[ -0.836   0.      0.    208.9  ]  <- X spacing: 0.83mm, Origin: 208.9mm
+ [  0.      0.836   0.   -213.2  ]  <- Y spacing: 0.83mm, Origin: -213.2mm
+ [  0.      0.      2.5  -632.8  ]  <- Z spacing: 2.50mm, Origin: -632.8mm
+ [  0.      0.      0.      1.   ]]
+```
+
+**Label (Segmentation Mask) Affine:**
+```text
+[[ 1.  0.  0.  1. ]  <- X spacing: 1.00mm, Origin: 1.0mm
+ [ 0.  1.  0.  1. ]  <- Y spacing: 1.00mm, Origin: 1.0mm
+ [ 0.  0.  1.  1. ]  <- Z spacing: 1.00mm, Origin: 1.0mm
+ [ 0.  0.  0.  1. ]]
+```
+
+**Analysis:**
+The image affine reflects the actual scanner geometry (anisotropic spacing of $0.83 \times 0.83 \times 2.5$ mm and a specific physical origin in the scanner's coordinate system). Conversely, the label affine is a **default identity matrix** with 1.0 mm isotropic spacing and an arbitrary origin at $(1, 1, 1)$. 
+
+Because MONAI's spatial transforms (`Spacingd`, `CropForegroundd`) rely on these matrices to map physical coordinates, the preprocessing pipeline interprets the image and label as existing in two completely different physical spaces, resulting in a total spatial misalignment.
+
+
 ## 2. Identity / Placeholder Affines
 
 A second category of anomalies involves volumes where both the image and the label possess a default identity affine matrix (indicating 1.0 mm isotropic spacing and a zeroed origin), rather than the true scanner geometry. 
