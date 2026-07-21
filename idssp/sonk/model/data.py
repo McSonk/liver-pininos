@@ -386,7 +386,7 @@ class VolumeWrapper:
             if len(indices) == 0:
                 return None, None
             return int(indices[0]), int(indices[-1])
-        
+
         logger.info("Image affine:\n%s", self.image.affine)
         logger.info("Label affine:\n%s", self.label.affine)
         logger.info("Inference affine:\n%s", self.inference.affine)
@@ -453,7 +453,7 @@ class DataWrapper:
         if self.volume is None:
             raise ValueError("Volume is not set. Please set the volume using "
                              "set_volume() before printing the summary.")
-        
+
         if self.volume.inference_path:
             raise ValueError("Inference data is present. " 
                              "Please use load_inference_data() instead.")
