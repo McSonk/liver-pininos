@@ -270,6 +270,14 @@ class TestEvaluator:
 
         with torch.inference_mode():
             for batch_idx, batch in enumerate(test_dl):
+                filename = Path(batch["image"].meta["filename_or_obj"][0]).name
+
+                if filename.endswith(".nii.gz"):
+                    case_name = filename[:-7]
+                elif filename.endswith(".nii"):
+                    case_name = filename[:-4]
+                else:
+                    case_name = Path(filename).stem
                 case_name = Path(batch["image"].meta["filename_or_obj"][0]).stem
                 logger.info("[%d/%d] Processing: %s", batch_idx + 1, len(test_dl), case_name)
 
@@ -320,18 +328,10 @@ class TestEvaluator:
                     label_spatial = label.shape[1:]
 
                     if pred_spatial != label_spatial:
-                        logger.warning(
-                            "Shape mismatch for sample %d: pred=%s, label=%s. "
-                            "Resampling label to match prediction spatial dimensions.",
-                            i, pred.shape, label.shape
+                        raise ValueError(
+                            f"Prediction and label spatial shapes differ: "
+                            f"pred={pred_spatial}, label={label_spatial}"
                         )
-                        # Use nearest-neighbour interpolation to preserve integer class labels
-                        label_resampled = torch.nn.functional.interpolate(
-                            label.unsqueeze(0).float(),  # Add batch dim for interpolate
-                            size=pred_spatial,
-                            mode='nearest'
-                        ).squeeze(0).to(label.dtype)  # Remove batch dim, restore dtype
-                        val_labels[i] = label_resampled
                 # ======
 
                 # === APPLY POST-PROCESSING BEFORE METRICS ===
@@ -374,7 +374,7 @@ class TestEvaluator:
 
                 # Save prediction in original raw space
                 for i, (pred, image) in enumerate(zip(processed_preds, val_images)):
-                    # (1, D, H, W) class indices — Invertd expects a channel dimension
+                    # Invertd expects a channel dimension: (1, D, H, W)
                     pred_indices = pred.argmax(dim=0, keepdim=True).cpu()
 
                     # Invert spatial transforms using the image's stored trace
@@ -383,13 +383,62 @@ class TestEvaluator:
 
                     if isinstance(inverted_pred, torch.Tensor):
                         inverted_pred = inverted_pred.cpu().numpy()
+
+                    inverted_pred = np.asarray(inverted_pred)
                     if inverted_pred.ndim == 4:
                         inverted_pred = inverted_pred[0]  # Remove channel dim → (D, H, W)
 
-                    pred_class_map = inverted_pred.astype(np.uint8)
+                    # Ensure discrete integer classes (make sure 1.999 -> 2, not 1,
+                    # as with direct casting)
+                    if np.issubdtype(inverted_pred.dtype, np.floating):
+                        inverted_pred = np.rint(inverted_pred)
+
+                    # Clip to valid class range and convert to uint8 for NIfTI saving
+                    pred_class_map = np.clip(
+                        inverted_pred,
+                        0,
+                        self.config.NUM_CLASSES - 1
+                    ).astype(np.uint8, copy=False)
+
+                    # Sanity check: only valid class indices should be present
+                    unique_values = np.unique(pred_class_map)
+                    valid_values = np.arange(self.config.NUM_CLASSES, dtype=np.uint8)
+
+                    if not np.all(np.isin(unique_values, valid_values)):
+                        logger.warning(
+                            "Case %s: unexpected class values after inversion: %s",
+                            case_name,
+                            unique_values
+                        )
+
+                    # Sanity check: shape should match the original NIfTI on disk
+                    original_path = image.meta.get("filename_or_obj")
+                    if original_path is not None:
+                        original_nib = nib.load(original_path)
+                        original_shape = original_nib.shape[:3]
+
+                        if pred_class_map.shape != original_shape:
+                            logger.error(
+                                "Inverted prediction shape mismatch for case %s: "
+                                "prediction=%s, original=%s",
+                                case_name,
+                                pred_class_map.shape,
+                                original_shape
+                            )
+                            raise ValueError(
+                                f"Inverted prediction shape mismatch for case {case_name}: "
+                                f"prediction={pred_class_map.shape}, original={original_shape}"
+                            )
 
                     # LoadImaged stores the raw scanner affine in 'original_affine'
-                    original_affine = image.meta.get("original_affine", image.affine).numpy()
+                    original_affine = np.asarray(
+                        image.meta.get("original_affine", image.affine)
+                    )
+
+                    if original_affine.shape != (4, 4):
+                        raise ValueError(
+                            f"Invalid affine shape for case {case_name}: {original_affine.shape}"
+                        )
 
                     pred_nib = nib.Nifti1Image(pred_class_map, affine=original_affine)
                     nib.save(pred_nib, str(save_path / f"{case_name}_pred.nii.gz"))

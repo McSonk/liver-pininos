@@ -68,8 +68,18 @@ class VolumeWrapper:
                 f"Shape mismatch: Image {self.image_data.shape} vs "
                 f"Label {self.label_data.shape}"
             )
-        
-        logger.info("Volume loaded: Image shape %s, Label shape %s", self.image_data.shape, self.label_data.shape)
+
+        if self.inference_path and self.inference_data.shape != self.image_data.shape:
+            raise ValueError(
+                f"Shape mismatch: Image {self.image_data.shape} vs "
+                f"Inference {self.inference_data.shape}"
+            )
+
+        logger.info(
+            "Volume loaded: Image shape %s, Label shape %s",
+            self.image_data.shape,
+            self.label_data.shape,
+        )
         if self.inference_path:
             logger.info("Inference data loaded: Inference shape %s", self.inference_data.shape)
 
