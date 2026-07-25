@@ -51,7 +51,16 @@ class VolumeWrapper:
         self.image_data = self.image.get_fdata()
         self.label_data = np.asanyarray(self.label.dataobj).astype(np.uint8)
         if self.inference_path:
-            self.inference_data = self.inference.get_fdata()
+            # Inference is a mask object (label-like), so it contains only (0, 1, 2) 
+            # values. We can safely convert to uint8.
+            inference_arr = np.asarray(self.inference.dataobj)
+
+            if not np.issubdtype(inference_arr.dtype, np.integer):
+                # If the inference data is not integer type, we round it to the nearest integer
+                logger.warning("Inference data is not integer type. Rounding to nearest integer.")
+                inference_arr = np.rint(inference_arr)
+
+            self.inference_data = inference_arr.astype(np.uint8, copy=False)
         logger.debug("Data loaded successfully.")
 
         if self.image_data.shape != self.label_data.shape:
@@ -59,8 +68,18 @@ class VolumeWrapper:
                 f"Shape mismatch: Image {self.image_data.shape} vs "
                 f"Label {self.label_data.shape}"
             )
-        
-        logger.info("Volume loaded: Image shape %s, Label shape %s", self.image_data.shape, self.label_data.shape)
+
+        if self.inference_path and self.inference_data.shape != self.image_data.shape:
+            raise ValueError(
+                f"Shape mismatch: Image {self.image_data.shape} vs "
+                f"Inference {self.inference_data.shape}"
+            )
+
+        logger.info(
+            "Volume loaded: Image shape %s, Label shape %s",
+            self.image_data.shape,
+            self.label_data.shape,
+        )
         if self.inference_path:
             logger.info("Inference data loaded: Inference shape %s", self.inference_data.shape)
 
@@ -455,9 +474,10 @@ class DataWrapper:
                              "set_volume() before printing the summary.")
 
         if self.volume.inference_path:
-            raise ValueError("Inference data is present. " 
-                             "Please use load_inference_data() instead.")
-
+            raise ValueError(
+                "Inference data is present. Call `VolumeWrapper.load_inference_data(cfg)` "
+                "(or add a DataWrapper wrapper) before printing an inference summary."
+            )
         print("Volume summary:")
         print("--------------------File paths--------------------")
         print(f"Image path: {self.volume.img_path}")
@@ -487,7 +507,7 @@ class DataWrapper:
 
         print("--------------------Affine information (label)--------------------")
         print("Label affine transformation matrix:\n", self.volume.label.affine)
-        print("Human readable header affine:\n", nib.aff2axcodes(self.volume.image.affine))
+        print("Human readable header affine:\n", nib.aff2axcodes(self.volume.label.affine))
 
         print("\n--- Raw Voxel Overlap Check ---")
         # Find the bounding box of the liver in the raw CT (HU > -100 is a safe liver threshold)
