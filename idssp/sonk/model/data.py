@@ -1,4 +1,3 @@
-import csv
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -10,14 +9,24 @@ from scipy.stats import skew
 
 from idssp.sonk.utils.logger import get_logger
 from idssp.sonk.view import utils
+from idssp.sonk.model.transforms import get_deterministic_transforms
+from monai.transforms import Compose
 
 logger = get_logger(__name__)
 
 
 class VolumeWrapper:
-    def __init__(self, img_path, label_path):
+    '''
+    A wrapper class for a single volume, containing the image, label, and optional
+    inference data, along with methods to load the data, extract summaries, and
+    find slice thresholds.
+    '''
+    def __init__(self, img_path, label_path, inference_path: Optional[str] = None):
         self.img_path = img_path
         self.label_path = label_path
+        self.inference_path = inference_path
+        self.inference = None
+        self.inference_data = None
         self.image = None
         self.image_data = None
         self.label = None
@@ -30,15 +39,29 @@ class VolumeWrapper:
         Loads the image and label data for the volume.
         '''
         message = None
-        logger.info("Loading data for volume...")
+        logger.debug("Loading data for volume...")
         self.image = nib.load(self.img_path)
         logger.debug("Loading label data for volume...")
         self.label = nib.load(self.label_path)
+        if self.inference_path:
+            logger.debug("Loading inference data for volume...")
+            self.inference = nib.load(self.inference_path)
 
         logger.debug("Extracting data arrays from the loaded NIfTI files...")
         self.image_data = self.image.get_fdata()
         self.label_data = np.asanyarray(self.label.dataobj).astype(np.uint8)
-        logger.info("Data loaded successfully.")
+        if self.inference_path:
+            # Inference is a mask object (label-like), so it contains only (0, 1, 2) 
+            # values. We can safely convert to uint8.
+            inference_arr = np.asarray(self.inference.dataobj)
+
+            if not np.issubdtype(inference_arr.dtype, np.integer):
+                # If the inference data is not integer type, we round it to the nearest integer
+                logger.warning("Inference data is not integer type. Rounding to nearest integer.")
+                inference_arr = np.rint(inference_arr)
+
+            self.inference_data = inference_arr.astype(np.uint8, copy=False)
+        logger.debug("Data loaded successfully.")
 
         if self.image_data.shape != self.label_data.shape:
             raise ValueError(
@@ -46,16 +69,40 @@ class VolumeWrapper:
                 f"Label {self.label_data.shape}"
             )
 
-        logger.info("Doing some basic checks...")
+        if self.inference_path and self.inference_data.shape != self.image_data.shape:
+            raise ValueError(
+                f"Shape mismatch: Image {self.image_data.shape} vs "
+                f"Inference {self.inference_data.shape}"
+            )
+
+        logger.info(
+            "Volume loaded: Image shape %s, Label shape %s",
+            self.image_data.shape,
+            self.label_data.shape,
+        )
+        if self.inference_path:
+            logger.info("Inference data loaded: Inference shape %s", self.inference_data.shape)
+
+        logger.debug("Doing some basic checks...")
         if not np.allclose(self.image.affine, self.label.affine, atol=1e-2):
             logger.warning("Image and label affines do not match natively. ")
             message = "Warning: Image and label affines did not match. "
 
-        logger.info("Calculating unique values in the label data...")
-        self.mask_unique_values = np.unique(self.label_data)
-        logger.info("Finding slice information...")
-        self.find_slice_thresholds()
-        logger.info("done!")
+        if self.inference_path and not np.allclose(self.image.affine, self.inference.affine, atol=1e-2):
+            logger.warning("Image and inference affines do not match natively. ")
+            message = (message or "") + "Warning: Image and inference affines did not match. "
+
+        if self.inference_path and not np.allclose(self.label.affine, self.inference.affine, atol=1e-2):
+            logger.warning("Label and inference affines do not match natively. ")
+            message = (message or "") + "Warning: Label and inference affines did not match. "
+
+        if not self.inference_path:
+            # Only useful when no inference is provided
+            logger.debug("Calculating unique values in the label data...")
+            self.mask_unique_values = np.unique(self.label_data)
+            logger.debug("Finding slice information...")
+            self.find_slice_thresholds()
+        logger.debug("done!")
 
         return message
 
@@ -94,7 +141,7 @@ class VolumeWrapper:
             "tumor": {
                 "first": first_tumor_slice,
                 "last": last_tumor_slice
-            }
+            },
         }
 
     def print_slice_summary(self):
@@ -102,9 +149,12 @@ class VolumeWrapper:
         logger.info("Liver slices range from %d to %d",
                     self.slice_thresholds['liver']['first'],
                     self.slice_thresholds['liver']['last'])
-        logger.info("Tumor slices range from %d to %d",
-                    self.slice_thresholds['tumor']['first'],
-                    self.slice_thresholds['tumor']['last'])
+        if self.slice_thresholds['tumor']['first'] is not None and self.slice_thresholds['tumor']['last'] is not None:
+            logger.info("Tumor slices range from %d to %d",
+                        self.slice_thresholds['tumor']['first'],
+                        self.slice_thresholds['tumor']['last'])
+        else:
+            logger.info("No tumor slices found in this volume.")
 
     def get_volume_summary(self) -> Dict[str, Any]:
         '''
@@ -323,11 +373,78 @@ class VolumeWrapper:
             'max_lesion_diameter_mm': max(lesion_equiv_diameters_mm) if lesion_equiv_diameters_mm else None,
             'mean_lesion_diameter_mm': np.mean(lesion_equiv_diameters_mm) if lesion_equiv_diameters_mm else None
         }
+
+    def load_inference_data(self, cfg):
+        '''
+        Applies the necessary transformations to the image and label data for validation.
+        '''
+        # Helper to find first/last slice index for a given class
+        def get_slice_range(volume, class_idx):
+            """Find first/last slice index along the depth (D) axis for a given class.
+    
+            Assumes volume shape is (D, H, W) after channel dimension removal.
+            """
+            if volume.ndim != 3:
+                raise ValueError(
+                    f"Expected 3D volume (D, H, W), got shape {volume.shape}. "
+                    f"Channel dimension may not have been removed."
+                )
+
+            # Create a boolean mask for the class across all slices (D, H, W)
+            mask = volume == class_idx
+            if not np.any(mask):
+                return None, None
+
+            # Check for presence of class along the last axis (W/Axial)
+            # any_axis collapses D and H, leaving a 1D array of length W
+            logger.debug("Finding slice range for class index %d...", class_idx)
+            logger.debug("Mask shape: %s", mask.shape)
+            slices_with_class = np.any(mask, axis=(0, 1))
+
+            indices = np.where(slices_with_class)[0]
+            if len(indices) == 0:
+                return None, None
+            return int(indices[0]), int(indices[-1])
+
+        logger.info("Image affine:\n%s", self.image.affine)
+        logger.info("Label affine:\n%s", self.label.affine)
+        logger.info("Inference affine:\n%s", self.inference.affine)
+
+        logger.debug("Applying deterministic transforms to image, label, and inference data...")
+        transforms = Compose(get_deterministic_transforms(config_obj=cfg, include_inference=True))
+
+        data = transforms({
+            "image": self.img_path,
+            "label": self.label_path,
+            "inference": self.inference_path
+        })
+
+        # Remove the channel dimension for 2D plotting: (1, D, H, W) -> (D, H, W)
+        ct = data["image"][0]
+        gt = data["label"][0]
+        pred = data["inference"][0]
+
+        self.image_data = ct
+        self.label_data = gt
+        self.inference_data = pred
+
+        first_tumour_pred = None
+        last_tumour_pred = None
+        first_liver_pred = None
+        last_liver_pred = None
+
+        first_tumour_pred, last_tumour_pred = get_slice_range(pred, cfg.TUMOUR_CLASS_INDEX)
+        if cfg.NUM_CLASSES == 3:
+            first_liver_pred, last_liver_pred = get_slice_range(pred, 1)
+
+        logger.info("CT Shape: %s, Label Shape: %s, Inference Shape: %s", ct.shape, gt.shape, pred.shape)
+        logger.info("First tumour slice in prediction: %s, Last tumour slice in prediction: %s", first_tumour_pred, last_tumour_pred)
+        logger.info("First liver slice in prediction: %s, Last liver slice in prediction: %s", first_liver_pred, last_liver_pred)
 class DataWrapper:
     def __init__(self):
         self.volume = None
 
-    def set_volume(self, img_path: str, label_path: str):
+    def set_volume(self, img_path: str, label_path: str, inference_path: Optional[str] = None):
         '''
         Sets the volume for the data wrapper.
         Params
@@ -336,8 +453,10 @@ class DataWrapper:
             The file path for the image volume.
         `label_path`: str
             The file path for the label volume.
+        `inference_path`: Optional[str]
+            The file path for the inference volume.
         '''
-        self.volume = VolumeWrapper(img_path, label_path)
+        self.volume = VolumeWrapper(img_path, label_path, inference_path)
         self.volume.load_data()
 
 
@@ -354,6 +473,11 @@ class DataWrapper:
             raise ValueError("Volume is not set. Please set the volume using "
                              "set_volume() before printing the summary.")
 
+        if self.volume.inference_path:
+            raise ValueError(
+                "Inference data is present. Call `VolumeWrapper.load_inference_data(cfg)` "
+                "(or add a DataWrapper wrapper) before printing an inference summary."
+            )
         print("Volume summary:")
         print("--------------------File paths--------------------")
         print(f"Image path: {self.volume.img_path}")
@@ -377,9 +501,31 @@ class DataWrapper:
 
         print("Voxel dimensions (mm):", self.volume.image.header.get_zooms())
 
-        print("--------------------Affine information--------------------")
+        print("--------------------Affine information (image)--------------------")
         print("Image affine transformation matrix:\n", self.volume.image.affine)
         print("Human readable header affine:\n", nib.aff2axcodes(self.volume.image.affine))
+
+        print("--------------------Affine information (label)--------------------")
+        print("Label affine transformation matrix:\n", self.volume.label.affine)
+        print("Human readable header affine:\n", nib.aff2axcodes(self.volume.label.affine))
+
+        print("\n--- Raw Voxel Overlap Check ---")
+        # Find the bounding box of the liver in the raw CT (HU > -100 is a safe liver threshold)
+        ct_liver_mask = self.volume.image_data > -100
+        ct_z_min, ct_z_max = np.where(ct_liver_mask.any(axis=(0, 1)))[0][[0, -1]]
+
+        # Find the bounding box of the liver in the raw label
+        lbl_z_min, lbl_z_max = np.where(self.volume.label_data > 0)[2][[0, -1]]
+
+        print(f"Raw CT liver Z-range (axial): {ct_z_min} to {ct_z_max}")
+        print(f"Raw Label liver Z-range (axial): {lbl_z_min} to {lbl_z_max}")
+
+        if ct_z_max < lbl_z_min or lbl_z_max < ct_z_min:
+            print("\n[CRITICAL] The raw label and raw CT do not overlap in the Z-axis.")
+            print("The annotator drew the mask in the wrong physical location.")
+        else:
+            print("\n[INFO] The raw label and raw CT overlap in the Z-axis.")
+            print("The raw data is correct, but the NIfTI header (affine) is mismatched.")
 
         # Check the unique values in the label data to understand the classes present
         print("--------------------Unique labels in segmentation--------------------")
@@ -404,8 +550,22 @@ class DataWrapper:
         utils.plot_slice(self.volume.image_data, self.volume.label_data, slice_index)
         utils.plot_mixed_slice(self.volume.image_data, self.volume.label_data, slice_index)
 
+    def plot_inference_slice(self, slice_index, inference_mode=False):
+        '''
+        Plots a specific slice of the image, its corresponding label, and the
+        inference for a given volume ID.
+        '''
+        logger.info("Plotting slice %d of volume...", slice_index)
+        utils.plot_slice(
+            self.volume.image_data,
+            self.volume.label_data,
+            inference_data=self.volume.inference_data,
+            slice_index=slice_index,
+            inference_mode=inference_mode)
 
-    def get_animation_motion(self):
+
+    def get_animation_motion(self, start_slice: Optional[int] = None,
+                             end_slice: Optional[int] = None, tumour_start_slice: Optional[int] = None):
         '''
         Creates an animation of the slices of the image and their corresponding labels for a given volume ID.
         Returns
@@ -416,13 +576,23 @@ class DataWrapper:
         if self.volume is None:
             raise ValueError("Volume is not set. Please set the volume using set_volume() before creating an animation.")
 
-        print("Creating animation for volume...")
+        if start_slice is None:
+            start_slice = self.volume.slice_thresholds['liver']['first']
+        if end_slice is None:
+            end_slice = self.volume.slice_thresholds['liver']['last']
+
+        if tumour_start_slice is None:
+            tumour_start_slice = self.volume.slice_thresholds['tumor']['first']
+
+        logger.info("Creating animation for volume...")
         ani = utils.plot_animation(
             self.volume.image_data,
             self.volume.label_data,
-            first_slice=self.volume.slice_thresholds['liver']['first'],
-            last_slice=self.volume.slice_thresholds['liver']['last'],
-            first_tumour_slice=self.volume.slice_thresholds['tumor']['first']
+            first_slice=start_slice,
+            last_slice=end_slice,
+            first_tumour_slice=tumour_start_slice,
+            inference_mode=self.volume.inference_data is not None,
+            inference_data=self.volume.inference_data
             )
         return ani
 

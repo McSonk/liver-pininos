@@ -5,12 +5,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from idssp.sonk.utils.logger import get_logger
+
 # ==========================================
 # THEME CONFIGURATION
 # ==========================================
 # Set this to True if you are using a Dark Jupyter Theme (e.g., JupyterLab Dark)
 # Set this to False if you are using the default Light/White Theme
-USE_DARK_THEME = False 
+USE_DARK_THEME = False
+
+logger = get_logger(__name__)
 
 if USE_DARK_THEME:
     # --- DARK THEME PALETTE ---
@@ -256,8 +260,11 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model", attach_hd95:
     shifted apart and connected with a dotted line.
     """
     # Drop NaNs safely (happens when a structure is absent)
+    logger.debug("Dice Liver NaN Count:", df['dice_liver'].isna().sum())
+    logger.debug("Dice Tumour NaN Count:", df['dice_tumour'].isna().sum())
     d_liv = df['dice_liver'].dropna().values
     d_tum = df['dice_tumour'].dropna().values
+    logger.debug(f"Dice Liver Count: {len(d_liv)}, Dice Tumour Count: {len(d_tum)}")
 
     if attach_hd95:
         h_liv = df['hd95_liver_mm'].dropna().values

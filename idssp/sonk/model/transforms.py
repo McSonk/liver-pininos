@@ -42,29 +42,45 @@ def get_label_transform(num_classes: int) -> AsDiscrete:
     return AsDiscrete(to_onehot=num_classes)
 
 
-def get_deterministic_transforms(config_obj: config.Config) -> list[Transform]:
+def get_deterministic_transforms(config_obj: config.Config, include_inference: bool = False) -> list[Transform]:
     '''
     Returns the deterministic transforms that are applied to all training samples.
     This includes loading, orientation, resampling, and intensity scaling.
     These transforms are applied once and can be cached when using PersistentDataset.
+
+    Params
+    ------
+    `config_obj`: config.Config
+         The configuration object containing the necessary parameters for the transforms.
+    `include_inference`: bool, optional
+         Whether to include inference data in the transforms, by default False
     '''
     # WARNING: If you modify the transforms and you're on a GPU environment,
     # make sure to clear (delete) the PersistentDataset folder
     # to avoid issues with cached data that doesn't match the new transforms.
+
+    keys = ['image', 'label']
+    if include_inference:
+        keys.append('inference')
+
+    modes = ['bilinear', 'nearest']
+    if include_inference:
+        # Inference is a label-like volume, so use nearest interpolation
+        modes.append('nearest')
     return [
-        LoadImaged(keys=['image', 'label'], ensure_channel_first=True),
+        LoadImaged(keys=keys, ensure_channel_first=True),
 
         # Ensure consistent orientation (LAS)
-        Orientationd(keys=["image", "label"], axcodes="LAS", labels=None),
+        Orientationd(keys=keys, axcodes="LAS", labels=None),
 
         # We standardise (resample) spacing across all volumes so a tumour of a given
         # voxel size appears at the same scale regardless of the original scan resolution.
         Spacingd(
-            keys=["image", "label"],
+            keys=keys,
             pixdim=config_obj.ISO_SPACING,
             # bilinear (average) interpolation for CT
             # nearest for labels to avoid creating non-integer class values
-            mode=("bilinear", "nearest")
+            mode=modes
         ),
 
         # Changes CT intensity scale to something more meaningful for the model
@@ -84,7 +100,7 @@ def get_deterministic_transforms(config_obj: config.Config) -> list[Transform]:
         # THIS WILL CHANGE THE SHAPE OF THE INPUT DATA
         # Remove on inference if fixed-size validation is needed
         CropForegroundd(
-            keys=["image", "label"],
+            keys=keys,
             source_key="image",
             # Background is 0
             select_fn=lambda x: x > 0,
@@ -98,7 +114,7 @@ def get_deterministic_transforms(config_obj: config.Config) -> list[Transform]:
         # they are at least as large as the training patch size.
         # (it is conceptually just adding air)
         SpatialPadd(
-            keys=["image", "label"],
+            keys=keys,
             spatial_size=config_obj.TRAIN_PATCH_SIZE,
             mode="constant",
             value=0
