@@ -31,17 +31,65 @@ class ForceMatchingAffined:
         self.image_key = image_key
         self.label_key = label_key
 
-    def _is_placeholder_affine(self, affine: torch.Tensor) -> bool:
+    def _is_placeholder_affine(self, affine) -> bool:
         """
         Returns True if the affine looks like a placeholder/broken header:
         - Diagonal values (voxel spacing) are all 1.0 mm
         - Off-diagonal rotation elements are all zero
         This catches identity-like affines regardless of the translation component.
         """
-        # Check rotation/scale block (top-left 3x3) is isotropic 1mm identity
-        scale_block = affine[:3, :3]
-        expected = torch.eye(3, dtype=affine.dtype, device=affine.device)
-        return torch.allclose(scale_block, expected, atol=_IDENTITY_AFFINE_THRESHOLD)
+        aff = self._normalise_affine(affine)
+
+        if aff is None:
+            return False
+
+        scale_block = aff[:3, :3]
+        expected = torch.eye(3, dtype=scale_block.dtype, device=scale_block.device)
+
+        return torch.allclose(
+            scale_block,
+            expected,
+            rtol=0.0,
+            atol=_IDENTITY_AFFINE_THRESHOLD,
+        )
+
+    @staticmethod
+    def _normalise_affine(affine) -> torch.Tensor | None:
+        """
+        Convert an affine stored as NumPy/Tensor into a CPU float32 tensor
+        with shape (4, 4).
+
+        Raises
+        ------
+        ValueError
+            If the affine has an unexpected shape.
+        """
+        if affine is None:
+            return None
+
+        if isinstance(affine, torch.Tensor):
+            aff = affine.detach()
+        else:
+            aff = torch.as_tensor(np.asarray(affine, dtype=np.float64))
+
+        aff = aff.to(dtype=torch.float32, device="cpu")
+
+        # Handle possible batched affine, e.g. (1, 4, 4)
+        if aff.ndim == 3:
+            if aff.shape[0] != 1:
+                raise ValueError(
+                    f"ForceMatchingAffined expected batch size 1 affine, "
+                    f"got shape {tuple(aff.shape)}."
+                )
+            aff = aff[0]
+
+        if aff.shape != (4, 4):
+            raise ValueError(
+                f"ForceMatchingAffined expected affine shape (4, 4), "
+                f"got {tuple(aff.shape)}."
+            )
+
+        return aff
 
     @staticmethod
     def _validate_case_name(case_name: str) -> int:
@@ -82,13 +130,16 @@ class ForceMatchingAffined:
         if not (hasattr(image, "meta") and hasattr(label, "meta")):
             return data
 
-        img_affine = image.meta.get("affine")
-        lbl_affine = label.meta.get("affine")
+        img_affine = self._normalise_affine(image.meta.get("affine"))
+        lbl_affine = self._normalise_affine(label.meta.get("affine"))
 
         if img_affine is None or lbl_affine is None:
             return data
 
-        if self._is_placeholder_affine(lbl_affine) and not self._is_placeholder_affine(img_affine):
+        if (
+            self._is_placeholder_affine(lbl_affine)
+            and not self._is_placeholder_affine(img_affine)
+        ):
             case_name = str(label.meta.get("filename_or_obj", "unknown"))
 
             # Validate before applying correction — raises on unexpected cases
@@ -101,7 +152,12 @@ class ForceMatchingAffined:
                 "verify manually before using this case for training.",
                 case_name
             )
-            label.meta["affine"] = img_affine.clone()
+            new_affine = img_affine.clone()
+
+            try:
+                label.affine = new_affine
+            except AttributeError:
+                label.meta["affine"] = new_affine
 
         return data
 
