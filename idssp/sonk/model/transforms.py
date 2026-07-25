@@ -165,8 +165,8 @@ def get_deterministic_transforms(config_obj: config.Config, include_inference: b
     return [
         LoadImaged(keys=keys, ensure_channel_first=True),
 
-        # FIX: Force label to share the exact same physical space as the image
-        # This corrects corrupted NIfTI headers (e.g., LiTS volume 52)
+        # FIX: If the label has a placeholder/broken affine, copy the image affine.
+        # Targets known corrupted NIfTI headers (e.g., LiTS volume 52) without overwriting valid affines.
         ForceMatchingAffined(image_key="image", label_key="label"),
 
         # Ensure consistent orientation (LAS)
