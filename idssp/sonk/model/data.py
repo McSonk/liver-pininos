@@ -488,7 +488,7 @@ class DataWrapper:
 
         print("--------------------Affine information (label)--------------------")
         print("Label affine transformation matrix:\n", self.volume.label.affine)
-        print("Human readable header affine:\n", nib.aff2axcodes(self.volume.image.affine))
+        print("Human readable header affine:\n", nib.aff2axcodes(self.volume.label.affine))
 
         print("\n--- Raw Voxel Overlap Check ---")
         # Find the bounding box of the liver in the raw CT (HU > -100 is a safe liver threshold)
