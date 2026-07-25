@@ -14,6 +14,7 @@ import torch
 from monai.data import DataLoader, Dataset, decollate_batch
 from monai.inferers import SlidingWindowInferer
 from monai.metrics import DiceMetric, HausdorffDistanceMetric
+from monai.transforms import Invertd
 from scipy import ndimage
 
 from idssp.sonk import config
@@ -206,6 +207,20 @@ class TestEvaluator:
         Returns a DataFrame with per-case metrics.
         """
         self.test_transforms = get_validation_transforms(self.config)
+
+        # Invertd requires the full deterministic pipeline (no random crops).
+        # In limited environments, get_validation_transforms injects
+        # RandCropByPosNegLabeld, which produces patches whose transform
+        # traces cannot be inverted back to the original volume space.
+        if config.is_limited_env():
+            raise RuntimeError(
+                "Full-volume inference with Invertd is not supported in limited "
+                "environments. The validation transforms include "
+                "RandCropByPosNegLabeld, which prevents correct inversion of "
+                "predictions back to the original image space. "
+                "Run this script on a GPU environment (is_limited_env() == False)."
+            )
+
         test_ds = Dataset(data=test_files, transform=self.test_transforms)
         test_dl = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=0)
 
@@ -215,6 +230,43 @@ class TestEvaluator:
 
         logger.info("Starting full-volume inference on %d test volumes...", len(test_files))
         start_time = time.time()
+
+        # PROBLEM:
+        # Part of the pipeline consists of applying spatial transformations
+        # (e.g. resampling, cropping) to the input images before feeding them
+        # to the model. At inference time, the predictions therefore have
+        # different affine matrices and shapes from the original images.
+        # To save predictions in the original scanner space, we invert the
+        # preprocessing transforms using MONAI's Invertd.
+
+        # Inverter to map predictions back to the original raw space before saving
+        inverter = Invertd(
+            keys="pred",
+            transform=self.test_transforms,
+            orig_keys="image",    # The dictionary key holding the MetaTensor with the trace
+            nearest_interp=True,  # Prevents class blurring during inverse resampling
+            to_tensor=False,      # Return numpy arrays (convenient for nibabel)
+            device="cpu"
+        )
+
+        # ---- Validation ---
+        # Validate that Invertd will work before processing all volumes
+        _probe_batch = next(iter(test_dl))
+        _probe_images = decollate_batch(_probe_batch["image"])
+        _probe_img = _probe_images[0]
+        if not hasattr(_probe_img, "applied_operations") or len(_probe_img.applied_operations) == 0:
+            raise RuntimeError(
+                "MetaTensor has no applied_operations trace after decollate_batch. "
+                "Invertd will silently return predictions in preprocessed space. "
+                "Check MONAI version or DataLoader num_workers setting."
+            )
+        logger.info(
+            "Invertd trace check passed: %d operations found on MetaTensor.",
+            len(_probe_img.applied_operations)
+        )
+        # Reset the DataLoader iterator
+        test_dl = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=0)
+        # --- End validation ---
 
         with torch.inference_mode():
             for batch_idx, batch in enumerate(test_dl):
@@ -247,9 +299,16 @@ class TestEvaluator:
 
                 labels = batch["label"].to(self.device)
 
-                # Decollate to per-volume tensors
+                # Decollate = split batched tensor into a list of individual
+                # samples, each retaining its MetaTensor metadata (affine,
+                # transform trace). We decollate the CPU batch (`batch["image"]`), not the GPU
+                # copy, because Invertd only needs the metadata and runs on CPU.
                 val_preds = decollate_batch(preds)
                 val_labels = decollate_batch(labels)
+                val_images = decollate_batch(batch["image"])
+                # Note that each of the val_elements is a list of individual
+                # samples. Also, each contains the meta information (affine, spacing, etc.)
+                # and applied transformations.
 
                 # Apply MONAI post-processing (matches training.py exactly)
                 val_preds = [self.pred_transform(p) for p in val_preds]
@@ -313,11 +372,29 @@ class TestEvaluator:
 
                 # === END POST-PROCESSING ===
 
-                # Save prediction (argmax back to class labels)
-                pred_class_map = processed_preds[0].argmax(dim=0).cpu().numpy().astype(np.uint8)
-                pred_nib = nib.Nifti1Image(pred_class_map, affine=batch["image"].affine[0].numpy())
-                nib.save(pred_nib, str(save_path / f"{Path(batch['image'].meta['filename_or_obj'][0]).stem}_pred.nii.gz"))
-                
+                # Save prediction in original raw space
+                for i, (pred, image) in enumerate(zip(processed_preds, val_images)):
+                    # (1, D, H, W) class indices — Invertd expects a channel dimension
+                    pred_indices = pred.argmax(dim=0, keepdim=True).cpu()
+
+                    # Invert spatial transforms using the image's stored trace
+                    inverted_data = inverter({"pred": pred_indices, "image": image})
+                    inverted_pred = inverted_data["pred"]
+
+                    if isinstance(inverted_pred, torch.Tensor):
+                        inverted_pred = inverted_pred.cpu().numpy()
+                    if inverted_pred.ndim == 4:
+                        inverted_pred = inverted_pred[0]  # Remove channel dim → (D, H, W)
+
+                    pred_class_map = inverted_pred.astype(np.uint8)
+
+                    # LoadImaged stores the raw scanner affine in 'original_affine'
+                    original_affine = image.meta.get("original_affine", image.affine).numpy()
+
+                    pred_nib = nib.Nifti1Image(pred_class_map, affine=original_affine)
+                    nib.save(pred_nib, str(save_path / f"{case_name}_pred.nii.gz"))
+
+                # =============================================
                 # Aggregate & reset per-case
                 case_dice = self.dice_metric.aggregate().cpu().numpy().flatten()
                 case_hd95 = self.hd95_metric.aggregate().cpu().numpy().flatten()
