@@ -51,7 +51,16 @@ class VolumeWrapper:
         self.image_data = self.image.get_fdata()
         self.label_data = np.asanyarray(self.label.dataobj).astype(np.uint8)
         if self.inference_path:
-            self.inference_data = self.inference.get_fdata()
+            # Inference is a mask object (label-like), so it contains only (0, 1, 2) 
+            # values. We can safely convert to uint8.
+            inference_arr = np.asarray(self.inference.dataobj)
+
+            if not np.issubdtype(inference_arr.dtype, np.integer):
+                # If the inference data is not integer type, we round it to the nearest integer
+                logger.warning("Inference data is not integer type. Rounding to nearest integer.")
+                inference_arr = np.rint(inference_arr)
+
+            self.inference_data = inference_arr.astype(np.uint8, copy=False)
         logger.debug("Data loaded successfully.")
 
         if self.image_data.shape != self.label_data.shape:
