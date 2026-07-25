@@ -33,7 +33,7 @@ class Mode(str, Enum):
 
 # Some constant definitions
 
-VERSION_STR = "2.4.4"
+VERSION_STR = "2.5.0"
 '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
 MODEL_TO_USE = AvailableModels.SWIN_UNETR
 '''The model architecture to use. Choose from the AvailableModels enum.'''
