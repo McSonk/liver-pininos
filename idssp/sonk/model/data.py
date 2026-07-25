@@ -455,9 +455,10 @@ class DataWrapper:
                              "set_volume() before printing the summary.")
 
         if self.volume.inference_path:
-            raise ValueError("Inference data is present. " 
-                             "Please use load_inference_data() instead.")
-
+            raise ValueError(
+                "Inference data is present. Call `VolumeWrapper.load_inference_data(cfg)` "
+                "(or add a DataWrapper wrapper) before printing an inference summary."
+            )
         print("Volume summary:")
         print("--------------------File paths--------------------")
         print(f"Image path: {self.volume.img_path}")
