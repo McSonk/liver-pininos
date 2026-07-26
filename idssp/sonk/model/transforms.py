@@ -1,14 +1,165 @@
+import re
+
 import torch
-from monai.transforms import (Compose, CropForegroundd, EnsureTyped, LoadImaged,
+from monai.transforms import (Activations, AsDiscrete, Compose,
+                              CropForegroundd, EnsureTyped, LoadImaged,
                               Orientationd, RandCropByPosNegLabeld, RandFlipd,
                               RandGaussianNoised, RandRotated,
                               RandScaleIntensityd, RandZoomd,
-                              ScaleIntensityRanged, Spacingd, SpatialPadd, Activations, AsDiscrete,
+                              ScaleIntensityRanged, Spacingd, SpatialPadd,
                               Transform)
+
 from idssp.sonk import config
 from idssp.sonk.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+_IDENTITY_AFFINE_THRESHOLD = 1e-3
+_ALLOWED_LITS_VOLUMES = frozenset({48, 49, 50, 51, 52})
+_LITS_VOLUME_PATTERN = re.compile(r"segmentation-(\d+)\.nii\.gz$")
+
+class ForceMatchingAffined:
+    """
+    Copies the image affine to the label when the label has a broken/identity
+    affine. Only corrects when the label affine is detectably wrong — does not
+    silently overwrite valid affines.
+
+    Intended as a targeted fix for known broken cases (e.g. LiTS volume-52)
+    rather than a blanket correction.
+    """
+    def __init__(self, image_key: str = "image", label_key: str = "label"):
+        self.image_key = image_key
+        self.label_key = label_key
+
+    def _is_placeholder_affine(self, affine) -> bool:
+        """
+        Returns True if the affine looks like a placeholder/broken header:
+        - Diagonal values (voxel spacing) are all 1.0 mm
+        - Off-diagonal rotation elements are all zero
+        This catches identity-like affines regardless of the translation component.
+        """
+        aff = self._normalise_affine(affine)
+
+        if aff is None:
+            return False
+
+        scale_block = aff[:3, :3]
+        expected = torch.eye(3, dtype=scale_block.dtype, device=scale_block.device)
+
+        return torch.allclose(
+            scale_block,
+            expected,
+            rtol=0.0,
+            atol=_IDENTITY_AFFINE_THRESHOLD,
+        )
+
+    @staticmethod
+    def _normalise_affine(affine) -> torch.Tensor | None:
+        """
+        Convert an affine stored as NumPy/Tensor into a CPU float32 tensor
+        with shape (4, 4).
+
+        Raises
+        ------
+        ValueError
+            If the affine has an unexpected shape.
+        """
+        if affine is None:
+            return None
+
+        if isinstance(affine, torch.Tensor):
+            aff = affine.detach()
+        else:
+            aff = torch.as_tensor(np.asarray(affine, dtype=np.float64))
+
+        aff = aff.to(dtype=torch.float32, device="cpu")
+
+        # Handle possible batched affine, e.g. (1, 4, 4)
+        if aff.ndim == 3:
+            if aff.shape[0] != 1:
+                raise ValueError(
+                    f"ForceMatchingAffined expected batch size 1 affine, "
+                    f"got shape {tuple(aff.shape)}."
+                )
+            aff = aff[0]
+
+        if aff.shape != (4, 4):
+            raise ValueError(
+                f"ForceMatchingAffined expected affine shape (4, 4), "
+                f"got {tuple(aff.shape)}."
+            )
+
+        return aff
+
+    @staticmethod
+    def _validate_case_name(case_name: str) -> int:
+        """Extract and validate LiTS volume ID from filename.
+
+        Returns
+        -------
+        int
+            Validated volume ID.
+
+        Raises
+        ------
+        ValueError
+            If filename does not match expected pattern or volume is not
+            in the allowed set {48, 49, 50, 51, 52}.
+        """
+        match = _LITS_VOLUME_PATTERN.search(case_name)
+        if match is None:
+            raise ValueError(
+                f"ForceMatchingAffined encountered unexpected filename format: "
+                f"'{case_name}'. Expected pattern 'segmentation-<ID>.nii.gz'."
+            )
+
+        volume_id = int(match.group(1))
+        if volume_id not in _ALLOWED_LITS_VOLUMES:
+            raise ValueError(
+                f"ForceMatchingAffined is only validated for LiTS volumes "
+                f"{sorted(_ALLOWED_LITS_VOLUMES)}, but encountered volume {volume_id} "
+                f"in '{case_name}'. Refusing to apply affine correction to unverified case."
+            )
+
+        return volume_id
+
+    def __call__(self, data: dict) -> dict:
+        image = data[self.image_key]
+        label = data[self.label_key]
+
+        if not (hasattr(image, "meta") and hasattr(label, "meta")):
+            return data
+
+        img_affine = self._normalise_affine(image.meta.get("affine"))
+        lbl_affine = self._normalise_affine(label.meta.get("affine"))
+
+        if img_affine is None or lbl_affine is None:
+            return data
+
+        if (
+            self._is_placeholder_affine(lbl_affine)
+            and not self._is_placeholder_affine(img_affine)
+        ):
+            case_name = str(label.meta.get("filename_or_obj", "unknown"))
+
+            # Validate before applying correction — raises on unexpected cases
+            self._validate_case_name(case_name)
+
+            logger.warning(
+                "Label has placeholder affine for case '%s'. "
+                "Copying image affine to label. "
+                "Confirmed safe only when raw voxel grids are aligned — "
+                "verify manually before using this case for training.",
+                case_name
+            )
+            new_affine = img_affine.clone()
+
+            try:
+                label.affine = new_affine
+            except AttributeError:
+                label.meta["affine"] = new_affine
+
+        return data
 
 def get_activations_transforms(num_classes: int) -> Compose:
     '''Returns the transforms that are applied to the model's raw output logits
@@ -69,6 +220,10 @@ def get_deterministic_transforms(config_obj: config.Config, include_inference: b
         modes.append('nearest')
     return [
         LoadImaged(keys=keys, ensure_channel_first=True),
+
+        # FIX: If the label has a placeholder/broken affine, copy the image affine.
+        # Targets known corrupted NIfTI headers (e.g., LiTS volume 52) without overwriting valid affines.
+        ForceMatchingAffined(image_key="image", label_key="label"),
 
         # Ensure consistent orientation (LAS)
         Orientationd(keys=keys, axcodes="LAS", labels=None),
