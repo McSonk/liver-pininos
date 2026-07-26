@@ -212,7 +212,7 @@ class TestEvaluator:
         # In limited environments, get_validation_transforms injects
         # RandCropByPosNegLabeld, which produces patches whose transform
         # traces cannot be inverted back to the original volume space.
-        if config.is_limited_env():
+        if config.is_limited_env(include_vram=False):
             raise RuntimeError(
                 "Full-volume inference with Invertd is not supported in limited "
                 "environments. The validation transforms include "
