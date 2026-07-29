@@ -358,7 +358,7 @@ def get_validation_transforms(config_obj: config.Config) -> Compose:
     # the random augmentations. This ensures that the model is evaluated on data that is
     # processed in the same way as training data, but without any additional variability.
     deterministic = get_deterministic_transforms(config_obj)
-    if config.is_limited_env():
+    if config.is_limited_env(config=config_obj, include_vram=False):
         logger.warning("Validation transforms: Using random crop for limited environment.")
         deterministic.extend([
             # On limited GPU or CPU we apply cropping so we don't overload memory.

@@ -216,7 +216,7 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
     if device == "cuda":
         if torch.cuda.is_available():
             vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            hc_gpu = vram_gb >= 30
+            hc_gpu = vram_gb >= 20
             super_hc_gpu = vram_gb >= 70
 
     run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -630,7 +630,7 @@ def is_limited_env(include_vram: bool = True, config: Optional[Config] = None) -
     environment (e.g., local with no GPU).
 
     if `include_vram=True` (default) it also takes into consideration
-    the amount of memory of GPU so a CUDA device with less than 30GB of VRAM
+    the amount of memory of GPU so a CUDA device with less than 20GB of VRAM
     will be considered a limited environment.
     '''
     config = config or get()

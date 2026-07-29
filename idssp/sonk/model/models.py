@@ -71,7 +71,7 @@ def get_unet(config_obj: config.Config) -> UNet:
     # channels=(64, 128, 256, 512)
     channels = (32, 64, 128, 256)
     strides = (2, 2, 2)
-    num_res_units = 1 if config.is_limited_env(config=config_obj) else 2
+    num_res_units = 1 if config.is_limited_env(config=config_obj, include_vram=False) else 2
     norm="INSTANCE"
     act="PRELU"
     logger.debug("UNet architecture parameters: Spatial Dims: %d, In Channels: %d, "
