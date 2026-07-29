@@ -216,7 +216,7 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
     if device == "cuda":
         if torch.cuda.is_available():
             vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            hc_gpu = vram_gb >= 30
+            hc_gpu = vram_gb >= 20
             super_hc_gpu = vram_gb >= 70
 
     run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
