@@ -194,7 +194,7 @@ class TestEvaluator:
         # Fallback inferer for limited GPU memory (smaller batch size)
         self.fallback_inferer = SlidingWindowInferer(
             roi_size=self.config.TRAIN_PATCH_SIZE,
-            sw_batch_size=max(2, self.config.SLIDING_WINDOW_BATCH_SIZE // 4),
+            sw_batch_size=min(2, self.config.SLIDING_WINDOW_BATCH_SIZE // 4),
             overlap=0.5,
             mode="gaussian",
             device=self.device,
@@ -214,7 +214,7 @@ class TestEvaluator:
         # In limited environments, get_validation_transforms injects
         # RandCropByPosNegLabeld, which produces patches whose transform
         # traces cannot be inverted back to the original volume space.
-        if config.is_limited_env(include_vram=False):
+        if config.is_limited_env(config=self.config, include_vram=False):
             raise RuntimeError(
                 "Full-volume inference with Invertd is not supported in limited "
                 "environments. The validation transforms include "

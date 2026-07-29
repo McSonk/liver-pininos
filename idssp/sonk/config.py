@@ -630,7 +630,7 @@ def is_limited_env(include_vram: bool = True, config: Optional[Config] = None) -
     environment (e.g., local with no GPU).
 
     if `include_vram=True` (default) it also takes into consideration
-    the amount of memory of GPU so a CUDA device with less than 30GB of VRAM
+    the amount of memory of GPU so a CUDA device with less than 20GB of VRAM
     will be considered a limited environment.
     '''
     config = config or get()
