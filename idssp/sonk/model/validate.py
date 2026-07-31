@@ -11,7 +11,7 @@ import nibabel as nib
 import numpy as np
 import pandas as pd
 import torch
-from monai.data import DataLoader, Dataset, decollate_batch
+from monai.data import DataLoader, Dataset, MetaTensor, decollate_batch
 from monai.inferers import SlidingWindowInferer
 from monai.metrics import DiceMetric, HausdorffDistanceMetric
 from monai.transforms import Invertd
@@ -262,6 +262,24 @@ class TestEvaluator:
                 "Invertd will silently return predictions in preprocessed space. "
                 "Check MONAI version or DataLoader num_workers setting."
             )
+
+        _probe_pred = MetaTensor(torch.zeros(1, *_probe_img.shape[1:], dtype=torch.float32))
+        _probe_inverted = inverter({"pred": _probe_pred, "image": _probe_img})["pred"]
+        _probe_inverted = np.asarray(_probe_inverted)
+
+        if _probe_inverted.ndim == 4:
+            _probe_inverted = _probe_inverted[0]
+
+        _probe_original_path = _probe_img.meta.get("filename_or_obj")
+        if _probe_original_path is not None:
+            _probe_original_shape = nib.load(_probe_original_path).shape[:3]
+
+            if _probe_inverted.shape != _probe_original_shape:
+                raise RuntimeError(
+                    "Invertd probe failed: inverted shape "
+                    f"{_probe_inverted.shape} does not match original shape "
+                    f"{_probe_original_shape}. Invertd is not applying the trace."
+                )
         logger.info(
             "Invertd trace check passed: %d operations found on MetaTensor.",
             len(_probe_img.applied_operations)
@@ -378,6 +396,9 @@ class TestEvaluator:
                 for i, (pred, image) in enumerate(zip(processed_preds, val_images)):
                     # Invertd expects a channel dimension: (1, D, H, W)
                     pred_indices = pred.argmax(dim=0, keepdim=True).cpu()
+
+                    # MONAI 1.5.2: Invertd silently skips inversion if this is not a MetaTensor.
+                    pred_indices = MetaTensor(pred_indices)
 
                     # Invert spatial transforms using the image's stored trace
                     inverted_data = inverter({"pred": pred_indices, "image": image})
