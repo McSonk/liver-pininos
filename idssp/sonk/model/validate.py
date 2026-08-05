@@ -263,6 +263,8 @@ class TestEvaluator:
                 "Check MONAI version or DataLoader num_workers setting."
             )
 
+        # Explicit conversion to MetaTensor (pure monai sometimes removes the MetaTensor
+        # wrapper after decollate_batch)
         _probe_pred = MetaTensor(torch.zeros(1, *_probe_img.shape[1:], dtype=torch.float32))
         _probe_inverted = inverter({"pred": _probe_pred, "image": _probe_img})["pred"]
         _probe_inverted = np.asarray(_probe_inverted)

@@ -11,8 +11,9 @@ The workflow proceeds as follows:
 2. **Data Loading and Preprocessing**: The test volumes are loaded and subjected to the exact same deterministic preprocessing pipeline used during training (e.g., Hounsfield Unit windowing, isotropic resampling, and spatial cropping/padding).
 3. **Full-Volume Sliding Window Inference**: To process full 3D CT volumes within GPU memory constraints, a `SlidingWindowInferer` is utilised. It extracts overlapping patches (50% overlap) of size `TRAIN_PATCH_SIZE`, processes them through the network, and blends the predictions using a Gaussian weighting function to minimise border artifacts. A fallback inferer with a reduced batch size is automatically triggered if a CUDA Out-Of-Memory (OOM) error occurs.
 4. **Post-Processing and Activation**: The raw network logits are passed through a softmax activation to obtain class probabilities, followed by an `argmax` operation to generate discrete class indices. 
-5. **Metric Computation**: The predictions and ground truth labels are decollated and converted into one-hot encoded tensors. The Dice similarity coefficient and the 95th percentile Hausdorff distance (HD95) are computed per case, excluding the background class.
-6. **Export**: The predicted segmentation maps are saved as NIfTI files, and the computed metrics are aggregated into structured reports.
+5. **Metric Computation**: The predictions and ground truth labels are decollated and converted into one-hot encoded tensors. The Dice similarity coefficient and the 95th percentile Hausdorff distance (HD95) are computed per case, excluding the background class. *(Note: Metrics are computed in the pre-processed space to avoid interpolation artifacts that spatial inversion might introduce).*
+6. **Spatial Inversion to Original Space**: The model generates predictions in the pre-processed spatial domain (resampled, cropped, and padded). To ensure the exported segmentation masks align perfectly with the original raw CT scans, MONAI's `Invertd` transform is applied. This module sequentially reverses the preprocessing steps and restores the original scanner affine matrix.
+7. **Export**: The predicted segmentation maps are saved as NIfTI files, and the computed metrics are aggregated into structured reports.
 
 ### Key Evaluation Metrics and Concepts
 
@@ -38,7 +39,7 @@ The evaluation script generates the following outputs in the designated run dire
 
 | File / Directory | Description |
 | :--- | :--- |
-| `test_predictions/<case_name>_pred.nii.gz` | The predicted 3D segmentation maps for each test volume, saved in the NIfTI format with the original affine matrix for spatial alignment. |
+| `test_predictions/<case_name>_pred.nii.gz` | The predicted 3D segmentation maps for each test volume, saved in the NIfTI format. **Thanks to the `Invertd` spatial inversion, these files retain the original scanner affine matrix and voxel grid, ensuring perfect anatomical alignment with the raw CT scans.** |
 | `reports/test_evaluation_results.csv` | A granular, per-case report containing the Dice and HD95 scores for the liver and tumour for every individual test volume. |
 | `reports/test_aggregated_metrics.csv` | A summary report containing the aggregated statistics (mean ± standard deviation) for each anatomical structure across the entire test cohort. |
 
@@ -58,7 +59,37 @@ Missing metric values (e.g., when a structure is entirely absent in either the g
 | `hd95_liver_mm` | Float | The 95th percentile Hausdorff distance for the liver boundary, measured in millimetres (mm). |
 | `hd95_tumour_mm` | Float | The 95th percentile Hausdorff distance for the tumour boundary, measured in millimetres (mm). |
 
-## 3. Post-Processing Steps
+## 3. Spatial Alignment and the `Invertd` Implementation
+
+A critical challenge in medical image segmentation pipelines is ensuring that the final predicted masks align perfectly with the original, unmodified CT scans. 
+
+### The Spatial Mismatch Problem
+During preprocessing, MONAI applies a sequence of spatial transformations to the raw CT volumes to prepare them for the neural network:
+
+```text
+Original CT -> Orientation -> Resampling -> Cropping -> Padding -> Model Prediction
+```
+
+Consequently, the model generates its predictions in this modified, pre-processed space. If these predictions were saved directly, the resulting NIfTI files would possess the affine matrix and voxel grid of the *pre-processed* data. When overlaid onto the original CT scan in a medical viewer, the segmentation mask would be misaligned, cropped, or incorrectly scaled, rendering the inference results clinically unusable.
+
+### The Solution: Spatial Inversion with `Invertd`
+To resolve this, the pipeline utilizes MONAI's `Invertd` module to perform a spatial "regression," systematically undoing the preprocessing steps one by one:
+```text
+Prediction in modified space -> Undo Padding -> Undo Cropping -> Undo Resampling -> Undo Orientation -> Prediction in original CT space
+```
+By reversing these transformations, `Invertd` restores the original spatial dimensions and retrieves the native scanner affine matrix stored in the image's metadata, ensuring perfect voxel-to-voxel alignment with the raw DICOM/NIfTI source.
+
+### The `MetaTensor` Bug and Fix
+During the implementation of `Invertd`, a critical silent failure was discovered. MONAI relies on an internal trace (`applied_operations`) to know exactly which transformations to invert. However, standard PyTorch tensors (`torch.Tensor`) do not carry this metadata. When the network's output (a standard tensor) was passed to `Invertd`, the module failed to detect the transformation trace and silently skipped the inversion process, returning the prediction in the incorrect pre-processed shape.
+
+**The Fix:** The issue was resolved by explicitly wrapping the discrete prediction maps in MONAI's `MetaTensor` class before passing them to the inverter:
+```python
+# Convert raw tensor to MetaTensor to preserve spatial metadata
+pred_indices = MetaTensor(pred_indices)
+```
+This explicit conversion ensures that the prediction tensor inherits the necessary spatial context, allowing `Invertd` to correctly apply the inverse transformations. With this fix in place, the inference results are now spatially accurate, and the exported segmentation masks perfectly overlay the original anatomy.
+
+## 4. Post-Processing Steps
 
 When the `--post-process` (or `-pp`) flag is enabled in `do_test.py`, an additional heuristic post-processing step is applied to the discrete class maps before metric computation. This step enforces strict anatomical priors:
 
@@ -67,7 +98,7 @@ When the `--post-process` (or `-pp`) flag is enabled in `do_test.py`, an additio
 3. **Anatomical Constraint for Tumours**: Since HCC tumours are intrahepatic (occurring strictly within the liver), any predicted tumour voxels (class 2) that do not intersect with the retained main liver component are discarded.
 4. **Fragmentation Warning**: If the LCC filtering discards more than 50% of the originally predicted liver voxels, a warning is logged, as this indicates highly fragmented predictions or atypical anatomy.
 
-## 4. Raw vs. Post-Processed Results
+## 5. Raw vs. Post-Processed Results
 
 The application of post-processing fundamentally alters the characteristics of the output segmentations and the resulting evaluation metrics.
 
@@ -79,7 +110,7 @@ The application of post-processing fundamentally alters the characteristics of t
 | **Impact on Dice** | Reflects the pure voxel-wise overlap learned by the network. | Typically shows a modest improvement or remains stable, as small false positive islands have a negligible effect on the Dice denominator. |
 | **Impact on HD95** | Highly sensitive to stray voxels. A single false positive island 200 mm away from the liver will catastrophically inflate the HD95 score. | Drastically reduces HD95 by eliminating the distant outlier voxels that drive the 95th percentile distance. |
 
-## 5. Rationale and Scientific Validity
+## 6. Post-processing Rationale and Scientific Validity
 
 ### Why Post-Processing was Included
 During initial evaluations, a significant performance gap was observed between the validation and test sets, characterised by extreme per-case variance and catastrophically high HD95 scores (e.g., >200 mm). Investigation revealed that the sliding window inference mechanism occasionally produced disconnected false positive islands in regions containing bowel or abdominal wall tissue. While these stray voxels barely affected the Dice score, they severely inflated the HD95 metric. The post-processing step was introduced to mitigate these sliding window artifacts and enforce the anatomical reality that the liver is a single connected organ and that HCC tumours are intrahepatic.
