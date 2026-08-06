@@ -10,7 +10,7 @@ set -euo pipefail
 # Adjust to your GPU's PCI bus ID (this will limit the script to run on that specific GPU)
 GPU_PCI_BUS="00000000:C2:00.0"
 
-# This is the name of the project directory (where do_test.py is located)
+# This is the name of the project directory (where do_inference.py is located)
 PROJECT_NAME="liver-pininos"
 
 # Virtual environment dir
@@ -19,9 +19,9 @@ PROJECT_DIR="${HOME}/${PROJECT_NAME}"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_DIR="${HOME}/jobs"
-LOG_FILE="${LOG_DIR}/test_${TIMESTAMP}.log"
+LOG_FILE="${LOG_DIR}/inference_${TIMESTAMP}.log"
 
-TMUX_SESSION_PREFIX="thesis_test"
+TMUX_SESSION_PREFIX="thesis_inference"
 
 # ==============================================================================
 # ARGUMENTS PARSER
@@ -31,19 +31,22 @@ usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Launches the automated liver tumour segmentation validation/testing pipeline.
+Launches the automated liver tumour segmentation inference pipeline on the server.
+(Note: Evaluation and metrics computation should be run locally via do_evaluation.py)
 
 Options:
   -h, --help               Display this help message and exit.
-  -chk, --checkpoint PATH  Path to the model checkpoint (.pth) to evaluate.
+  -chk, --checkpoint PATH  Path to the model checkpoint (.pth) to use for inference.
                            The file must exist. The path is converted to absolute.
-  -pp, --post-process      Apply post-processing to the predicted segmentation maps.
+  -o, --output-dir PATH    Directory to save the raw NIfTI predictions.
+                           Defaults to <RUN_DIR>/test_predictions if not provided.
+                           The path is converted to absolute.
   
-  Any unrecognised arguments are passed directly to do_test.py.
+  Any unrecognised arguments are passed directly to do_inference.py.
 
 Examples:
   $(basename "$0") --checkpoint /path/to/best_model.pth
-  $(basename "$0") -chk ./checkpoints/last_epoch.pth --post-process
+  $(basename "$0") -chk ./checkpoints/last_epoch.pth -o /path/to/custom/output
 EOF
 }
 
@@ -78,8 +81,30 @@ while [[ "$#" -gt 0 ]]; do
             ARGS_FOR_PYTHON+=("$1" "$ABS_CHK_PATH")
             shift 2
             ;;
+        --output-dir|-o)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a directory path argument." >&2
+                exit 1
+            fi
+            
+            # Convert to absolute path (allow non-existent paths with -m)
+            if command -v realpath >/dev/null 2>&1; then
+                ABS_OUT_PATH=$(realpath -m "$2")
+            else
+                ABS_OUT_PATH=$(readlink -m "$2")
+            fi
+            
+            # Reconstruct the argument for python using the absolute path
+            ARGS_FOR_PYTHON+=("$1" "$ABS_OUT_PATH")
+            shift 2
+            ;;
+        --post-process|-pp)
+            echo "Warning: --post-process is ignored for server-side inference." >&2
+            echo "         Post-processing is applied during local evaluation (do_evaluation.py)." >&2
+            shift
+            ;;
         *)
-            # Pass any other argument (e.g., --post-process / -pp) directly to Python
+            # Pass any other argument directly to Python
             ARGS_FOR_PYTHON+=("$1")
             shift
             ;;
@@ -134,7 +159,7 @@ else
 fi
 
 # 4. Cleanup old sessions
-echo "Cleaning up old thesis test sessions..."
+echo "Cleaning up old thesis inference sessions..."
 if command -v tmux >/dev/null 2>&1; then
     { tmux list-sessions -F "#{session_name}" 2>/dev/null | grep "^${TMUX_SESSION_PREFIX}_" || true; } | while read -r session; do
         echo "Killing old session: $session"
@@ -158,7 +183,7 @@ for arg in "${ARGS_FOR_PYTHON[@]}"; do
     NOHUP_PY_ARGS+=("$arg")
 done
 
-echo "Validation arguments: ${NOHUP_PY_ARGS[*]}"
+echo "Inference arguments: ${NOHUP_PY_ARGS[*]}"
 
 # Build the GPU export command for tmux (only if a specific GPU was selected)
 # This prevents accidentally exporting an empty CUDA_VISIBLE_DEVICES which would hide all GPUs
@@ -189,12 +214,12 @@ if command -v tmux &> /dev/null; then
     CMD="cd \"${PROJECT_DIR}\" && \
         ${GPU_EXPORT_CMD} \
         . \"${VENV_DIR}/bin/activate\" && \
-        python -u do_test.py ${TMUX_PY_ARGS} 2>&1 | tee \"${LOG_FILE}\""
+        python -u do_inference.py ${TMUX_PY_ARGS} 2>&1 | tee \"${LOG_FILE}\""
 
     # Start the session
     tmux new-session -d -s "$SESSION" "$CMD"
 
-    echo "Test evaluation started in tmux session: ${SESSION}"
+    echo "Test inference started in tmux session: ${SESSION}"
     echo "Attach to monitor:   tmux attach -t ${SESSION}"
     echo "Follow logs live:    tail -f ${LOG_FILE}"
     echo "Graceful stop:       tmux send-keys -t ${SESSION} C-c"
@@ -213,8 +238,8 @@ if command -v tmux &> /dev/null; then
     fi
 else
     echo "tmux not found. Falling back to nohup..."
-    nohup python -u do_test.py "${NOHUP_PY_ARGS[@]}" > "${LOG_FILE}" 2>&1 &
-    echo "Test evaluation started in background (PID: $!)"
+    nohup python -u do_inference.py "${NOHUP_PY_ARGS[@]}" > "${LOG_FILE}" 2>&1 &
+    echo "Test inference started in background (PID: $!)"
     echo "Follow logs live:    tail -f ${LOG_FILE}"
     echo "Graceful stop:       kill $!"
 fi
