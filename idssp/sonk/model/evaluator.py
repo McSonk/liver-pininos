@@ -148,20 +148,28 @@ class MetricsEvaluator:
             label_tensor = torch.nn.functional.one_hot(
                 torch.from_numpy(label_np).long(), num_classes=self.config.NUM_CLASSES
             ).permute(3, 0, 1, 2).float()
-            
-            # Wrap in MetaTensor with original affine for correct HD95 mm calculation
-            # This ensures HD95 is computed in true physical millimetres, accounting for
-            # anisotropic voxel spacing in the original scanner space.
+
+            # Wrap in MetaTensor with original affine for correct spatial representation
             affine = pred_nib.affine
             pred_meta = MetaTensor(pred_tensor, affine=affine)
             label_meta = MetaTensor(label_tensor, affine=affine)
             
+            # Extract physical voxel spacing (mm) from the NIfTI affine matrix.
+            # MONAI's HausdorffDistanceMetric does NOT automatically derive spacing 
+            # from MetaTensor.affine; it defaults to unit spacing (1.0 mm) if not 
+            # explicitly passed via kwargs.
+            spacing = nib.affines.voxel_sizes(affine)
+
+            # Dice is dimensionless (voxel overlap ratio), so spacing is not required.
             self.dice_metric(y_pred=pred_meta, y=label_meta)
-            self.hd95_metric(y_pred=pred_meta, y=label_meta)
-            
+
+            # HD95 measures physical surface distance; explicit spacing is mandatory 
+            # to ensure true millimetre calculations on anisotropic grids.
+            self.hd95_metric(y_pred=pred_meta, y=label_meta, spacing=spacing)
+
             case_dice = self.dice_metric.aggregate().cpu().numpy().flatten()
             case_hd95 = self.hd95_metric.aggregate().cpu().numpy().flatten()
-            
+
             row = {"case_name": case_name}
             if self.config.NUM_CLASSES == 3:
                 row["dice_liver"] = float(case_dice[0]) if not np.isnan(case_dice[0]) else None
@@ -180,8 +188,10 @@ class MetricsEvaluator:
         logger.info("Evaluation completed in %.1f s (%.2f s/volume)", elapsed, elapsed / len(test_files))
         return pd.DataFrame(results)
 
-    def generate_report(self, df: pd.DataFrame, output_dir: Optional[str] = None) -> str:
+    def generate_report(self, df: pd.DataFrame, output_dir: Optional[Path] = None) -> str:
         """Aggregate metrics, print thesis-ready table, and export CSV."""
+        if df.empty:
+            raise ValueError("No evaluation results to report. DataFrame is empty.")
         out_path = Path(output_dir) if output_dir else self.config.RUN_DIR / "reports"
         out_path.mkdir(parents=True, exist_ok=True)
 

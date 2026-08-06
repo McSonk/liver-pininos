@@ -22,7 +22,7 @@ from monai.utils import set_determinism
 
 from idssp.sonk import config
 from idssp.sonk.disk.loader import DataCollector
-from idssp.sonk.model.inference import InferenceEngine
+from idssp.sonk.model.inferer import InferenceEngine
 from idssp.sonk.utils.logger import (configure_logging, get_logger,
                                      install_global_exception_handlers)
 
@@ -108,7 +108,7 @@ def _main(args: argparse.Namespace):
     logger.info("Predictions will be saved to: %s", output_dir)
 
     log_environment_info(cfg, logger)
-    
+
     logger.info("[Inference] Reading directories...")
     loader = DataCollector()
     loader.read_dir(cfg.CT_TEST, ds_source='LiTS')

@@ -86,6 +86,12 @@ while [[ "$#" -gt 0 ]]; do
                 echo "Error: $1 requires a directory path argument." >&2
                 exit 1
             fi
+            # Reject option tokens mistakenly passed as the value
+            if [[ "$2" == -* ]]; then
+                echo "Error: $1 received an option token ('$2') instead of a path." >&2
+                echo "       Did you forget to provide the directory path?" >&2
+                exit 1
+            fi
             
             # Convert to absolute path (allow non-existent paths with -m)
             if command -v realpath >/dev/null 2>&1; then
