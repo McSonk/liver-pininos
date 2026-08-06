@@ -78,7 +78,7 @@ def log_environment_info(config_obj: config.Config, logger: logging.Logger) -> N
     logger.info("Available CPU memory (GB): %.2f", config_obj.cpu_memory)
     logger.info("Available container memory (GB): %.2f", config_obj.container_memory)
     logger.info("Device: %s", config_obj.DEVICE)
-    logger.info("Data Root: %s", config_obj.CT_ROOT)
+    logger.info("Data Root: %s", config_obj.CT_TEST)
     logger.info("Log Dir: %s", config_obj.LOG_DIR)
 
 def _main(args: argparse.Namespace):
