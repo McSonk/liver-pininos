@@ -221,7 +221,7 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
 
     try:
         cpu_count = len(os.sched_getaffinity(0))
-    except AttributeError:
+    except (AttributeError, OSError):
         cpu_count = os.cpu_count() or 1
 
     # ---------------------------------------
