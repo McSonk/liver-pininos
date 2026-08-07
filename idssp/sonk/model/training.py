@@ -125,7 +125,6 @@ class ModelBuilder:
 
         # tensorboard writer for logging training metrics
         logger.debug("Writing initial hyperparameters to TensorBoard: \n%s", config.to_param_dict())
-        # TODO: review the use of all writers to tensorboard
         self.writer = SummaryWriter(log_dir=str(self.config.TENSORBOARD_DIR))
         self.writer.add_hparams(
             config.to_param_dict(),

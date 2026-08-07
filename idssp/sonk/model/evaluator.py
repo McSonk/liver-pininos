@@ -139,21 +139,25 @@ class MetricsEvaluator:
             if self.post_process and self.config.NUM_CLASSES == 3:
                 logger.debug("Applying largest-connected-component post-processing to %s", case_name)
                 pred_np = _post_process_class_map(pred_np)
-                
-            # Convert to one-hot (C, D, H, W) for MONAI metrics
+
+
+            # Convert to one-hot (C, D, H, W) for MONAI metrics,
+            # then add a batch dimension → (1, C, D, H, W).
+            # MONAI metrics expect batch-first tensors; without this, the
+            # channel axis is misread as the batch axis (img_dim becomes 2).
             pred_tensor = torch.nn.functional.one_hot(
                 torch.from_numpy(pred_np).long(), num_classes=self.config.NUM_CLASSES
-            ).permute(3, 0, 1, 2).float()
-            
+            ).permute(3, 0, 1, 2).float().unsqueeze(0)
+
             label_tensor = torch.nn.functional.one_hot(
                 torch.from_numpy(label_np).long(), num_classes=self.config.NUM_CLASSES
-            ).permute(3, 0, 1, 2).float()
+            ).permute(3, 0, 1, 2).float().unsqueeze(0)
 
             # Wrap in MetaTensor with original affine for correct spatial representation
             affine = pred_nib.affine
             pred_meta = MetaTensor(pred_tensor, affine=affine)
             label_meta = MetaTensor(label_tensor, affine=affine)
-            
+
             # Extract physical voxel spacing (mm) from the NIfTI affine matrix.
             # MONAI's HausdorffDistanceMetric does NOT automatically derive spacing 
             # from MetaTensor.affine; it defaults to unit spacing (1.0 mm) if not 
