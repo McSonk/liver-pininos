@@ -33,7 +33,7 @@ class Mode(str, Enum):
 
 # Some constant definitions
 
-VERSION_STR = "2.6.0"
+VERSION_STR = "2.6.1"
 '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
 MODEL_TO_USE = AvailableModels.SEG_RES_NET
 '''The model architecture to use. Choose from the AvailableModels enum.'''
