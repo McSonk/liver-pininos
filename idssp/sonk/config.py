@@ -33,19 +33,32 @@ class Mode(str, Enum):
 
 # Some constant definitions
 
-VERSION_STR = "2.5.0"
+VERSION_STR = "2.6.0"
 '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
-MODEL_TO_USE = AvailableModels.SWIN_UNETR
+MODEL_TO_USE = AvailableModels.SEG_RES_NET
 '''The model architecture to use. Choose from the AvailableModels enum.'''
+
+RESOURCE_INTENSIVE_MODELS = {
+    AvailableModels.SWIN_UNETR,
+    AvailableModels.SWIN_UNETR_PRETRAIN,
+}
 @dataclass(frozen=True)
 class Config:
-    # Environment & Device
+    # Values are provided later in the code
     RUN_ID: str
     ENV: str
     DEVICE: str
     HC_GPU: bool
     '''HC_GPU is a flag to indicate if we are on the High-Compute GPU.
     Note that this only means the GPU has more than 30GB of VRAM'''
+
+    LEARNING_RATE: float
+    SLIDING_WINDOW_BATCH_SIZE: int
+    COSINE_ETA_MIN: float
+    '''Minimum learning rate for the cosine annealing scheduler.'''
+    WARMUP_EPOCHS: int
+    '''Number of epochs for linear learning rate warmup (CosineSchedule).'''
+
     RANDOM_SEED: int = 42
     cpu_memory: float = -1.0
     container_memory: float = -1.0
@@ -132,28 +145,12 @@ class Config:
     '''This property is only used on low VRAM environments to simulate a larger
        batch size by accumulating gradients over multiple steps.'''
 
-    # For SwinUNETR: 2e-4
-    # Everything else: 1e-4
-    LEARNING_RATE: float = 2e-4
-
-    # For SwinUNETR: 4
-    # Everything else: 16
-    SLIDING_WINDOW_BATCH_SIZE: int = 4
 
     # Early Stopping
     EARLY_STOPPING_PATIENCE: int = 35
     '''Number of epochs with no improvement after which training will be stopped.'''
     EARLY_STOPPING_MIN_DELTA: float = 0.001
     '''Minimum change in the monitored metric to qualify as an improvement.'''
-    # For SwinUNETR: 15
-    # Everything else: 10
-    WARMUP_EPOCHS: int = 15
-    '''Number of epochs for linear learning rate warmup (CosineSchedule).'''
-
-    # For SwinUNETR: 1e-6
-    # Everything else: 1e-5
-    COSINE_ETA_MIN: float = 1e-6
-    '''Minimum learning rate for the cosine annealing scheduler.'''
 
     # Paths (resolved at init)
     CT_ROOT: Path = field(default_factory=Path)
@@ -163,11 +160,11 @@ class Config:
     CHECKPOINT_DIR: Path = field(default_factory=Path)
     LOG_DIR: Path = field(default_factory=Path)
     TENSORBOARD_DIR: Path = field(default_factory=Path)
-    PERSISTENT_DATASET_DIR: Path = field(default_factory=Path)
+    PERSISTENT_DATASET_DIR: Optional[Path] = None
     STATS_DIR: Path = field(default_factory=Path)
     SPLIT_DIR: Path = field(default_factory=Path)
     TRAIN_STATS_DIR: Path = field(default_factory=Path)
-    PRE_TRAINED_MODEL_PATH: Path = field(default_factory=Path)
+    PRE_TRAINED_MODEL_PATH: Optional[Path] = None
     LOG_LEVEL_CONSOLE: str = "INFO"
     LOG_LEVEL_FILE: str = "DEBUG"
 
@@ -212,18 +209,20 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
     lots_of_ram = process_memory_limit >= 100
 
 
-    
     if device == "cuda":
         if torch.cuda.is_available():
             vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            hc_gpu = vram_gb >= 20
+            hc_gpu = vram_gb >= 30
             super_hc_gpu = vram_gb >= 70
 
     run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    resource_intensive_model = MODEL_TO_USE in {AvailableModels.SWIN_UNETR, AvailableModels.SWIN_UNETR_PRETRAIN}
+    resource_intensive_model = MODEL_TO_USE in RESOURCE_INTENSIVE_MODELS
 
-    cpu_count = os.cpu_count() or 1
+    try:
+        cpu_count = len(os.sched_getaffinity(0))
+    except AttributeError:
+        cpu_count = os.cpu_count() or 1
 
     # ---------------------------------------
     # YOU CAN CHANGE VALUES HERE
@@ -247,10 +246,10 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
         print("[Config] No high-compute GPU detected. Using minimal settings for memory safety.")
         gpu_num_workers = 1
 
-    # TODO: do something similar, but with model
-    # Example: general_settings = { ... }
-    # if MODEL_TO_USE == AvailableModels.SWIN_UNETR:
-    # general_settings['..'] = ...
+    if resource_intensive_model:
+        cloud_sliding_window_batch_size = 8 if super_hc_gpu else 4
+    else:
+        cloud_sliding_window_batch_size = 16
 
     local_specific = {
         "cache_num_workers": 0,
@@ -262,13 +261,18 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
         "train_patch_size": (64, 64, 64),
         "val_patch_size": (64, 64, 64),
         "iso_spacing": (2.0, 2.0, 2.0),
+        # model hyperparams
+        "learning_rate": 2e-4,
+        "sliding_window_batch_size": 2,
+        "warmup_epochs": 1,
+        "cosine_eta_min": 1e-5,
     }
 
     cloud_specific = {
         "cache_num_workers": 8 if lots_of_ram else 1,
-        # "dl_num_workers": min(gpu_num_workers, cpu_count),
-        # TODO: change this!!! (just temporal)
-        "dl_num_workers": 0,
+        "dl_num_workers": max(0, min(gpu_num_workers, cpu_count - 1)),
+        # For execution environments with limited CPU cores, we set dl_num_workers to 0
+        # "dl_num_workers": 0,
         "pin_memory": True,
         "batch_size": 4 if super_hc_gpu else 2,
         "accumulation_steps": 1 if super_hc_gpu else 2,
@@ -277,6 +281,11 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
         # Not used but kept for config/logging consistency
         "val_patch_size": (128, 128, 128),
         "iso_spacing": (1.0, 1.0, 1.0) if hc_gpu else (1.5, 1.5, 1.5),
+        # model hyperparams
+        "learning_rate": 2e-4 if resource_intensive_model else 1e-4,
+        "sliding_window_batch_size": cloud_sliding_window_batch_size,
+        "warmup_epochs": 15 if resource_intensive_model else 10,
+        "cosine_eta_min": 1e-6 if resource_intensive_model else 1e-5,
     }
 
     # -----------------------------------------------------------------------------
@@ -471,6 +480,10 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
         train_patch_size = local_specific["train_patch_size"]
         val_patch_size = local_specific["val_patch_size"]
         iso_spacing = local_specific["iso_spacing"]
+        learning_rate = local_specific["learning_rate"]
+        sliding_window_batch_size = local_specific["sliding_window_batch_size"]
+        warmup_epochs = local_specific["warmup_epochs"]
+        cosine_eta_min = local_specific["cosine_eta_min"]
 
     else:
         print("[Config] Running in CLOUD environment. Using more computing power.")
@@ -483,6 +496,21 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
         train_patch_size = cloud_specific["train_patch_size"]
         val_patch_size = cloud_specific["val_patch_size"]
         iso_spacing = cloud_specific["iso_spacing"]
+        learning_rate = cloud_specific["learning_rate"]
+        sliding_window_batch_size = cloud_specific["sliding_window_batch_size"]
+        warmup_epochs = cloud_specific["warmup_epochs"]
+        cosine_eta_min = cloud_specific["cosine_eta_min"]
+
+    # Ensure warmup does not exceed the total number of epochs.
+    # This matters for short debug runs or low-resource cloud fallbacks.
+    original_warmup_epochs = warmup_epochs
+    warmup_epochs = max(1, min(warmup_epochs, max(1, num_epochs - 1)))
+
+    if warmup_epochs != original_warmup_epochs:
+        print(
+            f"[Config] Adjusted WARMUP_EPOCHS from {original_warmup_epochs} "
+            f"to {warmup_epochs} because NUM_EPOCHS={num_epochs}."
+        )
 
     # -----------------------------------------------------------------------------
     # 4. Final Safety Check & Directory Creation
@@ -558,6 +586,10 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
         ENV=env,
         DEVICE=device,
         HC_GPU=hc_gpu,
+        LEARNING_RATE=learning_rate,
+        SLIDING_WINDOW_BATCH_SIZE=sliding_window_batch_size,
+        COSINE_ETA_MIN=cosine_eta_min,
+        WARMUP_EPOCHS=warmup_epochs,
         MODE=mode,
         CT_ROOT=ct_root,
         CT_TEST=ct_test,
@@ -630,7 +662,7 @@ def is_limited_env(include_vram: bool = True, config: Optional[Config] = None) -
     environment (e.g., local with no GPU).
 
     if `include_vram=True` (default) it also takes into consideration
-    the amount of memory of GPU so a CUDA device with less than 20GB of VRAM
+    the amount of memory of GPU so a CUDA device with less than 30GB of VRAM
     will be considered a limited environment.
     '''
     config = config or get()
