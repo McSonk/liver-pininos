@@ -221,7 +221,7 @@ class InferenceEngine:
                     case_name = filename[:-4]
                 else:
                     case_name = Path(filename).stem
-                case_name = Path(batch["image"].meta["filename_or_obj"][0]).stem
+
                 logger.info("[%d/%d] Processing: %s", batch_idx + 1, len(test_dl), case_name)
 
                 if batch_idx % 5 == 0:
