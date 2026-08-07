@@ -71,7 +71,7 @@ def _find_latest_test_predictions_dir(output_dir: Path) -> Optional[Path]:
         return None
 
     candidates = []
-    # Look for directories matching the test run pattern (e.g., 2.5.0-20260806_120000_test)
+    # Look for directories matching the test run pattern (e.g., <VERSION>-20260806_120000_test)
     for run_dir in output_dir.iterdir():
         if run_dir.is_dir() and run_dir.name.endswith("_test"):
             pred_dir = run_dir / "test_predictions"
