@@ -708,7 +708,7 @@ class DatasetSummary:
             raise ValueError("No data analysed. Call analyse_all() first.")
 
         # Exclude long paths by default; avoid mutating caller's list
-        default_excludes = ['image_path', 'label_path']
+        default_excludes = ['image_path', 'label_path', 'case_index']
         if exclude_keys is None:
             exclude_keys = default_excludes
         else:
@@ -724,6 +724,11 @@ class DatasetSummary:
 
         # Use pandas for robust CSV handling
         df = pd.DataFrame(flattened_rows)
+        # Reorder so case_name appears first in exported CSV
+        if 'case_name' in df.columns:
+            cols = ['case_name'] + [c for c in df.columns if c != 'case_name']
+            df = df[cols]
+
         df.to_csv(output_path, index=False)
         print(f"CSV exported to: {output_path} ({len(df)} rows, {len(df.columns)} columns)")
 
