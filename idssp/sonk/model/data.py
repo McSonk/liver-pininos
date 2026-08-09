@@ -176,10 +176,13 @@ class VolumeWrapper:
         ct_min = float(self.image_data.min())
         ct_max = float(self.image_data.max())
 
-        # Voxel spacing
         # Voxel spacing (authoritative)
-        voxel_sizes = nib.affines.voxel_sizes(self.image.affine)
-        spacing_x, spacing_y, spacing_z = float(voxel_sizes[0]), float(voxel_sizes[1]), float(voxel_sizes[2])
+        voxel_sizes = np.asarray(nib.affines.voxel_sizes(self.image.affine), dtype=np.float64)
+        spacing_x, spacing_y, spacing_z = (
+            float(voxel_sizes[0]),
+            float(voxel_sizes[1]),
+            float(voxel_sizes[2]),
+        )
 
         # Affine axis codes (eg: LAS)
         affine_codes = nib.aff2axcodes(self.image.affine)
@@ -194,7 +197,7 @@ class VolumeWrapper:
         tumor_last = self.slice_thresholds['tumor']['last']
 
         # Voxel counts
-        total_voxels = int(np.prod(label_shape))
+        total_voxels = int(np.prod(label_shape, dtype=np.int64))
         liver_voxels = int(np.sum(self.label_data == 1))
         tumor_voxels = int(np.sum(self.label_data == 2))
 
@@ -206,7 +209,7 @@ class VolumeWrapper:
         # Compute robust HU bounds within liver mask (label == 1)
         liver_mask = self.label_data == 1
         if np.any(liver_mask):
-            liver_hu = self.image_data[liver_mask]
+            liver_hu = self.image_data[liver_mask].astype(np.float64, copy=False)
             liver_hu_mean = liver_hu.mean()
             liver_hu_std = liver_hu.std()
             liver_hu_p005 = float(np.percentile(liver_hu, 0.5))
@@ -222,7 +225,7 @@ class VolumeWrapper:
         # Tumour intensity statistics (parallel to liver stats)
         tumour_mask = self.label_data == 2
         if np.any(tumour_mask):
-            tumour_hu = self.image_data[tumour_mask]
+            tumour_hu = self.image_data[tumour_mask].astype(np.float64, copy=False)
             tumour_hu_mean = tumour_hu.mean()
             tumour_hu_std = tumour_hu.std()
             tumour_hu_median = np.median(tumour_hu)
@@ -237,8 +240,9 @@ class VolumeWrapper:
 
         # tuple of floats  representing the size in mm for the x, y, and z axes
         voxel_sizes = nib.affines.voxel_sizes(self.image.affine)
+
         # 1 voxel volume = x * y * z
-        voxel_volume_mm3 = float(np.prod(voxel_sizes))
+        voxel_volume_mm3 = float(np.prod(voxel_sizes, dtype=np.float64))
 
         # Volume in millilitres
         liver_volume_ml = liver_voxels * voxel_volume_mm3 / 1000.0
@@ -248,16 +252,17 @@ class VolumeWrapper:
         lesion_metrics = self._compute_lesion_metrics(self.label_data)
 
         # Simple liver texture variance (tumour-excluded)
-        liver_only_mask = (self.label_data == 1)
+        liver_only_mask = self.label_data == 1
         if np.any(liver_only_mask):
-            liver_texture_variance = float(np.var(self.image_data[liver_only_mask]))
+            liver_texture_variance = float(np.var(self.image_data[liver_only_mask],
+                                                  dtype=np.float64))
         else:
             liver_texture_variance = None
 
         # Noise estimate: std in homogeneous liver sub-region (optional refinement)
         # Using interquartile range within liver as robust noise proxy
         if np.any(liver_only_mask):
-            liver_hu_vals = self.image_data[liver_only_mask]
+            liver_hu_vals = self.image_data[liver_only_mask].astype(np.float64, copy=False)
             q1, q3 = np.percentile(liver_hu_vals, [25, 75])
             iqr = q3 - q1
             # Approximate noise as IQR / 1.35 (for Gaussian)
@@ -348,7 +353,9 @@ class VolumeWrapper:
         # Connected component labelling (26-connectivity for 3D)
         structure = ndimage.generate_binary_structure(3, 3)
         labelled, num = ndimage.label(tumour_mask, structure=structure)
-        voxel_volume_mm3 = float(np.prod(nib.affines.voxel_sizes(self.image.affine)))
+
+        voxel_sizes = np.asarray(nib.affines.voxel_sizes(self.image.affine), dtype=np.float64)
+        voxel_volume_mm3 = float(np.prod(voxel_sizes, dtype=np.float64))
 
         lesion_volumes_ml = []
         lesion_equiv_diameters_mm = []
@@ -596,6 +603,111 @@ class DataWrapper:
             )
         return ani
 
+# Columns that are discrete integer quantities.
+# These must be exported as integers, e.g. 70 rather than 70.0.
+_INTEGER_COLUMNS = frozenset({
+    "case_index",
+    "liver_first",
+    "liver_last",
+    "tumor_first",
+    "tumor_last",
+    "liver_voxels",
+    "tumor_voxels",
+    "num_lesions",
+})
+
+_BOOLEAN_COLUMNS = frozenset({
+    "has_tumor",
+})
+
+
+def _format_csv_float(value):
+    """
+    Format a continuous float for CSV export.
+
+    `.17g` provides enough significant digits to round-trip an IEEE-754
+    double-precision value without unnecessary trailing decimals.
+
+    Examples
+    --------
+    70.0                                -> "70"
+    0.00013178507486979167              -> "0.00013178507486979167"
+    6.404754638671875                   -> "6.404754638671875"
+    """
+    if pd.isna(value):
+        return ""
+    return format(float(value), ".17g")
+
+
+def _is_scalar_number(value) -> bool:
+    """Return True for scalar numeric values, excluding booleans."""
+    return isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool)
+
+
+def _to_nullable_int(series: pd.Series) -> pd.Series:
+    """
+    Convert a column to nullable Int64.
+
+    This allows missing values to remain empty in the CSV while exporting
+    present values as true integers, e.g. 70 rather than 70.0.
+    """
+    numeric = pd.to_numeric(series, errors="coerce")
+
+    # Fail loudly if non-numeric values were hidden by coerce.
+    if series.notna().sum() != numeric.notna().sum():
+        raise ValueError(
+            f"Column '{series.name}' was expected to be integer-like but contains non-numeric values."
+        )
+
+    non_null = numeric.dropna()
+    if not non_null.empty:
+        if not all(float(v).is_integer() for v in non_null):
+            raise ValueError(
+                f"Column '{series.name}' was expected to contain integer values, "
+                f"but contains fractional values."
+            )
+
+    return numeric.astype("Int64")
+
+
+def _canonicalise_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalise numeric columns before CSV export.
+
+    - Known integer columns are exported as nullable integers.
+    - Known boolean columns are exported as booleans.
+    - Continuous float columns are exported with deterministic, lossless
+      decimal representations.
+    """
+    # 1. Force known discrete columns to nullable integer.
+    for col in _INTEGER_COLUMNS:
+        if col in df.columns:
+            df[col] = _to_nullable_int(df[col])
+
+    # 2. Force known boolean columns to nullable boolean.
+    for col in _BOOLEAN_COLUMNS:
+        if col in df.columns:
+            df[col] = df[col].astype("boolean")
+
+    # 3. Canonicalise continuous float columns.
+    for col in df.columns:
+        if col in _INTEGER_COLUMNS or col in _BOOLEAN_COLUMNS:
+            continue
+
+        if pd.api.types.is_float_dtype(df[col]):
+            df[col] = df[col].astype("float64").map(_format_csv_float)
+            continue
+
+        # Object columns may contain floats because of None/NaN mixing.
+        if df[col].dtype == object:
+            non_null = df[col].dropna()
+            if non_null.empty:
+                continue
+
+            if all(_is_scalar_number(v) for v in non_null):
+                df[col] = df[col].map(_format_csv_float)
+
+    return df
 
 class DatasetSummary:
     '''
@@ -696,7 +808,7 @@ class DatasetSummary:
     def export_csv_auto(self, output_path: Path, exclude_keys: List[str] | None = None) -> None:
         """
         Export per-case rows to CSV using automatic flattening.
-        
+
         Parameters
         ----------
         output_path : Path
@@ -724,12 +836,18 @@ class DatasetSummary:
 
         # Use pandas for robust CSV handling
         df = pd.DataFrame(flattened_rows)
-        # Reorder so case_name appears first in exported CSV
-        if 'case_name' in df.columns:
-            cols = ['case_name'] + [c for c in df.columns if c != 'case_name']
-            df = df[cols]
 
-        df.to_csv(output_path, index=False)
+        # Keep the identifier first for stable inspection and diffs.
+        if "case_name" in df.columns:
+            df = df[["case_name"] + [c for c in df.columns if c != "case_name"]]
+
+        # Normalise integer/boolean/float representation before export.
+        # Integer columns remain integers, e.g. 70 rather than 70.0.
+        df = _canonicalise_numeric_columns(df)
+
+        # Use Unix newlines for reproducible text files across platforms.
+        df.to_csv(output_path, index=False, lineterminator="\n")
+
         print(f"CSV exported to: {output_path} ({len(df)} rows, {len(df.columns)} columns)")
 
 def analyse_dataset(
