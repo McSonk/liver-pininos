@@ -22,6 +22,7 @@ python analyze_lits_dataset.py --output-csv my_per_case.csv --output-agg-csv my_
 python analyze_lits_dataset.py --no-verbose --output-csv data.csv
 """
 print("[analyse_dataset.py] Importing torch. This may take a moment...")
+import argparse
 import logging
 from pathlib import Path
 
@@ -33,12 +34,34 @@ from idssp.sonk.model.data import analyse_dataset
 from idssp.sonk.utils.logger import (configure_logging, get_logger,
                                      install_global_exception_handlers)
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run dataset-wide analysis for LiTS",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--output-csv", "-o",
+        type=str,
+        default=None,
+        help="Path to save the per-case summary CSV. "
+             "Defaults to <STATS_DIR>/train/per_case_summary.csv"
+    )
+
+    parser.add_argument(
+        "--dummy", "-d",
+        action="store_true",
+        help="Run in dummy mode for testing purposes. This will perform a quick "
+             "analysis with limited data."
+    )
+
+    return parser.parse_args()
 
 def _analyse_dataset(
         logger: logging.Logger,
         train_datasource: Path,
         test_datasource: Path,
         per_case_csv_path: Path,
+        dummy: bool = False,
     ):
     # Load and pair data
     logger.info("Discovering and pairing image-label volumes...")
@@ -46,6 +69,11 @@ def _analyse_dataset(
     collector.read_dir(train_datasource, ds_source='LiTS')
     collector.read_dir(test_datasource, ds_source='LiTS')
     collector.extract_images_and_labels()
+
+    if dummy:
+        # In dummy mode, restrict analysis to the first 3 images for quick testing
+        logger.info("Dummy mode enabled. Limiting analysis to the first 3 volumes.")
+        collector.datasources = collector.datasources[:3]
 
     logger.info("Found %d paired volumes.\n", len(collector.datasources))
 
@@ -62,6 +90,8 @@ def main():
      - Exports CSV files for further use
      - Provides terminal output unless --no-verbose is set
     '''
+    # Parse CLI arguments (was previously defined but never called)
+    args = _parse_args()
 
     cfg = config.init()
     configure_logging(cfg)
@@ -87,6 +117,10 @@ def main():
     per_case_csv_path_test = cfg.STATS_DIR / "test" / "per_case_summary.csv"
     aggregate_csv_path_test = cfg.STATS_DIR / "test" / "aggregate_stats.csv"
 
+    # Override default per-case CSV path if provided via CLI
+    if args.output_csv:
+        per_case_csv_path_train = Path(args.output_csv)
+
     per_case_csv_path_train.parent.mkdir(parents=True, exist_ok=True)
     aggregate_csv_path_train.parent.mkdir(parents=True, exist_ok=True)
     per_case_csv_path_test.parent.mkdir(parents=True, exist_ok=True)
@@ -97,7 +131,9 @@ def main():
         logger,
         cfg.CT_ROOT,
         cfg.CT_TEST,
-        per_case_csv_path_train,)
+        per_case_csv_path_train,
+        dummy=args.dummy,
+    )
 
     logger.info("Analysis complete!")
 
