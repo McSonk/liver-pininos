@@ -1,0 +1,114 @@
+├── analyse_dataset.py
+├── do_evaluation.py
+├── do_inference.py
+├── files
+│   ├── splits
+│   │   └── LiTS_split_seed42.json
+│   └── stats
+│       ├── lits
+│       │   ├── dictionary.md
+│       │   ├── per_case_summary.csv
+│       │   ├── problems.md
+│       │   ├── stratified_test.csv
+│       │   ├── stratified_train.csv
+│       │   └── stratified_val.csv
+│       ├── README.md
+│       ├── test
+│       └── train
+│           └── per_case_summary.csv
+├── idssp
+│   ├── __init__.py
+│   ├── __pycache__
+│   │   ├── __init__.cpython-310.pyc
+│   │   ├── __init__.cpython-312.pyc
+│   │   └── __init__.cpython-314.pyc
+│   └── sonk
+│       ├── config.py
+│       ├── disk
+│       │   ├── __init__.py
+│       │   ├── loader.py
+│       │   └── __pycache__
+│       │       ├── __init__.cpython-310.pyc
+│       │       ├── __init__.cpython-312.pyc
+│       │       ├── __init__.cpython-314.pyc
+│       │       ├── loader.cpython-310.pyc
+│       │       ├── loader.cpython-312.pyc
+│       │       └── loader.cpython-314.pyc
+│       ├── __init__.py
+│       ├── model
+│       │   ├── data.py
+│       │   ├── evaluator.py
+│       │   ├── inferer.py
+│       │   ├── __init__.py
+│       │   ├── models.py
+│       │   ├── __pycache__
+│       │   │   ├── data.cpython-310.pyc
+│       │   │   ├── data.cpython-312.pyc
+│       │   │   ├── data.cpython-314.pyc
+│       │   │   ├── evaluator.cpython-314.pyc
+│       │   │   ├── __init__.cpython-310.pyc
+│       │   │   ├── __init__.cpython-312.pyc
+│       │   │   ├── __init__.cpython-314.pyc
+│       │   │   ├── models.cpython-310.pyc
+│       │   │   ├── models.cpython-314.pyc
+│       │   │   ├── training.cpython-310.pyc
+│       │   │   ├── training.cpython-314.pyc
+│       │   │   ├── transforms.cpython-310.pyc
+│       │   │   ├── transforms.cpython-314.pyc
+│       │   │   ├── validate.cpython-310.pyc
+│       │   │   └── validate.cpython-314.pyc
+│       │   ├── training.py
+│       │   ├── transforms.py
+│       │   └── validation_affine.md
+│       ├── __pycache__
+│       │   ├── config.cpython-310.pyc
+│       │   ├── config.cpython-312.pyc
+│       │   ├── config.cpython-314.pyc
+│       │   ├── __init__.cpython-310.pyc
+│       │   ├── __init__.cpython-312.pyc
+│       │   └── __init__.cpython-314.pyc
+│       ├── utils
+│       │   ├── __init__.py
+│       │   ├── logger.py
+│       │   ├── mail.py
+│       │   ├── notifications.py
+│       │   └── __pycache__
+│       │       ├── __init__.cpython-310.pyc
+│       │       ├── __init__.cpython-312.pyc
+│       │       ├── __init__.cpython-314.pyc
+│       │       ├── logger.cpython-310.pyc
+│       │       ├── logger.cpython-312.pyc
+│       │       ├── logger.cpython-314.pyc
+│       │       ├── mail.cpython-310.pyc
+│       │       ├── mail.cpython-314.pyc
+│       │       ├── notifications.cpython-310.pyc
+│       │       └── notifications.cpython-314.pyc
+│       └── view
+│           ├── eval_stats.py
+│           ├── __init__.py
+│           ├── __pycache__
+│           │   ├── eval_stats.cpython-314.pyc
+│           │   ├── __init__.cpython-310.pyc
+│           │   ├── __init__.cpython-312.pyc
+│           │   ├── __init__.cpython-314.pyc
+│           │   ├── utils.cpython-310.pyc
+│           │   ├── utils.cpython-312.pyc
+│           │   └── utils.cpython-314.pyc
+│           └── utils.py
+├── main.py
+├── notebooks
+│   ├── analyse_stats.ipynb
+│   ├── list.ipynb
+│   ├── strat_dataset.ipynb
+│   └── strat_results.ipynb
+├── notes.md
+├── __pycache__
+│   └── analyze_lits_dataset.cpython-312.pyc
+├── README.md
+├── requirements.txt
+├── scripts
+│   ├── download-files.sh
+│   ├── rejoin-session.sh
+│   ├── run-model.sh
+│   └── validate.sh
+└── validation.md
