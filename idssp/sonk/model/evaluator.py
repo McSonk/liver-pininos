@@ -199,6 +199,8 @@ class MetricsEvaluator:
         out_path = Path(output_dir) if output_dir else self.config.RUN_DIR / "reports"
         out_path.mkdir(parents=True, exist_ok=True)
 
+        df = df.sort_values("case_name").reset_index(drop=True)
+
         # Aggregate statistics (mean ± std)
         agg_metrics = []
         class_names = ["liver", "tumour"] if self.config.NUM_CLASSES == 3 else ["tumour"]
@@ -216,7 +218,7 @@ class MetricsEvaluator:
         agg_df = pd.DataFrame(agg_metrics)
 
         suffix = "pp" if self.post_process else "raw"
-        
+
         # Export CSV
         csv_path = out_path / f"test_evaluation_results_{suffix}.csv"
         df.to_csv(csv_path, index=False)
@@ -231,13 +233,13 @@ class MetricsEvaluator:
 
     def _print_thesis_table(self, agg_df: pd.DataFrame, suffix: str):
         """Prints a formatted table suitable for direct inclusion in thesis chapters."""
-        print("\n" + "="*60)
-        print(f"TEST DATASET EVALUATION SUMMARY ({'POST-PROCESSED' if suffix == 'pp' else 'RAW'})")
-        print("="*60)
-        print(f"{'Structure':<12} | {'Dice (mean±std)':<18} | {'HD95 (mm) (mean±std)':<22} | {'N':<5}")
-        print("-"*60)
+        logger.info("\n" + "="*60)
+        logger.info("TEST DATASET EVALUATION SUMMARY (%s)", 'POST-PROCESSED' if suffix == 'pp' else 'RAW')
+        logger.info("="*60)
+        logger.info(f"{'Structure':<12} | {'Dice (mean±std)':<18} | {'HD95 (mm) (mean±std)':<22} | {'N':<5}")
+        logger.info("-"*60)
         for _, row in agg_df.iterrows():
             dice_str = f"{row['dice_mean']:.3f} ± {row['dice_std']:.3f}"
             hd_str = f"{row['hd95_mean_mm']:.2f} ± {row['hd95_std_mm']:.2f}" if not pd.isna(row['hd95_mean_mm']) else "N/A"
-            print(f"{row['structure']:<12} | {dice_str:<18} | {hd_str:<22} | {row['volumes_evaluated']:<5}")
-        print("="*60 + "\n")
+            logger.info(f"{row['structure']:<12} | {dice_str:<18} | {hd_str:<22} | {row['volumes_evaluated']:<5}")
+        logger.info("="*60 + "\n")
