@@ -86,31 +86,6 @@ def _find_latest_test_predictions_dir(output_dir: Path) -> Optional[Path]:
     candidates.sort(key=lambda x: x[0], reverse=True)
     return candidates[0][1]
 
-def log_environment_info(config_obj: config.Config, logger: logging.Logger) -> None:
-    '''Logs detailed information about the runtime environment, including PyTorch version,
-    CUDA availability and devices, and key configuration parameters.'''
-    cuda_properties = None
-    logger.info("Model (code) Version: %s", config_obj.VERSION)
-    logger.info("Environment Information:")
-    logger.info("PyTorch version: %s", torch.__version__)
-    logger.info("CUDA available: %s", torch.cuda.is_available())
-    if torch.cuda.is_available():
-        # 1. Get PyTorch device properties (logical index 0 due to CUDA_VISIBLE_DEVICES)
-        cuda_properties = torch.cuda.get_device_properties(0)
-        logger.info("CUDA device count: %d", torch.cuda.device_count())
-        for i in range(torch.cuda.device_count()):
-            logger.info("CUDA device %d: %s", i, torch.cuda.get_device_name(i))
-        logger.info("Available GPU memory (GB): %d", cuda_properties.total_memory // (1024 ** 3))
-    else:
-        logger.info("No CUDA devices available.")
-
-    logger.info("Available CPU cores: %s", os.cpu_count())
-    logger.info("PyTorch intra-op threads: %d", torch.get_num_threads())
-    logger.info("Available CPU memory (GB): %.2f", config_obj.cpu_memory)
-    logger.info("Available container memory (GB): %.2f", config_obj.container_memory)
-    logger.info("Device: %s", config_obj.DEVICE)
-    logger.info("Data Root: %s", config_obj.CT_TEST)
-    logger.info("Log Dir: %s", config_obj.LOG_DIR)
 
 def _main(args: argparse.Namespace):
     cfg = config.init(mode=config.Mode.TEST)
@@ -157,8 +132,6 @@ def _main(args: argparse.Namespace):
     else:
         logger.info("Post-processing of predictions is DISABLED; "
                     "raw model outputs will be used for metrics.")
-
-    log_environment_info(cfg, logger)
 
     logger.info("[Evaluation] Reading directories...")
     loader = DataCollector()
