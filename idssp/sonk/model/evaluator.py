@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import torch
 from monai.data import MetaTensor
-from monai.metrics import DiceMetric, HausdorffDistanceMetric
+from monai.metrics import DiceMetric, HausdorffDistanceMetric, MeanIoU
 from scipy import ndimage
 
 from idssp.sonk import config
@@ -91,6 +91,7 @@ class MetricsEvaluator:
 
         # Metrics expect decollated lists of tensors
         self.dice_metric = DiceMetric(include_background=False, reduction="none")
+        self.iou_metric = MeanIoU(include_background=False, reduction="none")
         self.hd95_metric = HausdorffDistanceMetric(
             include_background=False, reduction="none", percentile=95.0, distance_metric="euclidean"
         )
@@ -167,27 +168,35 @@ class MetricsEvaluator:
             # Dice is dimensionless (voxel overlap ratio), so spacing is not required.
             self.dice_metric(y_pred=pred_meta, y=label_meta)
 
+            # Intersection Over Union (IoU) is also dimensionless; spacing is not required.
+            self.iou_metric(y_pred=pred_meta, y=label_meta)
+
             # HD95 measures physical surface distance; explicit spacing is mandatory 
             # to ensure true millimetre calculations on anisotropic grids.
             self.hd95_metric(y_pred=pred_meta, y=label_meta, spacing=spacing)
 
             case_dice = self.dice_metric.aggregate().cpu().numpy().flatten()
+            case_iou = self.iou_metric.aggregate().cpu().numpy().flatten()
             case_hd95 = self.hd95_metric.aggregate().cpu().numpy().flatten()
 
             row = {"case_name": case_name}
             if self.config.NUM_CLASSES == 3:
                 row["dice_liver"] = float(case_dice[0]) if not np.isnan(case_dice[0]) else None
                 row["dice_tumour"] = float(case_dice[1]) if not np.isnan(case_dice[1]) else None
+                row["iou_liver"] = float(case_iou[0]) if not np.isnan(case_iou[0]) else None
+                row["iou_tumour"] = float(case_iou[1]) if not np.isnan(case_iou[1]) else None
                 row["hd95_liver_mm"] = float(case_hd95[0]) if not np.isnan(case_hd95[0]) else None
                 row["hd95_tumour_mm"] = float(case_hd95[1]) if not np.isnan(case_hd95[1]) else None
             else:  # binary mode
                 row["dice_tumour"] = float(case_dice[0]) if not np.isnan(case_dice[0]) else None
+                row["iou_tumour"] = float(case_iou[0]) if not np.isnan(case_iou[0]) else None
                 row["hd95_tumour_mm"] = float(case_hd95[0]) if not np.isnan(case_hd95[0]) else None
                 
             results.append(row)
             self.dice_metric.reset()
+            self.iou_metric.reset()
             self.hd95_metric.reset()
-            
+
         elapsed = time.time() - start_time
         logger.info("Evaluation completed in %.1f s (%.2f s/volume)", elapsed, elapsed / len(test_files))
         return pd.DataFrame(results)
@@ -206,11 +215,14 @@ class MetricsEvaluator:
         class_names = ["liver", "tumour"] if self.config.NUM_CLASSES == 3 else ["tumour"]
         for name in class_names:
             d_dice = df[f"dice_{name}"].dropna()
+            d_iou = df[f"iou_{name}"].dropna()
             d_hd = df[f"hd95_{name}_mm"].replace([np.inf, -np.inf], np.nan).dropna()
             agg_metrics.append({
                 "structure": name.capitalize(),
                 "dice_mean": d_dice.mean(),
                 "dice_std": d_dice.std(),
+                "iou_mean": d_iou.mean(),
+                "iou_std": d_iou.std(),
                 "hd95_mean_mm": d_hd.mean(),
                 "hd95_std_mm": d_hd.std(),
                 "volumes_evaluated": len(d_dice)
@@ -240,6 +252,7 @@ class MetricsEvaluator:
         logger.info("-"*60)
         for _, row in agg_df.iterrows():
             dice_str = f"{row['dice_mean']:.3f} ± {row['dice_std']:.3f}"
+            iou_str = f"{row['iou_mean']:.3f} ± {row['iou_std']:.3f}" if not pd.isna(row['iou_mean']) else "N/A"
             hd_str = f"{row['hd95_mean_mm']:.2f} ± {row['hd95_std_mm']:.2f}" if not pd.isna(row['hd95_mean_mm']) else "N/A"
             logger.info(f"{row['structure']:<12} | {dice_str:<18} | {hd_str:<22} | {row['volumes_evaluated']:<5}")
         logger.info("="*60 + "\n")
