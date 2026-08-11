@@ -837,8 +837,13 @@ class DatasetSummary:
         # Use pandas for robust CSV handling
         df = pd.DataFrame(flattened_rows)
 
-        # Keep the identifier first for stable inspection and diffs.
+        # Sort all rows (train and test combined) lexicographically by case_name.
+        # This merges the implicitly concatenated train/test blocks into a single
+        # true lexicographical sequence (e.g. volume-105 will correctly appear
+        # between volume-104 and volume-106, rather than at the end).
         if "case_name" in df.columns:
+            df = df.sort_values("case_name").reset_index(drop=True)
+            # Keep the identifier first for stable inspection and diffs.
             df = df[["case_name"] + [c for c in df.columns if c != "case_name"]]
 
         # Normalise integer/boolean/float representation before export.
