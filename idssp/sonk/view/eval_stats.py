@@ -258,6 +258,8 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model", attach_hd95:
     Outliers are highlighted in red. Labels for Q1, Median, Q3, and Mean 
     are added to the right of each box. Overlapping labels are automatically 
     shifted apart and connected with a dotted line.
+
+    When attach_hd95=True, also plots HD95 and IoU metrics below Dice.
     """
     # Drop NaNs safely (happens when a structure is absent)
     logger.debug("Dice Liver NaN Count:", df['dice_liver'].isna().sum())
@@ -267,16 +269,31 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model", attach_hd95:
     logger.debug(f"Dice Liver Count: {len(d_liv)}, Dice Tumour Count: {len(d_tum)}")
 
     if attach_hd95:
+        # Extract HD95 and IoU data only when extended metrics are requested
         h_liv = df['hd95_liver_mm'].dropna().values
         h_tum = df['hd95_tumour_mm'].dropna().values
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10),
-                                    gridspec_kw={'height_ratios': [1, 1], 'hspace': 0.3})
+        iou_liv = df['iou_liver'].dropna().values
+        iou_tum = df['iou_tumour'].dropna().values
+
+        # Create 3-row layout: Dice (top), HD95 (middle), IoU (bottom)
+        fig, (ax1, ax2, ax3) = plt.subplots(
+            3, 1, figsize=(10, 15),
+            gridspec_kw={'height_ratios': [1, 1, 1], 'hspace': 0.3}
+        )
+
+        # Middle plot: Hausdorff Distance 95th percentile
         _draw_metric_boxplot(ax2, [h_liv, h_tum], [COLOR_LIVER, COLOR_TUMOUR],
                             f'{model_name} Test Set: Boundary Distance (HD95)',
                             '95th Percentile Hausdorff Distance (mm)')
+
+        # Bottom plot: Intersection over Union (IoU)
+        _draw_metric_boxplot(ax3, [iou_liv, iou_tum], [COLOR_LIVER, COLOR_TUMOUR],
+                            f'{model_name} Test Set: IoU',
+                            'IoU Score', y_lim=[-0.05, 1.1])
     else:
         fig, ax1 = plt.subplots(1, 1, figsize=(7, 6))
 
+    # Top plot (always present): Dice Similarity Coefficient
     _draw_metric_boxplot(ax1, [d_liv, d_tum], [COLOR_LIVER, COLOR_TUMOUR],
                         f'{model_name}: Test Set',
                         'Dice Similarity Coefficient', y_lim=[-0.05, 1.1])
