@@ -13,13 +13,10 @@ Usage:
 """
 print("[do_evaluation.py] Importing dependencies... (This may take a moment)")
 import argparse
-import logging
-import os
 import sys
 from pathlib import Path
 from typing import Optional
 
-import torch
 from monai.utils import set_determinism
 
 from idssp.sonk import config
