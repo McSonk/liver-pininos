@@ -230,7 +230,7 @@ class MetricsEvaluator:
         agg_df = pd.DataFrame(agg_metrics)
 
         suffix = "pp" if self.post_process else "raw"
-        
+
         # Export CSV
         csv_path = out_path / f"test_evaluation_results_{suffix}.csv"
         df.to_csv(csv_path, index=False)
@@ -245,14 +245,14 @@ class MetricsEvaluator:
 
     def _print_thesis_table(self, agg_df: pd.DataFrame, suffix: str):
         """Prints a formatted table suitable for direct inclusion in thesis chapters."""
-        print("\n" + "="*88)
-        print(f"TEST DATASET EVALUATION SUMMARY ({'POST-PROCESSED' if suffix == 'pp' else 'RAW'})")
-        print("="*88)
-        print(f"{'Structure':<12} | {'Dice (mean±std)':<18} | {'IoU (mean±std)':<18} | {'HD95 (mm) (mean±std)':<22} | {'N':<5}")
-        print("-"*88)
+        logger.info("\n" + "="*60)
+        logger.info("TEST DATASET EVALUATION SUMMARY (%s)", 'POST-PROCESSED' if suffix == 'pp' else 'RAW')
+        logger.info("="*60)
+        logger.info(f"{'Structure':<12} | {'Dice (mean±std)':<18} | {'HD95 (mm) (mean±std)':<22} | {'N':<5}")
+        logger.info("-"*60)
         for _, row in agg_df.iterrows():
             dice_str = f"{row['dice_mean']:.3f} ± {row['dice_std']:.3f}"
             iou_str = f"{row['iou_mean']:.3f} ± {row['iou_std']:.3f}" if not pd.isna(row['iou_mean']) else "N/A"
             hd_str = f"{row['hd95_mean_mm']:.2f} ± {row['hd95_std_mm']:.2f}" if not pd.isna(row['hd95_mean_mm']) else "N/A"
-            print(f"{row['structure']:<12} | {dice_str:<18} | {iou_str:<18} | {hd_str:<22} | {row['volumes_evaluated']:<5}")
-        print("="*88 + "\n")
+            logger.info(f"{row['structure']:<12} | {dice_str:<18} | {hd_str:<22} | {row['volumes_evaluated']:<5}")
+        logger.info("="*60 + "\n")

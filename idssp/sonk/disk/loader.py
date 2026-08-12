@@ -230,8 +230,7 @@ class DataCollector:
         if not self.datasources:
             raise ValueError("No data loaded. Call read_dir() first.")
 
-        json_file_name = f"{self.d_sets[0].ds_source}_split_seed{self.config.RANDOM_SEED}.json"
-        json_file_path = self.config.SPLIT_DIR / json_file_name
+        json_file_path = self.config.SPLIT_JSON
         if not json_file_path.exists():
             raise FileNotFoundError(
                 f"Stratified split JSON file not found at {json_file_path}. "
