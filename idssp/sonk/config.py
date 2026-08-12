@@ -162,7 +162,7 @@ class Config:
     TENSORBOARD_DIR: Path = field(default_factory=Path)
     PERSISTENT_DATASET_DIR: Optional[Path] = None
     STATS_DIR: Path = field(default_factory=Path)
-    SPLIT_DIR: Path = field(default_factory=Path)
+    SPLIT_JSON: Path = field(default_factory=Path)
     TRAIN_STATS_DIR: Path = field(default_factory=Path)
     PRE_TRAINED_MODEL_PATH: Optional[Path] = None
     LOG_LEVEL_CONSOLE: str = "INFO"
@@ -357,7 +357,7 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
     persistent_dataset_dir_str = os.getenv("PERSISTENT_DATASET_DIR")
     pre_trained_model_path_str = os.getenv("PRE_TRAINED_MODEL_PATH")
     stats_dir_str = os.getenv("STATS_DIR")
-    split_dir_str = os.getenv("SPLIT_DIR")
+    split_json_str = os.getenv("SPLIT_JSON")
 
     if verbose:
         log_level_console = "DEBUG"
@@ -385,10 +385,10 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
             "Stratification cannot be performed. Please set 'STATS_DIR' to the "
             "directory where the precomputed dataset statistics are stored.")
 
-    if not split_dir_str:
-        raise ValueError("[Config] Environment variable 'SPLIT_DIR' is not set. "
-            "Splitting cannot be performed. Please set 'SPLIT_DIR' to the "
-            "directory where the split files will be stored.")
+    if not split_json_str:
+        raise ValueError("[Config] Environment variable 'SPLIT_JSON' is not set. "
+            "Splitting cannot be performed. Please set 'SPLIT_JSON' to the "
+            "path of the JSON file containing the train/val/test splits.")
 
     if MODEL_TO_USE == AvailableModels.SWIN_UNETR_PRETRAIN and not pre_trained_model_path_str:
         raise ValueError("[Config] MODEL is set to 'swin-unetr-pretrain' but "
@@ -444,7 +444,7 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
     ct_test = Path(ct_test_str)
     output_dir = Path(output_dir_str)
     stats_dir = Path(stats_dir_str)
-    split_dir = Path(split_dir_str)
+    split_json = Path(split_json_str)
     pre_trained_model_path = Path(pre_trained_model_path_str) if pre_trained_model_path_str else None
     train_stats_dir = stats_dir / "train"
     train_stats_dir.mkdir(parents=True, exist_ok=True)
@@ -603,7 +603,7 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
         TENSORBOARD_DIR=tensorboard_dir,
         PERSISTENT_DATASET_DIR=persistent_dataset_dir,
         STATS_DIR=stats_dir,
-        SPLIT_DIR=split_dir,
+        SPLIT_JSON=split_json,
         TRAIN_STATS_DIR=train_stats_dir,
         PRE_TRAINED_MODEL_PATH=pre_trained_model_path,
         LOG_LEVEL_CONSOLE=log_level_console,
@@ -732,7 +732,7 @@ def to_dict(config: Optional[Config] = None) -> dict:
         "LOG_DIR": str(config.LOG_DIR),
         "LOG_LEVEL_CONSOLE": config.LOG_LEVEL_CONSOLE,
         "LOG_LEVEL_FILE": config.LOG_LEVEL_FILE,
-        "SPLIT_DIR": str(config.SPLIT_DIR),
+        "SPLIT_JSON": str(config.SPLIT_JSON),
         "TRAIN_STATS_DIR": str(config.TRAIN_STATS_DIR),
         "PRE_TRAINED_MODEL_PATH": str(config.PRE_TRAINED_MODEL_PATH) if config.PRE_TRAINED_MODEL_PATH else None,
 
@@ -770,7 +770,7 @@ def to_param_dict() -> dict:
         "PERSISTENT_DATASET_DIR",
         "STATS_DIR",
         "LOG_DIR",
-        "SPLIT_DIR",
+        "SPLIT_JSON",
         "PRE_TRAINED_MODEL_PATH",
         "TRAIN_STATS_DIR",
         "USE_CACHE_TRAIN_DATASET",
