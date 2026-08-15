@@ -242,7 +242,7 @@ class MetricsEvaluator:
         return out_dict
 
     def generate_report(self, results_dict: Dict[str, pd.DataFrame], output_dir: Optional[Path] = None) -> str:
-        """Aggregate metrics, print thesis-ready tables, and export CSVs for all computed modes."""
+        """Export per-case CSV results for all computed modes."""
         if not results_dict:
             raise ValueError("No evaluation results to report. Dictionary is empty.")
         out_path = Path(output_dir) if output_dir else self.config.RUN_DIR / "reports"
@@ -253,50 +253,12 @@ class MetricsEvaluator:
                 logger.warning("No evaluation results for '%s'. Skipping report generation for this mode.", suffix)
                 continue
 
+            # Sort per-case results for deterministic CSV output.
             df_sorted = df.sort_values("case_name").reset_index(drop=True)
 
-            # Aggregate statistics (mean ± std)
-            agg_metrics = []
-            class_names = ["liver", "tumour"] if self.config.NUM_CLASSES == 3 else ["tumour"]
-            for name in class_names:
-                d_dice = df_sorted[f"dice_{name}"].dropna()
-                d_iou = df_sorted[f"iou_{name}"].dropna()
-                d_hd = df_sorted[f"hd95_{name}_mm"].replace([np.inf, -np.inf], np.nan).dropna()
-                agg_metrics.append({
-                    "structure": name.capitalize(),
-                    "dice_mean": d_dice.mean(),
-                    "dice_std": d_dice.std(),
-                    "iou_mean": d_iou.mean(),
-                    "iou_std": d_iou.std(),
-                    "hd95_mean_mm": d_hd.mean(),
-                    "hd95_std_mm": d_hd.std(),
-                    "volumes_evaluated": len(d_dice)
-                })
-            agg_df = pd.DataFrame(agg_metrics)
-
-            # Export CSV
+            # Only per-case results are exported; aggregation is left to manual analysis.
             csv_path = out_path / f"test_evaluation_results_{suffix}.csv"
             df_sorted.to_csv(csv_path, index=False)
-            agg_csv_path = out_path / f"test_aggregated_metrics_{suffix}.csv"
-            agg_df.to_csv(agg_csv_path, index=False)
             logger.info("Per-case results exported to: %s", csv_path)
-            logger.info("Aggregated metrics exported to: %s", agg_csv_path)
 
-            # Print thesis-ready table
-            self._print_thesis_table(agg_df, suffix)
-            
         return str(out_path)
-
-    def _print_thesis_table(self, agg_df: pd.DataFrame, suffix: str):
-        """Prints a formatted table suitable for direct inclusion in thesis chapters."""
-        logger.info("\n" + "="*60)
-        logger.info("TEST DATASET EVALUATION SUMMARY (%s)", 'POST-PROCESSED' if suffix == 'pp' else 'RAW')
-        logger.info("="*60)
-        logger.info(f"{'Structure':<12} | {'Dice (mean±std)':<18} | {'HD95 (mm) (mean±std)':<22} | {'N':<5}")
-        logger.info("-"*60)
-        for _, row in agg_df.iterrows():
-            dice_str = f"{row['dice_mean']:.3f} ± {row['dice_std']:.3f}"
-            iou_str = f"{row['iou_mean']:.3f} ± {row['iou_std']:.3f}" if not pd.isna(row['iou_mean']) else "N/A"
-            hd_str = f"{row['hd95_mean_mm']:.2f} ± {row['hd95_std_mm']:.2f}" if not pd.isna(row['hd95_mean_mm']) else "N/A"
-            logger.info(f"{row['structure']:<12} | {dice_str:<18} | {hd_str:<22} | {row['volumes_evaluated']:<5}")
-        logger.info("="*60 + "\n")
