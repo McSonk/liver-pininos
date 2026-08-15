@@ -83,7 +83,7 @@ def _post_process_class_map(pred_np: np.ndarray) -> np.ndarray:
 class MetricsEvaluator:
     """
     Handles metric computation and result export for test datasets.
-    Computes both raw and post-processed metrics in a single pass to minimise disk I/O.
+    Computes raw metrics and, for 3-class configurations, post-processed metrics.
     """
     def __init__(self):
         self.config = config.get()
@@ -95,7 +95,9 @@ class MetricsEvaluator:
             include_background=False, reduction="none", percentile=95.0, distance_metric="euclidean"
         )
 
-        logger.info("MetricsEvaluator initialised. Will compute both raw and post-processed metrics.")
+        modes = "raw and post-processed" if self.config.NUM_CLASSES == 3 else "raw"
+
+        logger.info("MetricsEvaluator initialised. Will compute %s metrics.", modes)
 
     def evaluate(self, test_files: List[Dict[str, str]], pred_dir: Path) -> Dict[str, pd.DataFrame]:
         """
