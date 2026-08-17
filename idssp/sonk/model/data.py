@@ -4,13 +4,15 @@ from typing import Any, Dict, List, Optional
 import nibabel as nib
 import numpy as np
 import pandas as pd
+import torch
+from monai.metrics import DiceMetric
+from monai.transforms import Compose
 from scipy import ndimage
 from scipy.stats import skew
 
+from idssp.sonk.model.transforms import get_deterministic_transforms
 from idssp.sonk.utils.logger import get_logger
 from idssp.sonk.view import utils
-from idssp.sonk.model.transforms import get_deterministic_transforms
-from monai.transforms import Compose
 
 logger = get_logger(__name__)
 
@@ -456,6 +458,106 @@ class VolumeWrapper:
         logger.info("First tumour slice in prediction: %s, Last tumour slice in prediction: %s", first_tumour_pred, last_tumour_pred)
         if cfg.NUM_CLASSES == 3:
             logger.info("First liver slice in prediction: %s, Last liver slice in prediction: %s", first_liver_pred, last_liver_pred)
+
+    def compute_manual_dice(self, cfg):
+        '''
+        Computes the manual Dice score between the transformed label and the
+        transformed inference data.
+
+        This is intended to be called after `load_inference_data(cfg)`, when
+        `self.label_data` and `self.inference_data` are both in the same
+        preprocessed space.
+
+        Params
+        ------
+        `cfg`: Config
+            The project configuration object.
+
+        Returns
+        -------
+        np.ndarray
+            Dice scores for the foreground classes.
+            For `NUM_CLASSES=3`, the order is `[liver, tumour]`.
+            For `NUM_CLASSES=2`, the order is `[tumour]`.
+        '''
+        if self.label_data is None or self.inference_data is None:
+            raise ValueError(
+                "Label and inference data are not loaded. "
+                "Call `load_inference_data(cfg)` before computing manual Dice."
+            )
+
+        gt = np.asarray(self.label_data)
+        pred = np.asarray(self.inference_data)
+
+        # Remove a leading channel dimension if present: (1, D, H, W) -> (D, H, W)
+        if gt.ndim == 4 and gt.shape[0] == 1:
+            gt = gt[0]
+        if pred.ndim == 4 and pred.shape[0] == 1:
+            pred = pred[0]
+
+        if gt.ndim != 3 or pred.ndim != 3:
+            raise ValueError(
+                "Expected 3D label and inference arrays with shape (D, H, W), "
+                f"but got label shape {gt.shape} and inference shape {pred.shape}."
+            )
+
+        if gt.shape != pred.shape:
+            raise ValueError(
+                f"Label and inference shapes differ: {gt.shape} vs {pred.shape}."
+            )
+
+        # Ensure integer class indices.
+        if np.issubdtype(gt.dtype, np.floating):
+            gt = np.rint(gt)
+        if np.issubdtype(pred.dtype, np.floating):
+            pred = np.rint(pred)
+
+        if gt.min() < 0 or gt.max() >= cfg.NUM_CLASSES:
+            raise ValueError(
+                f"Label contains class indices outside the valid range "
+                f"[0, {cfg.NUM_CLASSES - 1}]: min={gt.min()}, max={gt.max()}."
+            )
+
+        if pred.min() < 0 or pred.max() >= cfg.NUM_CLASSES:
+            raise ValueError(
+                f"Inference contains class indices outside the valid range "
+                f"[0, {cfg.NUM_CLASSES - 1}]: min={pred.min()}, max={pred.max()}."
+            )
+
+        gt_tensor = torch.from_numpy(gt.astype(np.int64, copy=False))
+        pred_tensor = torch.from_numpy(pred.astype(np.int64, copy=False))
+
+        # Convert class-index maps to one-hot format:
+        # (D, H, W) -> (D, H, W, C) -> (C, D, H, W) -> (1, C, D, H, W)
+        gt_onehot = (
+            torch.nn.functional.one_hot(gt_tensor, num_classes=cfg.NUM_CLASSES)
+            .permute(3, 0, 1, 2)
+            .unsqueeze(0)
+            .float()
+        )
+
+        pred_onehot = (
+            torch.nn.functional.one_hot(pred_tensor, num_classes=cfg.NUM_CLASSES)
+            .permute(3, 0, 1, 2)
+            .unsqueeze(0)
+            .float()
+        )
+
+        dice_metric = DiceMetric(include_background=False, reduction="none")
+        dice_metric(y_pred=pred_onehot, y=gt_onehot)
+        scores = dice_metric.aggregate().cpu().numpy().flatten()
+
+        logger.info("--- Manual Dice Calculation (Transformed Space) ---")
+
+        if cfg.NUM_CLASSES == 3:
+            class_names = ("liver", "tumour")
+        else:
+            class_names = ("tumour",)
+
+        for class_name, score in zip(class_names, scores):
+            logger.info("Manual %s Dice: %.4f", class_name.capitalize(), score)
+
+        return scores
 
 class DataWrapper:
     def __init__(self):
