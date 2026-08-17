@@ -447,6 +447,7 @@ class VolumeWrapper:
         logger.info("CT Shape: %s, Label Shape: %s, Inference Shape: %s", ct.shape, gt.shape, pred.shape)
         logger.info("First tumour slice in prediction: %s, Last tumour slice in prediction: %s", first_tumour_pred, last_tumour_pred)
         logger.info("First liver slice in prediction: %s, Last liver slice in prediction: %s", first_liver_pred, last_liver_pred)
+
 class DataWrapper:
     def __init__(self):
         self.volume = None
@@ -470,11 +471,7 @@ class DataWrapper:
     def print_summary_of_volume(self):
         '''
         Prints a summary of the image and label files of a given volume ID, including
-        their paths and shapes.
-        Params
-        ------
-        `volume_id`: int
-            The ID of the volume to print the summary for.
+        their paths, shapes, intensity ranges, and spatial alignment checks.
         '''
         if self.volume is None:
             raise ValueError("Volume is not set. Please set the volume using "
@@ -496,50 +493,80 @@ class DataWrapper:
 
         # Check if the shapes match
         if self.volume.image.shape != self.volume.label.shape:
-            print("Warning: Image and label shapes do not match!")
+            print("[WARNING] Image and label shapes do not match!")
 
         print("--------------------Data arrays--------------------")
-        print('Image data shape: %s' % str(self.volume.image_data.shape))
-        print('Mask data shape: %s' % str(self.volume.label_data.shape))
+        print(f"Image data shape: {self.volume.image_data.shape}")
+        print(f"Mask data shape: {self.volume.label_data.shape}")
 
-        print("--------------------- value ranges--------------------")
-        print("CT intensity range:", self.volume.image_data.min(), "to", self.volume.image_data.max())
-        print("Mask intensity range:", self.volume.label_data.min(), "to", self.volume.label_data.max())
+        print("--------------------- Value ranges--------------------")
+        print(f"CT intensity range: {self.volume.image_data.min():.1f} to {self.volume.image_data.max():.1f} HU")
+        print(f"Mask intensity range: {self.volume.label_data.min()} to {self.volume.label_data.max()}")
 
-        print("Voxel dimensions (mm):", self.volume.image.header.get_zooms())
+        print(f"Voxel dimensions (mm): {self.volume.image.header.get_zooms()}")
 
-        print("--------------------Affine information (image)--------------------")
-        print("Image affine transformation matrix:\n", self.volume.image.affine)
-        print("Human readable header affine:\n", nib.aff2axcodes(self.volume.image.affine))
+        print("--------------------Affine information--------------------")
+        img_affine = self.volume.image.affine
+        lbl_affine = self.volume.label.affine
 
-        print("--------------------Affine information (label)--------------------")
-        print("Label affine transformation matrix:\n", self.volume.label.affine)
-        print("Human readable header affine:\n", nib.aff2axcodes(self.volume.label.affine))
+        print(f"Image orientation: {nib.aff2axcodes(img_affine)}")
+        print(f"Label orientation: {nib.aff2axcodes(lbl_affine)}")
 
-        print("\n--- Raw Voxel Overlap Check ---")
-        # Find the bounding box of the liver in the raw CT (HU > -100 is a safe liver threshold)
-        ct_liver_mask = self.volume.image_data > -100
-        ct_z_min, ct_z_max = np.where(ct_liver_mask.any(axis=(0, 1)))[0][[0, -1]]
-
-        # Find the bounding box of the liver in the raw label
-        lbl_z_min, lbl_z_max = np.where(self.volume.label_data > 0)[2][[0, -1]]
-
-        print(f"Raw CT liver Z-range (axial): {ct_z_min} to {ct_z_max}")
-        print(f"Raw Label liver Z-range (axial): {lbl_z_min} to {lbl_z_max}")
-
-        if ct_z_max < lbl_z_min or lbl_z_max < ct_z_min:
-            print("\n[CRITICAL] The raw label and raw CT do not overlap in the Z-axis.")
-            print("The annotator drew the mask in the wrong physical location.")
+        # Direct comparison of affines rather than inferring from Z-overlap
+        if np.allclose(img_affine, lbl_affine):
+            print("[INFO] Image and label affines are identical.")
         else:
-            print("\n[INFO] The raw label and raw CT overlap in the Z-axis.")
-            print("The raw data is correct, but the NIfTI header (affine) is mismatched.")
+            print("[WARNING] Image and label affines differ! This may cause spatial misalignment.")
+            print("Image affine transformation matrix:\n", img_affine)
+            print("Label affine transformation matrix:\n", lbl_affine)
 
-        # Check the unique values in the label data to understand the classes present
-        print("--------------------Unique labels in segmentation--------------------")
-        print("Unique labels in segmentation:", self.volume.mask_unique_values)
-        print("Check if the unique labels match the expected classes (e.g., 0 for background, 1 for liver, 2 for tumor).")
+        print("\n--- Spatial & Intensity Sanity Checks ---")
+        # 1. Approximate body mask (soft tissue/bone is generally > -500 HU, avoiding table/air)
+        body_mask = self.volume.image_data > -500
+        if body_mask.any():
+            body_z = np.where(body_mask.any(axis=(0, 1)))[0]
+            body_z_min, body_z_max = int(body_z[0]), int(body_z[-1])
+            print(f"Approximate body Z-range (axial): {body_z_min} to {body_z_max}")
+        else:
+            print("[WARNING] Could not find body mask (no voxels > -500 HU).")
+            body_z_min, body_z_max = None, None
 
-        print("---------------------Slice information---------------------")
+        # 2. Check Liver and Tumour masks explicitly
+        for class_val, class_name in [(1, "Liver"), (2, "Tumour")]:
+            class_mask = self.volume.label_data == class_val
+            if class_mask.any():
+                # Correct Z-range calculation: find min and max Z indices where the mask exists
+                class_z = np.where(class_mask.any(axis=(0, 1)))[0]
+                z_min, z_max = int(class_z[0]), int(class_z[-1])
+                voxel_count = int(class_mask.sum())
+                print(f"\n{class_name} Z-range (axial): {z_min} to {z_max} ({voxel_count} voxels)")
+                
+                # Check if label is inside body bounds
+                if body_z_min is not None:
+                    if z_max < body_z_min or z_min > body_z_max:
+                        print(f"  [CRITICAL] {class_name} mask is completely outside the approximate body bounds!")
+                    else:
+                        print(f"  [INFO] {class_name} mask is within body bounds.")
+                        
+                # Check CT intensity inside the actual labelled mask
+                mask_intensities = self.volume.image_data[class_mask]
+                mean_hu = np.mean(mask_intensities)
+                print(f"  Mean CT intensity inside {class_name}: {mean_hu:.1f} HU")
+                
+                if class_val == 1:  # Liver specific check
+                    # Liver is typically between -50 and 200 HU depending on contrast phase
+                    if mean_hu < -200 or mean_hu > 400: 
+                        print(f"  [WARNING] Mean HU inside Liver mask ({mean_hu:.1f}) is atypical for liver tissue. Check alignment.")
+            else:
+                print(f"\n{class_name}: Not present in this volume.")
+
+        print("\n--------------------Unique labels in segmentation--------------------")
+        # Fallback to np.unique if the property doesn't exist on VolumeWrapper
+        unique_vals = getattr(self.volume, 'mask_unique_values', np.unique(self.volume.label_data))
+        print(f"Unique labels: {unique_vals}")
+        print("Expected classes: 0 (background), 1 (liver), 2 (tumour).")
+
+        print("\n---------------------Slice information---------------------")
         self.volume.print_slice_summary()
 
     def plot_slice(self, slice_index):
