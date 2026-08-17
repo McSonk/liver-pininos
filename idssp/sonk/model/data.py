@@ -386,32 +386,34 @@ class VolumeWrapper:
         Applies the necessary transformations to the image and label data for validation.
         '''
         # Helper to find first/last slice index for a given class
-        def get_slice_range(volume, class_idx):
-            """Find first/last slice index along the depth (D) axis for a given class.
-    
-            Assumes volume shape is (D, H, W) after channel dimension removal.
+        def get_slice_range(volume, class_idx, affine=None):
+            """Find first/last slice index along the depth (Z) axis for a given class.
+            Dynamically identifies the Z-axis using the affine matrix if available.
             """
             if volume.ndim != 3:
                 raise ValueError(
-                    f"Expected 3D volume (D, H, W), got shape {volume.shape}. "
+                    f"Expected 3D volume, got shape {volume.shape}. "
                     f"Channel dimension may not have been removed."
                 )
 
-            # Create a boolean mask for the class across all slices (D, H, W)
             mask = volume == class_idx
             if not np.any(mask):
-                return None, None
+                return None, None, None
 
-            # Check for presence of class along the last axis (W/Axial)
-            # any_axis collapses D and H, leaving a 1D array of length W
-            logger.debug("Finding slice range for class index %d...", class_idx)
-            logger.debug("Mask shape: %s", mask.shape)
-            slices_with_class = np.any(mask, axis=(0, 1))
+            # Dynamically find the Z-axis (depth) from the affine matrix
+            z_axis = 0  # Default fallback
+            if affine is not None:
+                # affine[:3, :3] columns are the physical directions of voxel axes 0, 1, 2
+                # Physical Z is the 3rd row (index 2). We find which voxel axis aligns most with it.
+                z_axis = int(np.argmax(np.abs(affine[:3, 2])))
 
+            # Collapse the non-Z axes
+            axes_to_collapse = tuple(i for i in range(3) if i != z_axis)
+            slices_with_class = np.any(mask, axis=axes_to_collapse)
             indices = np.where(slices_with_class)[0]
             if len(indices) == 0:
-                return None, None
-            return int(indices[0]), int(indices[-1])
+                return None, None, z_axis
+            return int(indices[0]), int(indices[-1]), z_axis
 
         logger.info("Image affine:\n%s", self.image.affine)
         logger.info("Label affine:\n%s", self.label.affine)
@@ -426,27 +428,34 @@ class VolumeWrapper:
             "inference": self.inference_path
         })
 
-        # Remove the channel dimension for 2D plotting: (1, D, H, W) -> (D, H, W)
-        ct = data["image"][0]
-        gt = data["label"][0]
-        pred = data["inference"][0]
+        # Remove the channel dimension: (1, D, H, W) -> (D, H, W)
+        # CRITICAL: Convert to NumPy arrays to maintain consistency with load_data()
+        # and prevent downstream crashes in NumPy/Matplotlib operations.
+        ct = data["image"][0].cpu().numpy() if hasattr(data["image"][0], 'cpu') else np.asarray(data["image"][0])
+        gt = data["label"][0].cpu().numpy() if hasattr(data["label"][0], 'cpu') else np.asarray(data["label"][0])
+        pred = data["inference"][0].cpu().numpy() if hasattr(data["inference"][0], 'cpu') else np.asarray(data["inference"][0])
 
         self.image_data = ct
         self.label_data = gt
         self.inference_data = pred
 
-        first_tumour_pred = None
-        last_tumour_pred = None
-        first_liver_pred = None
-        last_liver_pred = None
+        # Extract affine from the transformed MetaTensor if available, else use raw
+        pred_affine = data["inference"].affine if hasattr(data["inference"], 'affine') else self.inference.affine
+        if hasattr(pred_affine, 'numpy'):
+            pred_affine = pred_affine.numpy()
+        pred_affine = np.asarray(pred_affine)
 
-        first_tumour_pred, last_tumour_pred = get_slice_range(pred, cfg.TUMOUR_CLASS_INDEX)
+        first_tumour_pred, last_tumour_pred, tumour_z_axis = get_slice_range(pred, cfg.TUMOUR_CLASS_INDEX, pred_affine)
+
+        first_liver_pred, last_liver_pred, liver_z_axis = None, None, None
         if cfg.NUM_CLASSES == 3:
-            first_liver_pred, last_liver_pred = get_slice_range(pred, 1)
+            first_liver_pred, last_liver_pred, liver_z_axis = get_slice_range(pred, 1, pred_affine)
 
         logger.info("CT Shape: %s, Label Shape: %s, Inference Shape: %s", ct.shape, gt.shape, pred.shape)
+        logger.info("Detected Z-axis (depth) for tumour: %d", tumour_z_axis)
         logger.info("First tumour slice in prediction: %s, Last tumour slice in prediction: %s", first_tumour_pred, last_tumour_pred)
-        logger.info("First liver slice in prediction: %s, Last liver slice in prediction: %s", first_liver_pred, last_liver_pred)
+        if cfg.NUM_CLASSES == 3:
+            logger.info("First liver slice in prediction: %s, Last liver slice in prediction: %s", first_liver_pred, last_liver_pred)
 
 class DataWrapper:
     def __init__(self):
