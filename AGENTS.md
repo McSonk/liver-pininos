@@ -24,7 +24,7 @@ Master's thesis: automated liver tumour segmentation using deep learning.
 |---|---|---|
 | UNet (residual) | `U_NET` / Baseline | MONAI `UNet` with `num_res_units`. Referred to as "ResUNet" in thesis prose. |
 | SegResNet | `SEG_RES_NET` / Baseline, **current `MODEL_TO_USE` default** | Best baseline so far. |
-| SwinUNETR | `SWIN_UNETR` / Baseline | Underperforms SegResNet by ~9–12 Dice points at this dataset scale (~88 training volumes). |
+| SwinUNETR | `SWIN_UNETR` / Baseline | Underperforms SegResNet by ~9–12 Dice points at this dataset scale (~79 training volumes). |
 | SwinUNETR Pretrain | `SWIN_UNETR_PRETRAIN` | Loads MONAI pretrained weights. |
 | **2.5D Mamba-hybrid** | **Primary target (supervisor-approved), not yet in `AvailableModels`** | 2D CNN/UNet encoder + `mamba_ssm.Mamba`/`Mamba2` block aggregating along z. Used as a raw component, not a wholesale published network. **Current phase (Week 1):** dummy-tensor prototype of the z-axis aggregation strategy in `~/denv_mamba`. |
 | U-Mamba, SegMamba | **Design references only** | Cited in literature review for architectural ideas. **Not implementation targets** — do not add training/eval code for either unless explicitly asked. |
@@ -49,25 +49,41 @@ default without explicit instruction; the Mamba model class does not exist in
   put at risk.
 
 ### Execution Commands
-- **Local training/eval**: `python main.py` or `do_evaluation.py`.
+- **Local training/eval**: `python main.py [--fast-run] [--resume path/to/best_model.pth]`
+  or `do_evaluation.py`. `--fast-run` is forced automatically in limited environments.
 - **Server training**: `scripts/run-model.sh`. Handles tmux/nohup, GPU PCI bus binding,
   and TWCC (V100) fallback. **Do not run this locally.**
 - **Server inference**: `scripts/validate.sh`. Runs `do_inference.py` on the server.
   Evaluation/metrics are run separately, locally, via `do_evaluation.py`. **Do not run
   `validate.sh` locally.**
+- **Server → local flow**: predictions generated on the server are downloaded, then
+  `do_evaluation.py` computes metrics locally. Without `--pred-dir` it auto-resolves the
+  most recent `<OUTPUT_DIR>/<VERSION>-<timestamp>_test/test_predictions/` directory.
 - **Long runs**: launched via `tmux`. Reattach via `scripts/rejoin-session.sh`.
 - **Logs**: `/home/misael/jobs/train_[timestamp].log` (server) or local stdout.
 - **Compute**: DGX Station A100 (80 GB VRAM, 503 GB RAM) is the primary server;
   TWCC V100 was used previously — this is why the TWCC fallback branches exist in the
   scripts, don't strip them.
+- **No automated tests / linters / CI exist in this repo.** Verify changes by running
+  the entrypoints above (use `--fast-run` for a cheap smoke test).
 
 ### Mandatory `.env` Variables
 `config.init()` will hard-fail if these are missing:
 - `PIN_ENV` (`local` | `cloud`)
-- `CACHE_TRAIN_SOURCE`, `CACHE_VAL_SOURCE` (`ram` | `disk`)
 - `LITS_CT_ROOT`, `LITS_CT_TEST`, `OUTPUT_DIR`, `STATS_DIR`
 - `SPLIT_JSON` — path to the stratified split JSON file. (`config.py` and
   `.env.example` agree on this name; there is no `SPLIT_DIR` variant.)
+
+Optional but validated:
+- `CACHE_TRAIN_SOURCE`, `CACHE_VAL_SOURCE` (`ram` | `disk`; default `ram`, with
+  automatic fallback to `disk` when system RAM < 100 GB).
+
+Split files (choose deliberately; they produce different Ns in every results table):
+- `files/splits/LiTS_split_seed42.json` — all 131 volumes, 79 train / 27 val / 25 test.
+  Currently used by the local `.env`.
+- `files/splits/LiTS_split_seed_42_no_faulty.json` — 77/25/24; **excludes**
+  faulty-affine volumes 48–52 instead of repairing them.
+- Splits are regenerated via `notebooks/strat_dataset.ipynb`.
 
 ## 4. Codebase Map
 
@@ -92,8 +108,9 @@ idssp/sonk/
   view/
     utils.py, eval_stats.py # Matplotlib plotting, TensorBoard overlay logging
 scripts/                    # run-model.sh, validate.sh, rejoin-session.sh (SERVER ONLY)
-files/splits/               # LiTS_split_seed42.json
-files/stats/                # Per-case CSV stats, dictionary.md, problems.md
+notebooks/                  # strat_dataset.ipynb regenerates the split JSONs
+files/splits/               # LiTS_split_seed42.json, LiTS_split_seed_42_no_faulty.json
+files/stats/lits/           # Per-case CSV stats, dictionary.md, problems.md
 ```
 
 ## 5. Data Handling Rules (Strict Invariants)
@@ -103,7 +120,8 @@ files/stats/                # Per-case CSV stats, dictionary.md, problems.md
   `config.NUM_CLASSES` before "fixing" it — 2-class mode is a supported fallback.
 - **Known broken affines**: volumes 48–52 have severe mismatch (label affine is a
   placeholder identity matrix). Fixed at load time by `ForceMatchingAffined` in
-  `model/transforms.py`, gated to `_ALLOWED_LITS_VOLUMES`. **Do not widen this set**
+  `model/transforms.py`, gated to `_ALLOWED_LITS_VOLUMES`. Investigation notes live in
+  `files/server_logs/affine-issue/readme.md`. **Do not widen this set**
   without manual validation of each new case.
 - **Tumour-negative volumes**: not every LiTS case has a tumour, so the effective N for
   tumour Dice is smaller than the full split size (e.g. 22 of 25 test cases, 23 of 27
@@ -120,6 +138,9 @@ files/stats/                # Per-case CSV stats, dictionary.md, problems.md
 - **Config is frozen**: never mutate in place; use `dataclasses.replace()` (see
   `inferer.py` / `do_evaluation.py` for the pattern used to align inference config with
   a checkpoint's `config_snapshot`).
+- **Class setup lives inside `config.init()`**, not `.env`: `NUM_CLASSES`,
+  `TUMOUR_CLASS_INDEX`, and `DICE_CE_WEIGHTS` are hardcoded in the "YOU CAN CHANGE
+  VALUES HERE" block of `config.py` (currently 3 classes).
 - **Checkpoints**: must remain loadable with `weights_only=True`. Do not introduce
   non-tensor/non-primitive objects into the checkpoint dict.
 - **Early stopping**: monitors **tumour Dice only** (`EARLY_STOPPING_PATIENCE=35`,
