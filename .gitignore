@@ -10,3 +10,5 @@ scripts/download-files.sh
 notes.md
 notebooks/*
 pendientes.md
+.agents
+skills-lock.json
