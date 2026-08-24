@@ -160,6 +160,24 @@ files/stats/lits/           # Per-case CSV stats, dictionary.md, problems.md
 - **Reporting**: prefer plain markdown tables over interactive visualisation code.
   "No visualisation tooling or extra compute unless asked" policy.
 
+### Plotting and Visualisation Convention
+All `matplotlib` figures (e.g., in `idssp/sonk/view/eval_stats.py`) must adhere to the iDSSP slide convention to ensure visual consistency across advisor presentations and thesis documents.
+
+**Palette:**
+- **Canvas (Background)**: `#f4f4f4` (Light grey)
+- **Ink (Text & Structural Outlines)**: `#33383B`
+- **Grid**: `#E0E0E0` (Neutral grey)
+- **Liver**: `#159AA3` (Teal)
+- **Tumour**: `#E8483C` (Red)
+- **Accent / Time**: `#004AAD` (Deep blue)
+- **Outliers**: `#E53E3E` (Red, requires white edge ring)
+- **Mean / Statistical**: `#D69E2E` (Gold)
+
+**Rendering Rules:**
+- **Structural lines**: Boxplot whiskers, caps, and IQR box edges **must** use the Ink colour (`#33383B`). White structural edges are strictly prohibited as they vanish against the grey canvas.
+- **Jitter points**: Must use the Ink colour with a thin white edge ring (`edgecolors='white'`, `linewidths=0.6`) to maintain contrast against both the canvas and the semi-transparent box fills.
+- **Outlier markers**: Must retain a white edge ring (`edgecolors='white'`) to separate them from the tumour box fill.
+
 ## 7. What NOT to do without explicit confirmation
 
 - Do not install `mamba-ssm` / `causal-conv1d` into `~/denv` (use `~/denv_mamba`).
