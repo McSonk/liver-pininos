@@ -593,91 +593,86 @@ class DataWrapper:
                 "Inference data is present. Call `VolumeWrapper.load_inference_data(cfg)` "
                 "(or add a DataWrapper wrapper) before printing an inference summary."
             )
-        print("Volume summary:")
-        print("--------------------File paths--------------------")
-        print(f"Image path: {self.volume.img_path}")
-        print(f"Label path: {self.volume.label_path}")
+        logger.info("=== Volume summary ===")
+        logger.info("--- File paths ---")
+        logger.info("Image path: %s", self.volume.img_path)
+        logger.info("Label path: %s", self.volume.label_path)
 
-        print("--------------------File shapes--------------------")
-        print(f"Image shape: {self.volume.image.shape}")
-        print(f"Label shape: {self.volume.label.shape}")
+        logger.info("--- File shapes ---")
+        logger.info("Image shape: %s", self.volume.image.shape)
+        logger.info("Label shape: %s", self.volume.label.shape)
 
-        # Check if the shapes match
         if self.volume.image.shape != self.volume.label.shape:
-            print("[WARNING] Image and label shapes do not match!")
+            logger.warning("Image and label shapes do not match!")
 
-        print("--------------------Data arrays--------------------")
-        print(f"Image data shape: {self.volume.image_data.shape}")
-        print(f"Mask data shape: {self.volume.label_data.shape}")
+        logger.info("--- Data arrays ---")
+        logger.info("Image data shape: %s", self.volume.image_data.shape)
+        logger.info("Mask data shape: %s", self.volume.label_data.shape)
 
-        print("--------------------- Value ranges--------------------")
-        print(f"CT intensity range: {self.volume.image_data.min():.1f} to {self.volume.image_data.max():.1f} HU")
-        print(f"Mask intensity range: {self.volume.label_data.min()} to {self.volume.label_data.max()}")
+        logger.info("--- Value ranges ---")
+        logger.info("CT intensity range: %.1f to %.1f HU",
+                     self.volume.image_data.min(), self.volume.image_data.max())
+        logger.info("Mask intensity range: %s to %s",
+                     self.volume.label_data.min(), self.volume.label_data.max())
+        logger.info("Voxel dimensions (mm): %s", self.volume.image.header.get_zooms())
 
-        print(f"Voxel dimensions (mm): {self.volume.image.header.get_zooms()}")
-
-        print("--------------------Affine information--------------------")
+        logger.info("--- Affine information ---")
         img_affine = self.volume.image.affine
         lbl_affine = self.volume.label.affine
 
-        print(f"Image orientation: {nib.aff2axcodes(img_affine)}")
-        print(f"Label orientation: {nib.aff2axcodes(lbl_affine)}")
+        logger.info("Image orientation: %s", nib.aff2axcodes(img_affine))
+        logger.info("Label orientation: %s", nib.aff2axcodes(lbl_affine))
 
-        # Direct comparison of affines rather than inferring from Z-overlap
         if np.allclose(img_affine, lbl_affine):
-            print("[INFO] Image and label affines are identical.")
+            logger.info("Image and label affines are identical.")
         else:
-            print("[WARNING] Image and label affines differ! This may cause spatial misalignment.")
-            print("Image affine transformation matrix:\n", img_affine)
-            print("Label affine transformation matrix:\n", lbl_affine)
+            logger.warning("Image and label affines differ! This may cause spatial misalignment.")
+            logger.info("Image affine transformation matrix:\n%s", img_affine)
+            logger.info("Label affine transformation matrix:\n%s", lbl_affine)
 
-        print("\n--- Spatial & Intensity Sanity Checks ---")
+        logger.info("--- Spatial & Intensity Sanity Checks ---")
         # 1. Approximate body mask (soft tissue/bone is generally > -500 HU, avoiding table/air)
         body_mask = self.volume.image_data > -500
         if body_mask.any():
             body_z = np.where(body_mask.any(axis=(0, 1)))[0]
             body_z_min, body_z_max = int(body_z[0]), int(body_z[-1])
-            print(f"Approximate body Z-range (axial): {body_z_min} to {body_z_max}")
+            logger.info("Approximate body Z-range (axial): %d to %d", body_z_min, body_z_max)
         else:
-            print("[WARNING] Could not find body mask (no voxels > -500 HU).")
+            logger.warning("Could not find body mask (no voxels > -500 HU).")
             body_z_min, body_z_max = None, None
 
         # 2. Check Liver and Tumour masks explicitly
         for class_val, class_name in [(1, "Liver"), (2, "Tumour")]:
             class_mask = self.volume.label_data == class_val
             if class_mask.any():
-                # Correct Z-range calculation: find min and max Z indices where the mask exists
                 class_z = np.where(class_mask.any(axis=(0, 1)))[0]
                 z_min, z_max = int(class_z[0]), int(class_z[-1])
                 voxel_count = int(class_mask.sum())
-                print(f"\n{class_name} Z-range (axial): {z_min} to {z_max} ({voxel_count} voxels)")
-                
-                # Check if label is inside body bounds
+                logger.info("%s Z-range (axial): %d to %d (%d voxels)",
+                            class_name, z_min, z_max, voxel_count)
+
                 if body_z_min is not None:
                     if z_max < body_z_min or z_min > body_z_max:
-                        print(f"  [CRITICAL] {class_name} mask is completely outside the approximate body bounds!")
+                        logger.critical("%s mask is completely outside the approximate body bounds!", class_name)
                     else:
-                        print(f"  [INFO] {class_name} mask is within body bounds.")
-                        
-                # Check CT intensity inside the actual labelled mask
+                        logger.info("%s mask is within body bounds.", class_name)
+
                 mask_intensities = self.volume.image_data[class_mask]
                 mean_hu = np.mean(mask_intensities)
-                print(f"  Mean CT intensity inside {class_name}: {mean_hu:.1f} HU")
-                
-                if class_val == 1:  # Liver specific check
-                    # Liver is typically between -50 and 200 HU depending on contrast phase
-                    if mean_hu < -200 or mean_hu > 400: 
-                        print(f"  [WARNING] Mean HU inside Liver mask ({mean_hu:.1f}) is atypical for liver tissue. Check alignment.")
+                logger.info("Mean CT intensity inside %s: %.1f HU", class_name, mean_hu)
+
+                if class_val == 1:
+                    if mean_hu < -200 or mean_hu > 400:
+                        logger.warning("Mean HU inside Liver mask (%.1f) is atypical for liver tissue. Check alignment.", mean_hu)
             else:
-                print(f"\n{class_name}: Not present in this volume.")
+                logger.info("%s: Not present in this volume.", class_name)
 
-        print("\n--------------------Unique labels in segmentation--------------------")
-        # Fallback to np.unique if the property doesn't exist on VolumeWrapper
+        logger.info("--- Unique labels in segmentation ---")
         unique_vals = getattr(self.volume, 'mask_unique_values', np.unique(self.volume.label_data))
-        print(f"Unique labels: {unique_vals}")
-        print("Expected classes: 0 (background), 1 (liver), 2 (tumour).")
+        logger.info("Unique labels: %s", unique_vals)
+        logger.info("Expected classes: 0 (background), 1 (liver), 2 (tumour).")
 
-        print("\n---------------------Slice information---------------------")
+        logger.info("--- Slice information ---")
         self.volume.print_slice_summary()
 
     def plot_slice(self, slice_index):
@@ -691,7 +686,7 @@ class DataWrapper:
         if self.volume is None:
             raise ValueError("Volume is not set. Please set the volume using set_volume()")
 
-        print(f"Plotting slice {slice_index} of volume...")
+        logger.info("Plotting slice %d of volume...", slice_index)
         utils.plot_slice(self.volume.image_data, self.volume.label_data, slice_index)
         utils.plot_mixed_slice(self.volume.image_data, self.volume.label_data, slice_index)
 
@@ -991,7 +986,7 @@ class DatasetSummary:
         # Use Unix newlines for reproducible text files across platforms.
         df.to_csv(output_path, index=False, lineterminator="\n")
 
-        print(f"CSV exported to: {output_path} ({len(df)} rows, {len(df.columns)} columns)")
+        logger.info("CSV exported to: %s (%d rows, %d columns)", output_path, len(df), len(df.columns))
 
 def analyse_dataset(
         datasources: List[Dict[str, str]],
