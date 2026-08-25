@@ -291,12 +291,28 @@ def _make_fake_builder(tmp_path):
     return builder
 
 
+def _make_early_stopper(builder, monkeypatch):
+    """Build an EarlyStopper with the real save_checkpoint patched out.
+
+    The source calls ``self.save_checkpoint()`` on the EarlyStopper instance
+    (not on the builder), so we patch ``EarlyStopper.save_checkpoint`` to
+    delegate to the builder's mock. This keeps the existing assertions against
+    ``builder.save_checkpoint`` valid while avoiding the real checkpoint writer.
+    """
+    monkeypatch.setattr(
+        EarlyStopper,
+        "save_checkpoint",
+        lambda self, *args, **kwargs: builder.save_checkpoint(*args, **kwargs),
+    )
+    return EarlyStopper(builder)
+
+
 def test_early_stopper_improvement_resets_counter_and_returns_false(tmp_path, monkeypatch):
-    # Patch config.get to return our mock config
+    # Patch
     monkeypatch.setattr("idssp.sonk.model.training.config.get", lambda: MockConfigForEarlyStopper())
 
     builder = _make_fake_builder(tmp_path)
-    es = EarlyStopper(builder)
+    es = _make_early_stopper(builder, monkeypatch)
 
     # First call: improvement from -1.0 to 0.5
     result = es(0, 0.5, 0.6, 0.5)
@@ -311,7 +327,7 @@ def test_early_stopper_no_improvement_increments_counter(tmp_path, monkeypatch):
     monkeypatch.setattr("idssp.sonk.model.training.config.get", lambda: MockConfigForEarlyStopper())
 
     builder = _make_fake_builder(tmp_path)
-    es = EarlyStopper(builder)
+    es = _make_early_stopper(builder, monkeypatch)
 
     # First call establishes baseline
     es(0, 0.5, 0.6, 0.5)
@@ -329,7 +345,7 @@ def test_early_stopper_improvement_requires_exceeds_min_delta(tmp_path, monkeypa
     monkeypatch.setattr("idssp.sonk.model.training.config.get", lambda: MockConfigForEarlyStopper())
 
     builder = _make_fake_builder(tmp_path)
-    es = EarlyStopper(builder)
+    es = _make_early_stopper(builder, monkeypatch)
 
     es(0, 0.5, 0.6, 0.5)
     # Exactly at min_delta should NOT be improvement (strict >)
@@ -347,14 +363,18 @@ def test_early_stopper_returns_true_after_patience_exhausted(tmp_path, monkeypat
     monkeypatch.setattr("idssp.sonk.model.training.config.get", lambda: MockConfigForEarlyStopper())
 
     builder = _make_fake_builder(tmp_path)
-    es = EarlyStopper(builder)
+    es = _make_early_stopper(builder, monkeypatch)
+    patience = MockConfigForEarlyStopper.EARLY_STOPPING_PATIENCE  # 3
 
     # Establish baseline
     es(0, 0.5, 0.6, 0.5)
-    # 3 epochs with no improvement (patience = 3)
-    es(1, 0.5, 0.6, 0.5)  # epochs_no_improve = 1
-    es(2, 0.5, 0.6, 0.5)  # epochs_no_improve = 2
-    result = es(3, 0.5, 0.6, 0.5)  # epochs_no_improve = 3 == patience -> should return True
+    # The first `patience` non-improving calls still return False (counter < patience)
+    for i in range(patience):
+        result = es(i + 1, 0.5, 0.6, 0.5)
+        assert result is False
+        assert es.epochs_no_improve == i + 1
+    # Only the (patience + 1)th non-improving call returns True
+    result = es(patience + 1, 0.5, 0.6, 0.5)
     assert result is True
 
 
@@ -362,7 +382,7 @@ def test_early_stopper_monitors_tumour_dice_only(tmp_path, monkeypatch):
     monkeypatch.setattr("idssp.sonk.model.training.config.get", lambda: MockConfigForEarlyStopper())
 
     builder = _make_fake_builder(tmp_path)
-    es = EarlyStopper(builder)
+    es = _make_early_stopper(builder, monkeypatch)
 
     # Establish baseline with good tumour dice
     es(0, 0.5, 0.6, 0.5)
@@ -380,7 +400,7 @@ def test_early_stopper_writer_and_checkpoint_only_on_improvement(tmp_path, monke
     monkeypatch.setattr("idssp.sonk.model.training.config.get", lambda: MockConfigForEarlyStopper())
 
     builder = _make_fake_builder(tmp_path)
-    es = EarlyStopper(builder)
+    es = _make_early_stopper(builder, monkeypatch)
 
     # Improvement call
     es(0, 0.5, 0.6, 0.5)
@@ -408,7 +428,7 @@ def test_early_stopper_exact_patience_sequence(tmp_path, monkeypatch):
     monkeypatch.setattr("idssp.sonk.model.training.config.get", lambda: MockConfigForEarlyStopper())
 
     builder = _make_fake_builder(tmp_path)
-    es = EarlyStopper(builder)
+    es = _make_early_stopper(builder, monkeypatch)
     patience = MockConfigForEarlyStopper.EARLY_STOPPING_PATIENCE  # 3
 
     # Initial improvement
