@@ -1,5 +1,6 @@
 import re
 
+import numpy as np
 import torch
 from monai.transforms import (Activations, AsDiscrete, Compose,
                               CropForegroundd, EnsureTyped, LoadImaged,
