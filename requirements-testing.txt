@@ -1,0 +1,10 @@
+# For testing
+pytest==9.1.1
+pytest-cov==7.1.0
+
+# For interactive notebooks
+ipython==8.39.0
+ipykernel
+
+# For the stratification process
+iterative-stratification==0.1.9
