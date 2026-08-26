@@ -427,3 +427,80 @@ From the repository root:
 ### Limitations
 
 This file tests the affine correction logic in isolation. It does not verify the full MONAI transform pipeline, the actual loading of NIfTI files from disk, or the downstream impact of the corrected affines on model training.
+
+## `tests/test_evaluator_postprocess.py`
+
+### Purpose
+
+This test file verifies the post-processing and report-export logic in the evaluation pipeline (specifically `_post_process_class_map` and `MetricsEvaluator.generate_report`).
+
+The tested code is responsible for enforcing anatomical realism on the model's raw 3D segmentation predictions (e.g., removing disconnected liver fragments and stray tumours) and for exporting the final per-case metrics to CSV files for thesis reporting. 
+
+These tests are critical because incorrect post-processing can silently alter final Dice and HD95 scores, and incorrect CSV export can lead to incomplete or misaligned thesis tables. The tests use small synthetic 3D NumPy arrays and in-memory pandas DataFrames, requiring no GPU, real LiTS data, or network access.
+
+---
+
+### Scope
+
+The file tests two main components:
+
+- `_post_process_class_map`: The 3D NumPy array cleanup function that enforces largest-connected-component (LCC) rules for the liver and tumour classes.
+- `MetricsEvaluator.generate_report`: The method that aggregates results and exports raw and post-processed metrics to CSV.
+
+The file does not run full-volume inference, load real NIfTI files, or compute actual MONAI metrics.
+
+---
+
+### Main behaviours tested
+
+| Area | Functions/classes tested | Behaviour verified |
+|---|---|---|
+| Basic invariants | `_post_process_class_map` | Returns an array of the same shape and dtype; handles empty inputs safely; removes stray tumours when no liver is present |
+| Liver retention | `_post_process_class_map` | Retains only the largest connected component of the liver; removes small, disconnected stray liver voxels |
+| Tumour anchoring | `_post_process_class_map` | Preserves tumour voxels that are inside or immediately adjacent to the retained liver anatomy; strips tumour voxels that are disconnected from the main anatomy |
+| Fragmentation warning | `_post_process_class_map` | Emits a warning if more than 50% of predicted liver voxels are discarded during LCC cleanup; remains silent when the liver is mostly retained or absent |
+| Report export | `MetricsEvaluator.generate_report` | Raises `ValueError` on empty input dictionaries; skips empty DataFrames without crashing; writes correctly named raw and post-processed CSVs; sorts rows lexicographically by `case_name`; respects custom output directories or falls back to `config.RUN_DIR` |
+
+---
+
+### Why this test file matters
+
+This file protects the integrity of your final reported metrics and thesis tables.
+
+As noted in `AGENTS.md`, post-processing asymmetry is a known factor: LCC cleanup helps spatially coherent models (like SegResNet) but can hurt global-attention models (like SwinUNETR) by stripping true-positive tumours that fall slightly outside the predicted liver boundary. Therefore, the exact behaviour of the cleanup function must be strictly verified.
+
+These tests catch problems such as:
+
+- valid tumours being silently deleted because they were not perfectly enclosed by the predicted liver mask,
+- fragmented predictions passing through without triggering the >50% discard warning,
+- stray false-positive liver blobs artificially inflating raw Dice scores,
+- CSV export logic silently dropping the post-processed results if the DataFrame happens to be empty,
+- case names being sorted in a way that misaligns raw and post-processed rows.
+
+By verifying both the anatomical logic and the export mechanics, this file ensures that the numbers you put in your thesis are exactly what the model actually produced.
+
+---
+
+### Important conventions preserved by the tests
+
+- The tests do not modify production source code.
+- The tests strictly enforce the 3-class layout defined in `AGENTS.md`: `0` (background), `1` (liver), `2` (tumour).
+- The tests use synthetic 3D NumPy arrays and explicitly enforce 6-connectivity (face-adjacency) when building connected components, matching `scipy.ndimage.label` defaults.
+- The tests verify lexicographical sorting for `case_name` (e.g., `vol-1`, `vol-10`, `vol-2`), matching standard pandas behaviour.
+- The tests use `caplog` to verify the exact conditions under which the fragmentation warning is emitted.
+
+---
+
+### How to run
+
+From the repository root:
+
+```bash
+~/envs/dev-thesis/bin/python -m pytest tests/test_evaluator_postprocess.py -v
+```
+
+---
+
+### Limitations
+
+This file tests the post-processing logic and CSV export in isolation. It does not verify the end-to-end sliding-window inference pipeline, the MONAI metric calculations (Dice/HD95), or the `Invertd` transform used to map predictions back to the original scanner space. Those integration steps are verified via the `--fast-run` entrypoint and server-side validation scripts.
