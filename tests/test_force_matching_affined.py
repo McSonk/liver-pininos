@@ -268,4 +268,7 @@ def test_call_real_metatensor_copies_affine():
     data = {"image": img, "label": label}
     out = _make_transform()(data)
 
-    assert torch.allclose(out["label"].affine, _non_identity_affine(2.0))
+    # MONAI's MetaTensor enforces float64 for affines, so we cast the expected
+    # float32 tensor to match the actual dtype before comparing.
+    expected = _non_identity_affine(2.0).to(out["label"].affine.dtype)
+    assert torch.allclose(out["label"].affine, expected)
