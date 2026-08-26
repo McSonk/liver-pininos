@@ -176,3 +176,99 @@ From the repository root:
 This file tests CSV/data-helper behaviour and slice-threshold logic. It does not validate the medical correctness of the underlying per-case measurements, nor does it load real medical images.
 
 Full volume loading, NIfTI metadata handling, and heavier integration checks are covered separately in later smoke/integration test plans.
+
+## `tests/test_training_logic.py`
+
+### Purpose
+
+This test file verifies the training control logic in `idssp/sonk/model/training.py`.
+
+The tested code governs how the training pipeline behaves over the course of a long training run: when to apply augmentations, when to log visual overlays, when to send notifications, whether a checkpoint is safe to resume from, and when to stop training and save the best model.
+
+These are high-value tests because a bug in any of these components can silently corrupt a multi-day training run, waste GPU compute, or cause the best model checkpoint to be lost.
+
+The tests use only mocks, synthetic values, and lightweight config objects. They do not require GPU access, real LiTS volumes, real environment settings, network access, or real checkpoint files.
+
+---
+
+### Scope
+
+The file tests logic-only methods in `idssp/sonk/model/training.py`:
+
+- `AugmentedDataset` (length and item retrieval with augmentation),
+- `ModelBuilder._should_log_overlay` (epoch-based TensorBoard overlay schedule),
+- `ModelBuilder._should_notify` (epoch-based notification schedule),
+- `ModelBuilder._validate_checkpoint` (checkpoint compatibility validation),
+- `EarlyStopper.__call__` (early stopping and best-model checkpoint logic).
+
+The file does not test model construction, data loading, transform pipelines, or the full training loop.
+
+---
+
+### Main behaviours tested
+
+| Area | Function/class tested | Behaviour verified |
+|---|---|---|
+| Data augmentation wrapper | `AugmentedDataset` | Length matches base dataset; `__getitem__` applies the random transform to the base item |
+| Overlay logging schedule | `ModelBuilder._should_log_overlay` | Every epoch for epochs 0–10; every 5 epochs for 11–30; every 10 epochs for 31+; zero-indexed epoch convention |
+| Notification schedule | `ModelBuilder._should_notify` | Every 5 epochs for 0–50; every 10 epochs for 51–100; every 20 epochs for 101+; zero-indexed epoch convention |
+| Checkpoint validation | `ModelBuilder._validate_checkpoint` | Hard fail on missing `model_state_dict`; hard fail on `MODEL` mismatch; hard fail on `NUM_CLASSES` mismatch; warning on preprocessing mismatches; warning on missing `config_snapshot`; hard fail when saved epoch >= `NUM_EPOCHS` |
+| Early stopping | `EarlyStopper.__call__` | Monitors tumour Dice only; improvement requires strict `>` beyond `min_delta`; resets counter on improvement; increments counter on non-improvement; returns `True` only after `patience + 1` consecutive non-improving calls; writer and checkpoint saving occur only on improvement |
+
+---
+
+### Why this test file matters
+
+This file protects the decision-making layer of the training pipeline.
+
+Training runs on the server can take days. A subtle bug in the early stopping logic, checkpoint validation, or logging schedule can waste significant compute, produce misleading results, or cause the best model to be lost.
+
+These tests catch problems such as:
+
+- data augmentation silently not being applied,
+- logging or notification schedules firing at the wrong epochs,
+- resuming from an incompatible checkpoint without warning,
+- early stopping triggering too early or too late,
+- the best model checkpoint not being saved on improvement,
+- a non-tumour metric incorrectly triggering a checkpoint save,
+- the patience boundary being off by one.
+
+The early stopping tests are especially important because `AGENTS.md` specifies that early stopping must monitor tumour Dice only, with `EARLY_STOPPING_PATIENCE=35` and `EARLY_STOPPING_MIN_DELTA=0.001`. Any deviation from this behaviour would undermine the validity of the trained model.
+
+---
+
+### Important conventions preserved by the tests
+
+- The tests do not modify production source code.
+- The tests do not call `config.init()` or depend on the real `.env` file.
+- The tests do not instantiate real MONAI networks or run real training loops.
+- The tests do not write real checkpoint files; `EarlyStopper.save_checkpoint` is patched out.
+- The tests use `ModelBuilder.__new__()` to bypass heavy initialisation where only logic methods are exercised.
+- The tests respect the convention that early stopping monitors tumour Dice only.
+- The tests respect the zero-indexed epoch convention used by the training loop.
+- The tests verify the exact patience sequence: with patience `P`, the first `P` non-improving calls return `False`, and only the `(P+1)`th returns `True`.
+
+---
+
+### How to run
+
+From the repository root:
+
+```bash
+~/envs/dev-thesis/bin/python -m pytest tests/test_training_logic.py -v
+```
+
+---
+
+### Limitations
+
+This file tests training control logic only. It does not verify:
+
+- model construction or forward-pass correctness (covered in later smoke tests),
+- data loading or transform pipeline behaviour,
+- the full training loop end-to-end,
+- actual checkpoint serialisation and deserialisation (the save/load round-trip),
+- TensorBoard output format,
+- notification delivery.
+
+Full pipeline integration is verified separately via `python main.py --fast-run` as described in `AGENTS.md`.
