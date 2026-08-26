@@ -357,3 +357,73 @@ This file tests file discovery, pairing, and split loading. It does not verify:
 - the application of MONAI transforms to the loaded paths,
 - the correctness of the stratification algorithm itself (covered in `test_stratification.py`),
 - or the full end-to-end training pipeline.
+
+## `tests/test_force_matching_affined.py`
+
+### Purpose
+
+This test file verifies the `ForceMatchingAffined` transform in `idssp/sonk/model/transforms.py`.
+
+This transform is a targeted, safety-gated fix for known broken LiTS volumes (specifically volumes 48–52) where the segmentation mask's NIfTI header contains a placeholder identity affine matrix. The transform copies the correct affine from the image to the label, but only when strict safety conditions are met.
+
+The tests use synthetic affines, lightweight fake metadata objects, and real MONAI `MetaTensor` instances. They do not require real LiTS data, GPU access, or network access.
+
+---
+
+### Scope
+
+The file tests the `ForceMatchingAffined` class and its internal helpers:
+
+- `_is_placeholder_affine` (detecting broken identity-like affines),
+- `_normalise_affine` (converting various affine formats to a standard CPU tensor),
+- `_validate_case_name` (enforcing the strict allow-list of LiTS volume IDs),
+- `__call__` (the end-to-end correction logic and safety guards).
+
+The tests deliberately preserve the production invariants: `_ALLOWED_LITS_VOLUMES` remains `{48, 49, 50, 51, 52}` and `_IDENTITY_AFFINE_THRESHOLD` remains `1e-3`.
+
+---
+
+### Main behaviours tested
+
+| Area | Functions tested | Behaviour verified |
+|---|---|---|
+| Constants | `_ALLOWED_LITS_VOLUMES`, `_IDENTITY_AFFINE_THRESHOLD` | Values remain exactly as defined in production; not widened or loosened |
+| Placeholder detection | `_is_placeholder_affine` | Detects identity matrices, identity matrices with translation, and batched affines; rejects non-identity spacing, `None`, and near-identity values above the threshold |
+| Affine normalisation | `_normalise_affine` | Accepts torch tensors, NumPy arrays, and batched `(1, 4, 4)` shapes; returns a CPU `float32` `(4, 4)` tensor; raises `ValueError` for invalid shapes or wrong batch sizes |
+| Case name validation | `_validate_case_name` | Accepts allowed IDs (48–52); raises `ValueError` for disallowed IDs (e.g., 47, 53) and malformed filenames |
+| Correction logic | `__call__` | Returns data unchanged if objects lack `.meta` or affines; copies image affine to label only when label is placeholder and image is not; writes to `.meta["affine"]` if `.affine` attribute is read-only; raises `ValueError` if correction is attempted on an unapproved volume; does not overwrite a valid non-placeholder label affine |
+
+---
+
+### Why this test file matters
+
+This file protects a critical data-handling safeguard. 
+
+As noted in `AGENTS.md`, LiTS volumes 48–52 have severe affine mismatches. If the correction logic is too broad, it could silently overwrite valid affines on other volumes, corrupting spatial metadata and ruining downstream metrics. If it is too narrow or fails to trigger, the model will train on geometrically misaligned masks for those specific cases.
+
+These tests ensure that the correction is applied **only** to the explicitly approved volumes, **only** when the label affine is demonstrably broken, and **never** when the label already contains valid spatial information.
+
+---
+
+### Important conventions preserved by the tests
+
+- The tests do not modify production source code.
+- The tests do not widen `_ALLOWED_LITS_VOLUMES` or change `_IDENTITY_AFFINE_THRESHOLD`.
+- The tests use synthetic data and lightweight mock objects to avoid loading real NIfTI files.
+- The tests verify both the primary execution path (setting `.affine`) and the fallback path (setting `.meta["affine"]` when the attribute is read-only).
+
+---
+
+### How to run
+
+From the repository root:
+
+```bash
+~/envs/dev-thesis/bin/python -m pytest tests/test_force_matching_affined.py -v
+```
+
+---
+
+### Limitations
+
+This file tests the affine correction logic in isolation. It does not verify the full MONAI transform pipeline, the actual loading of NIfTI files from disk, or the downstream impact of the corrected affines on model training.
