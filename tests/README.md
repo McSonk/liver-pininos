@@ -272,3 +272,88 @@ This file tests training control logic only. It does not verify:
 - notification delivery.
 
 Full pipeline integration is verified separately via `python main.py --fast-run` as described in `AGENTS.md`.
+
+## `tests/test_loader.py`
+
+### Purpose
+
+This test file verifies the data discovery, pairing, and split-loading logic in `idssp/sonk/disk/loader.py`.
+
+The tested code is responsible for finding LiTS CT volumes, pairing them with their corresponding segmentation masks, and loading the stratified train/validation split JSONs. These operations are critical because silent failures in data loading can lead to corrupted datasets, mismatched image-label pairs, or incorrect sample sizes in downstream results tables.
+
+The tests use only synthetic LiTS-like file trees created under pytest's `tmp_path`. They do not require real LiTS data, GPU access, network access, or real environment settings.
+
+---
+
+### Scope
+
+The file tests the `CustomDataset` and `DataCollector` classes in `idssp/sonk/disk/loader.py`:
+
+- `CustomDataset.discover_and_pair` and `get_lits_paths` (file discovery and ID-based pairing),
+- `DataCollector.read_dir` (directory validation and file counting),
+- `DataCollector.extract_images_and_labels` (pair extraction),
+- `DataCollector._load_split` (JSON split loading and disk validation),
+- `DataCollector.get_stratified_split` (end-to-end split retrieval).
+
+The file does not load real NIfTI volumes, parse image headers, or run model training.
+
+---
+
+### Main behaviours tested
+
+| Area | Functions/classes tested | Behaviour verified |
+|---|---|---|
+| File pairing | `CustomDataset.get_lits_paths` | Correctly pairs `volume-X.nii.gz` with `segmentation-X.nii.gz`; warns and skips when labels are missing; ignores non-volume files without reporting them as unpaired |
+| Source validation | `CustomDataset.discover_and_pair` | Raises `ValueError` for unsupported dataset sources or when files have not been set |
+| Directory reading | `DataCollector.read_dir` | Raises `FileNotFoundError` for missing directories; raises `ValueError` for empty directories; warns when the file count is odd (indicating unpaired files) |
+| Split loading | `DataCollector._load_split` | Returns correct train/val lists; raises `FileNotFoundError` when the JSON references files missing from disk; warns when disk contains files not listed in the JSON |
+| Split retrieval | `DataCollector.get_stratified_split` | Raises `ValueError` when no data is loaded; raises `FileNotFoundError` when the configured split JSON is missing; returns correct train/val pairs when valid |
+
+---
+
+### Why this test file matters
+
+This file protects the data ingestion layer of the project.
+
+As noted in `AGENTS.md`, split files produce different sample sizes (N) in every results table. If the loader silently accepts corrupted splits, mismatches image-label pairs, or fails to warn about missing files, downstream metrics and thesis tables will be invalid.
+
+These tests catch problems such as:
+
+- volumes being silently dropped because their segmentation masks are missing,
+- image-label pairs being mismatched due to ID parsing errors,
+- stratified splits being loaded incorrectly because the JSON references files that no longer exist on disk,
+- silent acceptance of directories containing unpaired or non-volume files,
+- unsupported dataset sources being accepted without error.
+
+By enforcing strict validation and explicit warnings, these tests ensure that the training pipeline fails loudly when data is misconfigured, rather than silently proceeding with a degraded dataset.
+
+---
+
+### Important conventions preserved by the tests
+
+- The tests do not modify production source code.
+- The tests do not load real LiTS volumes or parse real NIfTI headers.
+- The tests use synthetic file trees created under `tmp_path`.
+- The tests mock the `config` singleton to avoid depending on the real `.env` file.
+- Warning paths are verified using `caplog` to ensure the loader emits the expected diagnostics for missing labels, unpaired files, and split mismatches.
+
+---
+
+### How to run
+
+From the repository root:
+
+```bash
+~/envs/dev-thesis/bin/python -m pytest tests/test_loader.py -v
+```
+
+---
+
+### Limitations
+
+This file tests file discovery, pairing, and split loading. It does not verify:
+
+- the actual loading and parsing of NIfTI image data,
+- the application of MONAI transforms to the loaded paths,
+- the correctness of the stratification algorithm itself (covered in `test_stratification.py`),
+- or the full end-to-end training pipeline.
