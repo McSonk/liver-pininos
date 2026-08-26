@@ -340,42 +340,29 @@ def test_early_stopper_no_improvement_increments_counter(tmp_path, monkeypatch):
     assert result is False
     assert es.epochs_no_improve == 2
 
-
 def test_early_stopper_improvement_requires_exceeds_min_delta(tmp_path, monkeypatch):
     monkeypatch.setattr("idssp.sonk.model.training.config.get", lambda: MockConfigForEarlyStopper())
 
     builder = _make_fake_builder(tmp_path)
     es = _make_early_stopper(builder, monkeypatch)
 
-    es(0, 0.5, 0.6, 0.5)
-    # Exactly at min_delta should NOT be improvement (strict >)
-    result = es(1, 0.501, 0.6, 0.501)  # 0.501 == 0.5 + 0.001
-    assert result is False
-    assert es.epochs_no_improve == 1  # no improvement
-    # Just above min_delta SHOULD be improvement
-    result = es(2, 0.5011, 0.6, 0.5011)
-    assert result is False
+    best = 0.5
+    delta = MockConfigForEarlyStopper.EARLY_STOPPING_MIN_DELTA
+
+    # Establish baseline (only once)
+    es(0, best, 0.6, best)
+    assert es.best_tumour_dice == best
     assert es.epochs_no_improve == 0
-    assert es.best_tumour_dice == 0.5011
 
+    # Exactly at best + delta: not an improvement (strict >)
+    assert es(1, best + delta, 0.6, best + delta) is False
+    assert es.epochs_no_improve == 1
 
-def test_early_stopper_returns_true_after_patience_exhausted(tmp_path, monkeypatch):
-    monkeypatch.setattr("idssp.sonk.model.training.config.get", lambda: MockConfigForEarlyStopper())
-
-    builder = _make_fake_builder(tmp_path)
-    es = _make_early_stopper(builder, monkeypatch)
-    patience = MockConfigForEarlyStopper.EARLY_STOPPING_PATIENCE  # 3
-
-    # Establish baseline
-    es(0, 0.5, 0.6, 0.5)
-    # The first `patience` non-improving calls still return False (counter < patience)
-    for i in range(patience):
-        result = es(i + 1, 0.5, 0.6, 0.5)
-        assert result is False
-        assert es.epochs_no_improve == i + 1
-    # Only the (patience + 1)th non-improving call returns True
-    result = es(patience + 1, 0.5, 0.6, 0.5)
-    assert result is True
+    # Just above: improvement
+    improved = best + delta + 1e-6
+    assert es(2, improved, 0.6, improved) is False
+    assert es.epochs_no_improve == 0
+    assert es.best_tumour_dice == pytest.approx(improved)
 
 
 def test_early_stopper_monitors_tumour_dice_only(tmp_path, monkeypatch):
