@@ -1,6 +1,6 @@
 """Unit tests for the model factory and pretrained-weight loading.
 
-Targets ``idssp.sonk.model.models``:
+Targets ``idssp/sonk/model/models``:
 
 - ``_load_monai_pretrained_weights``
 - ``get_model``
@@ -16,10 +16,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-import torch
 import torch.nn as nn
 
-from idssp.sonk import config
 from idssp.sonk.config import AvailableModels
 from idssp.sonk.model import models
 
@@ -32,18 +30,19 @@ class _TinyModule(nn.Module):
         self.linear = nn.Linear(2, 2)
 
 
-def _patch_torch_load(monkeypatch, payload):
+def _make_torch_load(monkeypatch, payload):
     """Force ``torch.load`` inside the models module to return ``payload``."""
-
-    def fake_load(*args, **kwargs):
-        return payload
-
-    monkeypatch.setattr(models.torch, "load", fake_load)
+    monkeypatch.setattr(models.torch, "load", MagicMock(return_value=payload))
 
 
-def _spy_load_state_dict(model, monkeypatch):
-    """Replace a real model's ``load_state_dict`` with a recording mock."""
-    spy = MagicMock()
+def _patch_load_state(model, monkeypatch):
+    """Replace a real model's ``load_state_dict`` with a recording mock.
+    
+    PyTorch's load_state_dict returns a named tuple of (missing_keys, unexpected_keys).
+    Because the production code unpacks this into two variables, the mock must 
+    be configured to return a 2-tuple.
+    """
+    spy = MagicMock(return_value=([], []))
     monkeypatch.setattr(model, "load_state_dict", spy)
     return spy
 
@@ -53,7 +52,7 @@ def _spy_load_state_dict(model, monkeypatch):
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.parametrize(
-    "enum, builder_name",
+    "model_enum, builder_name",
     [
         (AvailableModels.U_NET, "get_unet"),
         (AvailableModels.SEG_RES_NET, "get_seg_res_net"),
@@ -61,11 +60,11 @@ def _spy_load_state_dict(model, monkeypatch):
         (AvailableModels.SWIN_UNETR_PRETRAIN, "get_swin_unetr_pretrain"),
     ],
 )
-def test_get_model_dispatches_to_builder(monkeypatch, minimal_config, enum_value, builder_name):
+def test_get_model_dispatches_to_builder(monkeypatch, minimal_config, model_enum, builder_name):
     sentinel = object()
     builder = MagicMock(return_value=sentinel)
     monkeypatch.setattr(models, builder_name, builder)
-    cfg = dataclasses.replace(minimal_config, MODEL=enum_value)
+    cfg = dataclasses.replace(minimal_config, MODEL=model_enum)
 
     result = models.get_model(cfg)
 
@@ -128,7 +127,7 @@ def test_load_accepts_direct_state_dict(monkeypatch):
     model = _TinyModule()
     state_dict = dict(model.state_dict())
     _make_torch_load(monkeypatch, state_dict)
-    spy = _spy_load_state(model, monkeypatch)
+    spy = _patch_load_state(model, monkeypatch)
 
     models._load_monai_pretrained_weights(model, Path("pretrained.pth"))
 
@@ -140,12 +139,8 @@ def test_load_accepts_direct_state_dict(monkeypatch):
 
 def test_load_requests_weights_only(monkeypatch):
     model = _TinyModule()
-    monkeypatch.setattr(
-        models.torch,
-        "load",
-        MagicMock(return_value=dict(model.state_dict())),
-    )
-    _spy_load_state(model, monkeypatch)
+    _make_torch_load(monkeypatch, dict(model.state_dict()))
+    _patch_load_state(model, monkeypatch)
 
     models._load_monai_pretrained_weights(model, Path("pretrained.pth"))
 

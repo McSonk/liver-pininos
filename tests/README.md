@@ -589,3 +589,72 @@ From the repository root:
 #### Limitations
 
 This file tests configuration logic and environment detection in isolation. It does not verify the actual loading of NIfTI data, the execution of the training loop, or the real delivery of email/Telegram notifications.
+
+### `tests/test_models_factory.py`
+
+#### Purpose
+
+This test file verifies the model factory dispatch, architecture validation, and pretrained-weight loading logic in `idssp/sonk/model/models.py`.
+
+The tested code determines which neural network architecture is constructed during training and evaluation, and ensures that pretrained weights are loaded safely and correctly. These tests are critical because they provide the regression net required before modifying `AvailableModels` and `get_model()` to add the 2.5D Mamba-hybrid architecture.
+
+The tests use lightweight mock objects and a tiny `torch.nn.Module` stand-in. No heavy MONAI networks (UNet, SegResNet, SwinUNETR) are actually constructed, and no real checkpoint files are read from disk.
+
+---
+
+#### Scope
+
+The file tests the core components of `idssp/sonk/model/models.py`:
+
+- `get_model()` (factory dispatch).
+- `get_swin_unetr()` (patch-size validation).
+- `_load_monai_pretrained_weights()` (checkpoint unwrapping and state-dict cleaning).
+- `get_swin_unetr_pretrain()` (error wrapping for pretrained weight loading).
+
+The file does not test model forward passes, loss computation, or the full training loop.
+
+---
+
+#### Main behaviours tested
+
+| Area | Functions tested | Behaviour verified |
+|---|---|---|
+| Factory dispatch | `get_model()` | Routes `U_NET`, `SEG_RES_NET`, `SWIN_UNETR`, and `SWIN_UNETR_PRETRAIN` to their respective builders; raises `ValueError` for unsupported model strings |
+| Architecture validation | `get_swin_unetr()` | Raises `ValueError` when `TRAIN_PATCH_SIZE` does not contain exactly 3 spatial dimensions; raises `ValueError` when any dimension is not divisible by 32 |
+| Weight loading security | `_load_monai_pretrained_weights()` | Enforces `weights_only=True` when calling `torch.load` |
+| Checkpoint unwrapping | `_load_monai_pretrained_weights()` | Accepts direct state dicts; unwraps checkpoints nested under `state_dict`, `model_state_dict`, or `model` keys; accepts full `torch.nn.Module` checkpoints |
+| State-dict cleaning | `_load_monai_pretrained_weights()` | Strips `module.` prefixes added by `DataParallel`/`DDP`; calls `load_state_dict` with `strict=False` |
+| Error handling | `_load_monai_pretrained_weights()`, `get_swin_unetr_pretrain()` | Wraps `torch.load` failures in `RuntimeError`; raises `TypeError` for unsupported checkpoint formats; wraps pretrained loading failures in `get_swin_unetr_pretrain` |
+
+---
+
+#### Why this test file matters
+
+This file protects the model construction layer of the project.
+
+As noted in `AGENTS.md`, the primary target architecture (2.5D Mamba-hybrid) is not yet in `AvailableModels`. When it is added, `get_model()` and the factory dispatch logic will be modified. These tests ensure that adding a new architecture does not accidentally break the dispatch for the existing baselines (UNet, SegResNet, SwinUNETR).
+
+Additionally, SwinUNETR is highly sensitive to patch sizes. If the validation logic in `get_swin_unetr()` is weakened or removed, the pipeline could attempt to construct a network with invalid dimensions, leading to cryptic MONAI shape errors deep inside the forward pass.
+
+---
+
+#### Important conventions preserved by the tests
+
+- The tests do not modify production source code.
+- The tests do not construct real MONAI networks; heavy classes like `SwinUNETR` are patched with `MagicMock`.
+- The tests use a tiny `torch.nn.Module` (`_TinyModule`) to verify state-dict key cleaning without the overhead of a full segmentation model.
+- The tests enforce `weights_only=True` for checkpoint loading, matching the security invariant in `AGENTS.md`.
+
+---
+
+#### How to run
+
+From the repository root:
+
+```bash
+~/envs/dev-thesis/bin/python -m pytest tests/test_models_factory.py -v
+```
+
+This file tests factory dispatch and weight-loading logic in isolation. It does not 
+verify that the constructed models produce correct output shapes, nor does it test
+the integration of these models into the ModelBuilder training loop.
