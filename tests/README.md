@@ -5,7 +5,9 @@ is the same across development.
 
 It has the following modules:
 
-## `tests/test_stratification.py`
+## First series
+
+### `tests/test_stratification.py`
 
 ### Purpose
 
@@ -80,7 +82,7 @@ The test suite is fast and should complete in a few seconds on CPU.
 
 This file tests the stratification helper functions and metadata export logic. It does not verify the broader scientific suitability of the chosen stratification strategy, nor does it regenerate or validate the official split JSON files under `files/splits/`.
 
-## `tests/test_data_csv.py`
+### `tests/test_data_csv.py`
 
 ### Purpose
 
@@ -177,7 +179,7 @@ This file tests CSV/data-helper behaviour and slice-threshold logic. It does not
 
 Full volume loading, NIfTI metadata handling, and heavier integration checks are covered separately in later smoke/integration test plans.
 
-## `tests/test_training_logic.py`
+### `tests/test_training_logic.py`
 
 ### Purpose
 
@@ -273,7 +275,7 @@ This file tests training control logic only. It does not verify:
 
 Full pipeline integration is verified separately via `python main.py --fast-run` as described in `AGENTS.md`.
 
-## `tests/test_loader.py`
+### `tests/test_loader.py`
 
 ### Purpose
 
@@ -358,7 +360,7 @@ This file tests file discovery, pairing, and split loading. It does not verify:
 - the correctness of the stratification algorithm itself (covered in `test_stratification.py`),
 - or the full end-to-end training pipeline.
 
-## `tests/test_force_matching_affined.py`
+### `tests/test_force_matching_affined.py`
 
 ### Purpose
 
@@ -428,7 +430,7 @@ From the repository root:
 
 This file tests the affine correction logic in isolation. It does not verify the full MONAI transform pipeline, the actual loading of NIfTI files from disk, or the downstream impact of the corrected affines on model training.
 
-## `tests/test_evaluator_postprocess.py`
+### `tests/test_evaluator_postprocess.py`
 
 ### Purpose
 
@@ -504,3 +506,86 @@ From the repository root:
 ### Limitations
 
 This file tests the post-processing logic and CSV export in isolation. It does not verify the end-to-end sliding-window inference pipeline, the MONAI metric calculations (Dice/HD95), or the `Invertd` transform used to map predictions back to the original scanner space. Those integration steps are verified via the `--fast-run` entrypoint and server-side validation scripts.
+
+## Second series
+
+### `tests/test_config.py`
+
+#### Purpose
+
+This test file verifies the configuration, environment detection, and serialisation logic in `idssp/sonk/config.py`.
+
+The tested code is the foundation of the pipeline, responsible for reading environment variables, detecting hardware capabilities (CPU/GPU/RAM), validating required paths, and providing a frozen `Config` singleton to all downstream modules. 
+
+These tests are critical because a silent failure in configuration (e.g., misidentifying a limited environment or leaking credentials into a checkpoint) can invalidate training runs or compromise security. The tests use mocked hardware detection, controlled environment variables, and temporary directories, requiring no GPU, network access, or real `.env` file.
+
+---
+
+#### Scope
+
+The file tests the core components of `idssp/sonk/config.py`:
+
+- `AvailableModels` and `Mode` enums.
+- The frozen `Config` dataclass and module-level singleton lifecycle.
+- `init()` (environment validation, path creation, fallback logic, and notification validation).
+- `get()` (singleton access).
+- `is_limited_env()` (hardware and environment gating).
+- `to_dict()` and `to_param_dict()` (serialisation and secret exclusion).
+- `get_cgroup_memory_limit_bytes()` and `get_container_usage()` (container memory detection).
+
+The file does not test the full training loop, model construction, or real network/SMTP connectivity.
+
+---
+
+#### Main behaviours tested
+
+| Area | Functions/classes tested | Behaviour verified |
+|---|---|---|
+| Enums and Dataclass | `AvailableModels`, `Mode`, `Config` | Correct string values for enums; `Config` is strictly frozen (assignment raises `FrozenInstanceError`) |
+| Singleton lifecycle | `get()`, `init()` | `get()` raises `RuntimeError` before initialisation; re-initialising with the same `Mode` returns the same instance; re-initialising with a different `Mode` raises `RuntimeError` |
+| Environment validation | `init()` | Raises `EnvironmentError` for missing `PIN_ENV`; raises `ValueError` for unrecognised `PIN_ENV` or missing required variables (`LITS_CT_ROOT`, `SPLIT_JSON`, etc.); raises `FileNotFoundError` for missing CT root directory |
+| Fallbacks and paths | `init()` | Invalid log levels fall back to `INFO`/`DEBUG`; cache sources fall back to `disk` when RAM is low; run and log directories are created automatically |
+| Notification validation | `init()` | Raises `ValueError` when email/Telegram notifications are enabled but required credentials or fields are missing/invalid |
+| Hardware gating | `is_limited_env()` | Returns `True` for local environments, CPU devices, or low-VRAM GPUs (when `include_vram=True`); returns `False` for high-VRAM cloud environments |
+| Serialisation | `to_dict()`, `to_param_dict()` | Enums converted to strings; tuples to lists; Paths to strings; sensitive fields (credentials, tokens) strictly excluded; noisy/path keys excluded from parameter dicts |
+| Container memory | `get_cgroup_memory_limit_bytes()`, `get_container_usage()` | Correctly parses cgroup v2 numeric limits and `"max"` fallbacks; handles cgroup v1 sentinels; returns `-1` sentinels for missing files or unlimited environments |
+
+---
+
+#### Why this test file matters
+
+This file protects the foundational configuration layer of the project.
+
+Every downstream module (data loading, training, inference) relies on the `Config` singleton to determine execution paths. If `is_limited_env()` incorrectly identifies a machine, the pipeline might attempt GPU-only sliding-window inference on a CPU, or fail to invert spatial transforms correctly, resulting in geometrically invalid NIfTI files. If `to_dict()` fails to exclude secrets, credentials could be written into checkpoint files.
+
+These tests catch problems such as:
+- silent acceptance of missing or invalid environment variables,
+- incorrect hardware detection leading to out-of-memory crashes or invalid outputs,
+- credentials leaking into serialised config snapshots,
+- failure to respect Docker/container memory limits (cgroup parsing errors).
+
+---
+
+#### Important conventions preserved by the tests
+
+- The tests do not modify production source code.
+- The tests never load the real repository `.env` file (`load_dotenv` is patched to a no-op).
+- The tests patch hardware detection (`torch.cuda.is_available`, `psutil.virtual_memory`) to ensure deterministic behaviour regardless of the host machine.
+- The tests use targeted patches for cgroup file reading to avoid broad `open()` mocks that could affect unrelated operations.
+- The `Config` singleton is automatically reset before and after every test via an `autouse` fixture in `conftest.py`.
+
+---
+
+#### How to run
+
+From the repository root:
+
+```bash
+~/envs/dev-thesis/bin/python -m pytest tests/test_config.py -v
+```
+
+---
+
+#### Limitations
+
+This file tests configuration logic and environment detection in isolation. It does not verify the actual loading of NIfTI data, the execution of the training loop, or the real delivery of email/Telegram notifications.
