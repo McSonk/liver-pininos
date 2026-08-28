@@ -658,3 +658,74 @@ From the repository root:
 This file tests factory dispatch and weight-loading logic in isolation. It does not 
 verify that the constructed models produce correct output shapes, nor does it test
 the integration of these models into the ModelBuilder training loop.
+
+### `tests/test_inferer_checkpoint.py`
+
+#### Purpose
+
+This test file verifies the checkpoint loading, config alignment, and limited-environment guard logic in `idssp/sonk/model/inferer.py`.
+
+The tested code is responsible for loading a training checkpoint and reconstructing the exact preprocessing environment required for valid full-volume inference. This is critical because inference must use the same spatial parameters (spacing, patch size, HU window) and architecture (model type, number of classes) as training. Misalignment would produce geometrically invalid or semantically incorrect predictions.
+
+The tests use mocked heavy dependencies (`torch.load`, `get_model`, `SlidingWindowInferer`, `get_validation_transforms`) and a real frozen `Config` fixture. No real checkpoint files, MONAI models, or full inference runs are exercised.
+
+---
+
+#### Scope
+
+The file tests two components of `idssp/sonk/model/inferer.py`:
+
+- `InferenceEngine.load_checkpoint()` — checkpoint loading and config alignment.
+- `InferenceEngine.run_inference()` — limited-environment guard only.
+
+The file does not test full-volume sliding-window inference, NIfTI export, or the `Invertd` transform pipeline.
+
+---
+
+#### Main behaviours tested
+
+| Area | Functions tested | Behaviour verified |
+|---|---|---|
+| Path validation | `load_checkpoint()` | Raises `FileNotFoundError` when the checkpoint path does not exist |
+| Spatial field conversion | `load_checkpoint()` | JSON lists for `ISO_SPACING` and `TRAIN_PATCH_SIZE` are converted back to Python tuples |
+| Strict key alignment | `load_checkpoint()` | `NUM_CLASSES`, `HU_WINDOW_MIN`, `HU_WINDOW_MAX`, and `TUMOUR_CLASS_INDEX` are aligned from the checkpoint snapshot |
+| Enum conversion | `load_checkpoint()` | `MODEL` string is converted back to the `AvailableModels` enum |
+| Non-critical warnings | `load_checkpoint()` | Mismatches in `SLIDING_WINDOW_BATCH_SIZE` and `RAND_CROP_NUM_SAMPLES` produce warnings but do not raise |
+| Model construction | `load_checkpoint()` | The model is built using the aligned config, not the original environment config |
+| Limited-environment guard | `run_inference()` | Raises `RuntimeError` in limited environments because random crops cannot be inverted to scanner space |
+
+---
+
+#### Why this test file matters
+
+This file protects the inference portability layer of the project.
+
+Training runs on the server (cloud environment) with specific hyperparameters, while inference and evaluation run locally. The checkpoint's `config_snapshot` is the bridge between these two environments. If the alignment logic fails silently, the inference engine might use the wrong model architecture, wrong number of output classes, or wrong spatial resampling parameters, producing predictions that look plausible but are fundamentally incorrect.
+
+The limited-environment guard is equally important. As noted in `AGENTS.md`, local/CPU runs use random-crop patches that cannot be inverted back to the original scanner space. Without this guard, `Invertd` would silently produce NIfTI files in preprocessed space, corrupting downstream metric calculations.
+
+---
+
+#### Important conventions preserved by the tests
+
+- The tests do not modify production source code.
+- The tests use a real frozen `Config` instance (from `conftest.py`) for `dataclasses.replace()` compatibility, not a `MagicMock`.
+- The tests do not load real checkpoint files; `torch.load` is patched with a controlled payload.
+- The tests do not construct real MONAI models; `get_model` is patched.
+- The tests do not run full inference; only the guard logic is exercised.
+
+---
+
+#### How to run
+
+From the repository root:
+
+```bash
+~/envs/dev-thesis/bin/python -m pytest tests/test_inferer_checkpoint.py -v
+```
+
+---
+
+#### Limitations
+
+This file tests checkpoint loading and config alignment in isolation. It does not verify full-volume sliding-window inference, the `Invertd` spatial inversion pipeline, or NIfTI export correctness. Those integration paths are verified via `do_inference.py --fast-run` on the server.
