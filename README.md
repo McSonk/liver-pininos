@@ -1,18 +1,24 @@
-# HCC Liver Tumor Segmentation Thesis Project
+# Automated Liver Tumour Segmentation Thesis
 
-This repository contains the code for a master's thesis project focused on developing an automated segmentation model for Hepatocellular Carcinoma (HCC) liver tumours using deep learning techniques.
+This repository contains the code for a master's thesis project on automated liver tumour
+segmentation using deep learning, trained and evaluated on the LiTS (Liver Tumor
+Segmentation Benchmark) open dataset.
 
 ## Project Overview
 
-The aim of this thesis is to train a model to automatically segment HCC liver tumours. The current implementation uses the LiTS (Liver Tumor Segmentation) open dataset for initial development and testing, with plans to expand to HCC-specialized datasets and private data from the university hospital in later stages.
+The aim of this thesis is to develop a model that can automatically segment liver tumours
+from CT scans. The primary benchmark is the LiTS dataset (131 labelled volumes), with
+external evaluation planned on the CHAOS CT dataset.
 
 ## Features
 
 - 3D medical image segmentation using MONAI framework
-- Configurable environments (local/cloud) for different computational resources
+- SegResNet, UNet (Residual), and SwinUNETR model architectures
+- Configurable environments (local/cloud) with automatic GPU detection
 - Automatic mixed precision training
 - TensorBoard integration for monitoring
-- Persistent dataset caching for improved performance
+- Persistent and in-memory dataset caching with automatic fallback
+- Stratified dataset splitting via iterative stratification
 - Comprehensive logging and memory usage tracking
 
 ## Reproducibility
@@ -57,7 +63,6 @@ python analyse_dataset.py --no-verbose --output-csv data.csv
    - Foreground imbalance metrics (voxel ratios)
    - CT intensity ranges
 
-
 ## Installation
 
 ### Prerequisites
@@ -75,32 +80,28 @@ python analyse_dataset.py --no-verbose --output-csv data.csv
    cd pininos
    ```
 
-2. Install dependencies:
-    Install PyTorch FIRST (Choose one based on your machine):
+2. Install PyTorch **first** (choose based on your machine):
+   ```bash
+   # CPU only
+   pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cpu
 
-    ```bash
-    pip install torch==2.11.0 torchvision==0.26.0 --index-url https://check.torch.site
-    ```
+   # GPU (CUDA 11.8 — check with `nvidia-smi` and use cu121 if needed)
+   pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu118
+   ```
 
-    Afterwards, continue as usual:
-
+3. Install the remaining dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-3. Create a `.env` file based on the provided `.env.example`:
+4. Create your `.env` file and fill in the required paths:
    ```bash
    cp .env.example .env
    ```
 
-4. Edit the `.env` file to configure your environment:
-   - Set `ENV` to either `local` or `cloud`
-   - Set `LITS_CT_ROOT` to the path of your LiTS dataset
-   - Configure other paths and settings as needed
-
 ## Configuration
 
-The project uses a combination of `config.py` and environment variables (via `.env` file) for configuration.
+The project uses a combination of `config.py` and environment variables (via the `.env` file) for configuration.
 
 ### Environment Variables (.env)
 
@@ -108,11 +109,16 @@ Copy `.env.example` to `.env` and modify the following variables:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `ENV` | Environment type: `local` or `cloud` | `local` |
-| `LITS_CT_ROOT` | Path to LiTS dataset containing CT scans | `/data/lits` |
-| `CHECKPOINT_DIR` | Directory to save model checkpoints | `/data/checkpoints` |
-| `PERSISTENT_DATASET_DIR` | (Optional) Directory for MONAI persistent dataset cache | `/data/persistent_cache` |
-| `LOG_DIR` | Directory to save log files | `/data/logs` |
+| `PIN_ENV` | Environment type: `local` or `cloud` | `local` |
+| `LITS_CT_ROOT` | Path to LiTS training dataset | `/data/lits/train` |
+| `LITS_CT_TEST` | Path to LiTS test dataset | `/data/lits/test` |
+| `OUTPUT_DIR` | Directory for checkpoints, logs, TensorBoard, and results | `/data/outputs` |
+| `STATS_DIR` | Directory for per-case and aggregate CSV statistics | `/data/stats` |
+| `SPLIT_JSON` | Path to the stratified split JSON file | `/data/splits/LiTS_split_seed42.json` |
+| `CACHE_TRAIN_SOURCE` | `ram` (fast) or `disk` (memory-safe); falls back to `disk` automatically if RAM < 100 GB | `ram` |
+| `CACHE_VAL_SOURCE` | Same as above for validation data | `ram` |
+| `PERSISTENT_DATASET_DIR` | (Optional, required if using disk cache) MONAI persistent cache directory | `/data/persistent_cache` |
+| `PRE_TRAINED_MODEL_PATH` | (Optional) Path to pretrained weights for SwinUNETR Pretrain model | `/data/pretrained.pth` |
 | `LOG_LEVEL_CONSOLE` | Console log level | `INFO` |
 | `LOG_LEVEL_FILE` | File log level | `DEBUG` |
 
@@ -120,102 +126,145 @@ Copy `.env.example` to `.env` and modify the following variables:
 
 The `config.py` file defines two main environment configurations:
 
-1. **Local** (`ENV=local`):
-   - Designed for local computers without GPU or with limited resources
+1. **Local** (`PIN_ENV=local`):
+   - Designed for local machines without a GPU or with limited resources
    - Smaller batch sizes, fewer workers, reduced epochs
-   - Patch size: 64³ for training, 64³ for validation
-   - 5 training epochs
+   - Patch size: 64x64x64 for training and validation
+   - 5 training epochs (for quick debugging)
+   - Runs on CPU if no CUDA device is available
 
-2. **Cloud** (`ENV=cloud`):
-   - Designed for cloud environments with more computational power
-   - Automatically detects high-compute GPUs (>30GB VRAM, e.g., A100)
-   - Adjusts workers and pin memory based on GPU capabilities
-   - Patch size: 96³ for training, 128³ for validation
-   - 90 training epochs
+2. **Cloud** (`PIN_ENV=cloud`):
+   - Designed for GPU-equipped environments
+   - Automatically detects high-compute GPUs (>30GB VRAM, e.g., A100 80GB)
+   - Patch size: 128x128x128 for training and validation
+   - 200 training epochs on high-compute GPUs (5 otherwise)
+   - Worker counts and batch sizes scale with available GPU VRAM and system RAM
 
 ### Automatic GPU Detection
 
 The configuration automatically detects:
 - CUDA availability
 - GPU VRAM amount to distinguish between high-compute (≥30GB) and low-compute (<30GB) GPUs
-- Adjusts settings accordingly (number of workers, pin memory usage)
+- System RAM and container memory limits (cgroup v1/v2)
+- Adjusts settings accordingly (number of workers, pin memory usage, batch size, gradient accumulation)
 
 ### Data Preprocessing
 
 - **CT Windowing**: Hounsfield Units clipped to [-175, 250] (soft-tissue liver window)
-- **Label Mapping (LiTS)**: Background=0, Liver=1, Tumour=1 (binary segmentation; LiTS label 2 → 1)
-- **Classes**: `NUM_CLASSES = 3` (background, liver, tumour) for multi-class output head
-- **Phase**: Portal venous phase CT scans only
+- **Isotropic Resampling**: All volumes resampled to 1.0x1.0x1.0 mm voxel spacing (local mode defaults to 2.0 mm)
+- **Segmentation**: 3 classes — background (0), liver (1), tumour (2)
+- **Label Affine Fix**: Volumes 48–52 have a placeholder identity matrix as the label affine; corrected at load time by `ForceMatchingAffined`
 
 ## Usage
 
-To start training:
+### Training
 
 ```bash
+# Basic training
 python main.py
+
+# Quick smoke test (fewer epochs, smaller patches)
+python main.py --fast-run
+
+# Resume from a checkpoint
+python main.py --resume path/to/best_model.pth
 ```
 
-The script will:
+The training script will:
 1. Load configuration from `.env` and `config.py`
 2. Initialize logging and set deterministic seeds
 3. Load and split the LiTS dataset
 4. Initialize data loaders and model
-5. Start training with TensorBoard logging
+5. Start training with TensorBoard logging and early stopping on tumour Dice
 
-Monitor training progress with TensorBoard:
+### Monitoring Training
+
 ```bash
-tensorboard --logdir logs/tensorboard
+tensorboard --logdir <OUTPUT_DIR>/<VERSION>-<timestamp>/tensorboard
 ```
+
+TensorBoard metrics are also written per-epoch for comparison across runs.
+
+### Test-Time Inference (server)
+
+```bash
+# Run on the server — generates raw NIfTI predictions
+scripts/validate.sh
+```
+
+### Local Evaluation
+
+```bash
+# Compute metrics locally against downloaded server predictions
+python do_evaluation.py
+
+# Point to a specific run
+python do_evaluation.py --pred-dir path/to/<run>_test/test_predictions
+```
+
+This computes both raw and post-processed Dice and HD95, and generates thesis-ready CSV reports.
 
 ## Common Issues
 
 | Symptom | Likely Cause | Solution |
 |---------|-------------|----------|
-| `CUDA out of memory` | Patch size/batch too large for GPU | Reduce `TRAIN_PATCH_SIZE` or set `ENV=local` for smaller presets |
-| Dataset not found | `LITS_CT_ROOT` path incorrect | Verify path in `.env`; ensure dataset follows LiTS directory structure |
-| Slow data loading | `num_workers` too high for CPU | Lower `NUM_WORKERS` in `config.py` for local execution |
+| `CUDA out of memory` | Patch size/batch too large for GPU | Use `--fast-run` or set `PIN_ENV=local` for smaller presets |
+| Dataset not found | Path in `.env` incorrect | Check `LITS_CT_ROOT` and `LITS_CT_TEST` in `.env` |
+| Slow data loading | Too many workers for your CPU | Set `CACHE_TRAIN_SOURCE=disk` and reduce `DL_NUM_WORKERS` in `config.py` |
+| Early stopping with no improvement | No tumour present in training cases | Early stopping monitors tumour Dice only; check tumour prevalence in your split |
 
 ## Project Structure
 
 ```
 pininos/
-├── idssp/                 # Main source code package
-│   └── sonk/              # Thesis-specific modules
-│       ├── config.py      # Configuration management
-│       ├── model/         # Model architecture and training
-│       ├── utils/         # Utility functions (logging, etc.)
-│       └── disk/          # Data loading and processing
-├── checkpoints/           # Saved model checkpoints
-├── logs/                  # Log files
-├── .env.example           # Template for environment variables
-├── requirements.txt       # Python dependencies
-├── main.py                # Entry point for training
-└── README.md              # This file
+├── main.py                         # Training entry point
+├── do_evaluation.py                # Local test-time evaluation and metrics
+├── do_inference.py                 # Server-side full-volume inference
+├── analyse_dataset.py              # Dataset-wide statistics generator
+├── idssp/sonk/
+│   ├── config.py                   # Frozen dataclass Config with env-aware defaults
+│   ├── model/
+│   │   ├── models.py               # Model factory (get_model) and AvailableModels enum
+│   │   ├── training.py             # ModelBuilder, EarlyStopper, train/val loop
+│   │   ├── transforms.py           # MONAI transform pipelines (deterministic + random)
+│   │   ├── inferer.py              # Full-volume inference and spatial inversion
+│   │   ├── evaluator.py            # MetricsEvaluator: Dice/HD95/IoU, raw + post-processed
+│   │   └── data.py                 # VolumeWrapper and per-case CSV statistics
+│   ├── disk/
+│   │   └── loader.py               # DataCollector, LiTS pairing, stratified split loading
+│   ├── stats/
+│   │   └── stratification.py       # Iterative stratification for dataset splitting
+│   ├── utils/
+│   │   ├── logger.py               # Configurable logging with file + console handlers
+│   │   ├── mail.py                 # Email notification utilities
+│   │   └── notifications.py        # Telegram and email fire-and-forget notifications
+│   └── view/
+│       ├── utils.py                # Matplotlib plotting helpers
+│       └── eval_stats.py           # Results table and bar chart generation
+├── scripts/
+│   ├── run-model.sh                # Server training launcher (tmux, GPU binding)
+│   ├── validate.sh                 # Server inference launcher
+│   └── rejoin-session.sh           # Reattach to running tmux sessions
+├── notebooks/
+│   ├── strat_dataset.ipynb         # Regenerates the split JSON files
+│   └── post-processing.ipynb       # Post-processing analysis
+├── files/
+│   ├── splits/                     # Stratified split JSONs
+│   ├── stats/lits/                 # Per-case CSVs and dataset statistics
+│   └── server_logs/affine-issue/   # Investigation notes for volumes 48–52
+├── .env.example                    # Template for environment variables
+├── requirements.txt                # Python dependencies (install torch first)
+└── validation.md                   # Eval pipeline documentation (Invertd, MetaTensor fix)
 ```
 
 ## Dependencies
 
-See `requirements.txt` for a complete list of dependencies. Key packages include:
-- PyTorch
-- MONAI
-- python-dotenv
-- TensorBoard
-
-## Notes
-
-- The current implementation uses deterministic seeds for reproducibility
-- In limited environments (local/CPU), the script automatically uses a subset of data for quick testing
-- Checkpoint directories are created automatically if they don't exist
-- Logging is configurable for both console and file output
-
-## Future Work
-
-As mentioned in the thesis objectives, future stages of this project will:
-1. Adapt the model for HCC-specialized datasets
-2. Incorporate private data from the university hospital
-3. Experiment with different model architectures and loss functions
-4. Perform extensive validation and comparison with ground truth annotations
-
+See `requirements.txt` for a complete list. Key packages:
+- [PyTorch](https://pytorch.org/) — GPU-accelerated tensor library
+- [MONAI](https://monai.io/) — medical imaging framework (builds on PyTorch)
+- [python-dotenv](https://github.com/theskumar/python-dotenv) — `.env` file loader
+- [TensorBoard](https://www.tensorflow.org/tensorboard) — training metric visualization
+- [nibabel](https://nipy.org/nibabel/) — NIfTI neuroimaging file I/O
 
 ## Dataset References
 
@@ -224,33 +273,7 @@ As mentioned in the thesis objectives, future stages of this project will:
 | LiTS | Baseline training & validation | [Bilic et al., 2023](https://competitions.codalab.org/competitions/17094) |
 | WAW-TACE | Domain adaptation (TACE-treated HCC) | [Internal, university hospital] |
 | HCC-TACE-Seg | Final fine-tuning & evaluation | [Internal, university hospital] |
-| 3Dircadb | External validation (cases 1–26 only) | [https://www.ircad.fr/research/3d-ircadb-01/](https://www.ircad.fr/research/3d-ircadb-01/) |
 | CHAOS CT | Cross-dataset generalisation test | [Aktas et al., 2021](https://chaos.grand-challenge.org/) |
-
-For uploading the datasets to the servers while ensuring data integrity, the following
-command was run:
-
-```bash
-# Local
-md5sum *.nii.gz > lits_checksums_local.md5
-rsync -avz --checksum --progress ./ *.nii.gz user@server_address:/remote/path/to/lits_data/
-scp lits_checksums_local.md5 user@server_address:/remote/path/to/lits_data/
-
-# server
-md5sum -c lits_checksums_local.md5
-```
-
-For monitoring ram consumption:
-
-```bash
-# At cache dataset creation phase:
-watch -n 5 'cat /sys/fs/cgroup/memory/memory.usage_in_bytes | numfmt --to=iec'
-
-# At training phase:
-
-nvidia-smi -l 1
-
-```
 
 ## License
 

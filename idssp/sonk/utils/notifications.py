@@ -51,7 +51,9 @@ def _escape_html_for_telegram(text: str) -> str:
 def _truncate_for_telegram(title: str, message: str, is_caption: bool = False) -> tuple[str, str]:
     """
     Truncates title + message to fit Telegram's character limits.
-    Guarantees: len(f"<b>{safe_title}</b>\n{safe_message}") <= limit
+    Guarantees: len(f"<b>{safe_title}</b>\n{safe_message}") <= limit.
+    Trailing partial HTML entities/tags (e.g. "&lt", "</") are stripped after
+    truncation; fragments cut inside longer allowed tags may still remain.
     
     Args:
         title: The notification title (truncated if needed).

@@ -4,13 +4,15 @@ from typing import Any, Dict, List, Optional
 import nibabel as nib
 import numpy as np
 import pandas as pd
+import torch
+from monai.metrics import DiceMetric
+from monai.transforms import Compose
 from scipy import ndimage
 from scipy.stats import skew
 
+from idssp.sonk.model.transforms import get_deterministic_transforms
 from idssp.sonk.utils.logger import get_logger
 from idssp.sonk.view import utils
-from idssp.sonk.model.transforms import get_deterministic_transforms
-from monai.transforms import Compose
 
 logger = get_logger(__name__)
 
@@ -386,32 +388,34 @@ class VolumeWrapper:
         Applies the necessary transformations to the image and label data for validation.
         '''
         # Helper to find first/last slice index for a given class
-        def get_slice_range(volume, class_idx):
-            """Find first/last slice index along the depth (D) axis for a given class.
-    
-            Assumes volume shape is (D, H, W) after channel dimension removal.
+        def get_slice_range(volume, class_idx, affine=None):
+            """Find first/last slice index along the depth (Z) axis for a given class.
+            Dynamically identifies the Z-axis using the affine matrix if available.
             """
             if volume.ndim != 3:
                 raise ValueError(
-                    f"Expected 3D volume (D, H, W), got shape {volume.shape}. "
+                    f"Expected 3D volume, got shape {volume.shape}. "
                     f"Channel dimension may not have been removed."
                 )
 
-            # Create a boolean mask for the class across all slices (D, H, W)
             mask = volume == class_idx
             if not np.any(mask):
-                return None, None
+                return None, None, None
 
-            # Check for presence of class along the last axis (W/Axial)
-            # any_axis collapses D and H, leaving a 1D array of length W
-            logger.debug("Finding slice range for class index %d...", class_idx)
-            logger.debug("Mask shape: %s", mask.shape)
-            slices_with_class = np.any(mask, axis=(0, 1))
+            # Dynamically find the Z-axis (depth) from the affine matrix
+            z_axis = 0  # Default fallback
+            if affine is not None:
+                # affine[:3, :3] columns are the physical directions of voxel axes 0, 1, 2
+                # Physical Z is the 3rd row (index 2). We find which voxel axis aligns most with it.
+                z_axis = int(np.argmax(np.abs(affine[:3, 2])))
 
+            # Collapse the non-Z axes
+            axes_to_collapse = tuple(i for i in range(3) if i != z_axis)
+            slices_with_class = np.any(mask, axis=axes_to_collapse)
             indices = np.where(slices_with_class)[0]
             if len(indices) == 0:
-                return None, None
-            return int(indices[0]), int(indices[-1])
+                return None, None, z_axis
+            return int(indices[0]), int(indices[-1]), z_axis
 
         logger.info("Image affine:\n%s", self.image.affine)
         logger.info("Label affine:\n%s", self.label.affine)
@@ -426,27 +430,135 @@ class VolumeWrapper:
             "inference": self.inference_path
         })
 
-        # Remove the channel dimension for 2D plotting: (1, D, H, W) -> (D, H, W)
-        ct = data["image"][0]
-        gt = data["label"][0]
-        pred = data["inference"][0]
+        # Remove the channel dimension: (1, D, H, W) -> (D, H, W)
+        # CRITICAL: Convert to NumPy arrays to maintain consistency with load_data()
+        # and prevent downstream crashes in NumPy/Matplotlib operations.
+        ct = data["image"][0].cpu().numpy() if hasattr(data["image"][0], 'cpu') else np.asarray(data["image"][0])
+        gt = data["label"][0].cpu().numpy() if hasattr(data["label"][0], 'cpu') else np.asarray(data["label"][0])
+        pred = data["inference"][0].cpu().numpy() if hasattr(data["inference"][0], 'cpu') else np.asarray(data["inference"][0])
 
         self.image_data = ct
         self.label_data = gt
         self.inference_data = pred
 
-        first_tumour_pred = None
-        last_tumour_pred = None
-        first_liver_pred = None
-        last_liver_pred = None
+        # Extract affine from the transformed MetaTensor if available, else use raw
+        pred_affine = data["inference"].affine if hasattr(data["inference"], 'affine') else self.inference.affine
+        if hasattr(pred_affine, 'numpy'):
+            pred_affine = pred_affine.numpy()
+        pred_affine = np.asarray(pred_affine)
 
-        first_tumour_pred, last_tumour_pred = get_slice_range(pred, cfg.TUMOUR_CLASS_INDEX)
+        first_tumour_pred, last_tumour_pred, tumour_z_axis = get_slice_range(pred, cfg.TUMOUR_CLASS_INDEX, pred_affine)
+
+        first_liver_pred, last_liver_pred, liver_z_axis = None, None, None
         if cfg.NUM_CLASSES == 3:
-            first_liver_pred, last_liver_pred = get_slice_range(pred, 1)
+            first_liver_pred, last_liver_pred, liver_z_axis = get_slice_range(pred, 1, pred_affine)
 
         logger.info("CT Shape: %s, Label Shape: %s, Inference Shape: %s", ct.shape, gt.shape, pred.shape)
+        logger.info("Detected Z-axis (depth) for tumour: %d", tumour_z_axis)
         logger.info("First tumour slice in prediction: %s, Last tumour slice in prediction: %s", first_tumour_pred, last_tumour_pred)
-        logger.info("First liver slice in prediction: %s, Last liver slice in prediction: %s", first_liver_pred, last_liver_pred)
+        if cfg.NUM_CLASSES == 3:
+            logger.info("First liver slice in prediction: %s, Last liver slice in prediction: %s", first_liver_pred, last_liver_pred)
+
+    def compute_manual_dice(self, cfg):
+        '''
+        Computes the manual Dice score between the transformed label and the
+        transformed inference data.
+
+        This is intended to be called after `load_inference_data(cfg)`, when
+        `self.label_data` and `self.inference_data` are both in the same
+        preprocessed space.
+
+        Params
+        ------
+        `cfg`: Config
+            The project configuration object.
+
+        Returns
+        -------
+        np.ndarray
+            Dice scores for the foreground classes.
+            For `NUM_CLASSES=3`, the order is `[liver, tumour]`.
+            For `NUM_CLASSES=2`, the order is `[tumour]`.
+        '''
+        if self.label_data is None or self.inference_data is None:
+            raise ValueError(
+                "Label and inference data are not loaded. "
+                "Call `load_inference_data(cfg)` before computing manual Dice."
+            )
+
+        gt = np.asarray(self.label_data)
+        pred = np.asarray(self.inference_data)
+
+        # Remove a leading channel dimension if present: (1, D, H, W) -> (D, H, W)
+        if gt.ndim == 4 and gt.shape[0] == 1:
+            gt = gt[0]
+        if pred.ndim == 4 and pred.shape[0] == 1:
+            pred = pred[0]
+
+        if gt.ndim != 3 or pred.ndim != 3:
+            raise ValueError(
+                "Expected 3D label and inference arrays with shape (D, H, W), "
+                f"but got label shape {gt.shape} and inference shape {pred.shape}."
+            )
+
+        if gt.shape != pred.shape:
+            raise ValueError(
+                f"Label and inference shapes differ: {gt.shape} vs {pred.shape}."
+            )
+
+        # Ensure integer class indices.
+        if np.issubdtype(gt.dtype, np.floating):
+            gt = np.rint(gt)
+        if np.issubdtype(pred.dtype, np.floating):
+            pred = np.rint(pred)
+
+        if gt.min() < 0 or gt.max() >= cfg.NUM_CLASSES:
+            raise ValueError(
+                f"Label contains class indices outside the valid range "
+                f"[0, {cfg.NUM_CLASSES - 1}]: min={gt.min()}, max={gt.max()}."
+            )
+
+        if pred.min() < 0 or pred.max() >= cfg.NUM_CLASSES:
+            raise ValueError(
+                f"Inference contains class indices outside the valid range "
+                f"[0, {cfg.NUM_CLASSES - 1}]: min={pred.min()}, max={pred.max()}."
+            )
+
+        gt_tensor = torch.from_numpy(gt.astype(np.int64, copy=False))
+        pred_tensor = torch.from_numpy(pred.astype(np.int64, copy=False))
+
+        # Convert class-index maps to one-hot format:
+        # (D, H, W) -> (D, H, W, C) -> (C, D, H, W) -> (1, C, D, H, W)
+        gt_onehot = (
+            torch.nn.functional.one_hot(gt_tensor, num_classes=cfg.NUM_CLASSES)
+            .permute(3, 0, 1, 2)
+            .unsqueeze(0)
+            .float()
+        )
+
+        pred_onehot = (
+            torch.nn.functional.one_hot(pred_tensor, num_classes=cfg.NUM_CLASSES)
+            .permute(3, 0, 1, 2)
+            .unsqueeze(0)
+            .float()
+        )
+
+        dice_metric = DiceMetric(include_background=False, reduction="none")
+        dice_metric(y_pred=pred_onehot, y=gt_onehot)
+        scores = dice_metric.aggregate().cpu().numpy().flatten()
+
+        logger.info("--- Manual Dice Calculation (Transformed Space) ---")
+
+        if cfg.NUM_CLASSES == 3:
+            class_names = ("liver", "tumour")
+        else:
+            class_names = ("tumour",)
+
+        for class_name, score in zip(class_names, scores):
+            logger.info("Manual %s Dice: %.4f", class_name.capitalize(), score)
+
+        return scores
+
 class DataWrapper:
     def __init__(self):
         self.volume = None
@@ -470,11 +582,7 @@ class DataWrapper:
     def print_summary_of_volume(self):
         '''
         Prints a summary of the image and label files of a given volume ID, including
-        their paths and shapes.
-        Params
-        ------
-        `volume_id`: int
-            The ID of the volume to print the summary for.
+        their paths, shapes, intensity ranges, and spatial alignment checks.
         '''
         if self.volume is None:
             raise ValueError("Volume is not set. Please set the volume using "
@@ -485,61 +593,86 @@ class DataWrapper:
                 "Inference data is present. Call `VolumeWrapper.load_inference_data(cfg)` "
                 "(or add a DataWrapper wrapper) before printing an inference summary."
             )
-        print("Volume summary:")
-        print("--------------------File paths--------------------")
-        print(f"Image path: {self.volume.img_path}")
-        print(f"Label path: {self.volume.label_path}")
+        logger.info("=== Volume summary ===")
+        logger.info("--- File paths ---")
+        logger.info("Image path: %s", self.volume.img_path)
+        logger.info("Label path: %s", self.volume.label_path)
 
-        print("--------------------File shapes--------------------")
-        print(f"Image shape: {self.volume.image.shape}")
-        print(f"Label shape: {self.volume.label.shape}")
+        logger.info("--- File shapes ---")
+        logger.info("Image shape: %s", self.volume.image.shape)
+        logger.info("Label shape: %s", self.volume.label.shape)
 
-        # Check if the shapes match
         if self.volume.image.shape != self.volume.label.shape:
-            print("Warning: Image and label shapes do not match!")
+            logger.warning("Image and label shapes do not match!")
 
-        print("--------------------Data arrays--------------------")
-        print('Image data shape: %s' % str(self.volume.image_data.shape))
-        print('Mask data shape: %s' % str(self.volume.label_data.shape))
+        logger.info("--- Data arrays ---")
+        logger.info("Image data shape: %s", self.volume.image_data.shape)
+        logger.info("Mask data shape: %s", self.volume.label_data.shape)
 
-        print("--------------------- value ranges--------------------")
-        print("CT intensity range:", self.volume.image_data.min(), "to", self.volume.image_data.max())
-        print("Mask intensity range:", self.volume.label_data.min(), "to", self.volume.label_data.max())
+        logger.info("--- Value ranges ---")
+        logger.info("CT intensity range: %.1f to %.1f HU",
+                     self.volume.image_data.min(), self.volume.image_data.max())
+        logger.info("Mask intensity range: %s to %s",
+                     self.volume.label_data.min(), self.volume.label_data.max())
+        logger.info("Voxel dimensions (mm): %s", self.volume.image.header.get_zooms())
 
-        print("Voxel dimensions (mm):", self.volume.image.header.get_zooms())
+        logger.info("--- Affine information ---")
+        img_affine = self.volume.image.affine
+        lbl_affine = self.volume.label.affine
 
-        print("--------------------Affine information (image)--------------------")
-        print("Image affine transformation matrix:\n", self.volume.image.affine)
-        print("Human readable header affine:\n", nib.aff2axcodes(self.volume.image.affine))
+        logger.info("Image orientation: %s", nib.aff2axcodes(img_affine))
+        logger.info("Label orientation: %s", nib.aff2axcodes(lbl_affine))
 
-        print("--------------------Affine information (label)--------------------")
-        print("Label affine transformation matrix:\n", self.volume.label.affine)
-        print("Human readable header affine:\n", nib.aff2axcodes(self.volume.label.affine))
-
-        print("\n--- Raw Voxel Overlap Check ---")
-        # Find the bounding box of the liver in the raw CT (HU > -100 is a safe liver threshold)
-        ct_liver_mask = self.volume.image_data > -100
-        ct_z_min, ct_z_max = np.where(ct_liver_mask.any(axis=(0, 1)))[0][[0, -1]]
-
-        # Find the bounding box of the liver in the raw label
-        lbl_z_min, lbl_z_max = np.where(self.volume.label_data > 0)[2][[0, -1]]
-
-        print(f"Raw CT liver Z-range (axial): {ct_z_min} to {ct_z_max}")
-        print(f"Raw Label liver Z-range (axial): {lbl_z_min} to {lbl_z_max}")
-
-        if ct_z_max < lbl_z_min or lbl_z_max < ct_z_min:
-            print("\n[CRITICAL] The raw label and raw CT do not overlap in the Z-axis.")
-            print("The annotator drew the mask in the wrong physical location.")
+        if np.allclose(img_affine, lbl_affine):
+            logger.info("Image and label affines are identical.")
         else:
-            print("\n[INFO] The raw label and raw CT overlap in the Z-axis.")
-            print("The raw data is correct, but the NIfTI header (affine) is mismatched.")
+            logger.warning("Image and label affines differ! This may cause spatial misalignment.")
+            logger.info("Image affine transformation matrix:\n%s", img_affine)
+            logger.info("Label affine transformation matrix:\n%s", lbl_affine)
 
-        # Check the unique values in the label data to understand the classes present
-        print("--------------------Unique labels in segmentation--------------------")
-        print("Unique labels in segmentation:", self.volume.mask_unique_values)
-        print("Check if the unique labels match the expected classes (e.g., 0 for background, 1 for liver, 2 for tumor).")
+        logger.info("--- Spatial & Intensity Sanity Checks ---")
+        # 1. Approximate body mask (soft tissue/bone is generally > -500 HU, avoiding table/air)
+        body_mask = self.volume.image_data > -500
+        if body_mask.any():
+            body_z = np.where(body_mask.any(axis=(0, 1)))[0]
+            body_z_min, body_z_max = int(body_z[0]), int(body_z[-1])
+            logger.info("Approximate body Z-range (axial): %d to %d", body_z_min, body_z_max)
+        else:
+            logger.warning("Could not find body mask (no voxels > -500 HU).")
+            body_z_min, body_z_max = None, None
 
-        print("---------------------Slice information---------------------")
+        # 2. Check Liver and Tumour masks explicitly
+        for class_val, class_name in [(1, "Liver"), (2, "Tumour")]:
+            class_mask = self.volume.label_data == class_val
+            if class_mask.any():
+                class_z = np.where(class_mask.any(axis=(0, 1)))[0]
+                z_min, z_max = int(class_z[0]), int(class_z[-1])
+                voxel_count = int(class_mask.sum())
+                logger.info("%s Z-range (axial): %d to %d (%d voxels)",
+                            class_name, z_min, z_max, voxel_count)
+
+                if body_z_min is not None:
+                    if z_max < body_z_min or z_min > body_z_max:
+                        logger.critical("%s mask is completely outside the approximate body bounds!", class_name)
+                    else:
+                        logger.info("%s mask is within body bounds.", class_name)
+
+                mask_intensities = self.volume.image_data[class_mask]
+                mean_hu = np.mean(mask_intensities)
+                logger.info("Mean CT intensity inside %s: %.1f HU", class_name, mean_hu)
+
+                if class_val == 1:
+                    if mean_hu < -200 or mean_hu > 400:
+                        logger.warning("Mean HU inside Liver mask (%.1f) is atypical for liver tissue. Check alignment.", mean_hu)
+            else:
+                logger.info("%s: Not present in this volume.", class_name)
+
+        logger.info("--- Unique labels in segmentation ---")
+        unique_vals = getattr(self.volume, 'mask_unique_values', np.unique(self.volume.label_data))
+        logger.info("Unique labels: %s", unique_vals)
+        logger.info("Expected classes: 0 (background), 1 (liver), 2 (tumour).")
+
+        logger.info("--- Slice information ---")
         self.volume.print_slice_summary()
 
     def plot_slice(self, slice_index):
@@ -553,7 +686,7 @@ class DataWrapper:
         if self.volume is None:
             raise ValueError("Volume is not set. Please set the volume using set_volume()")
 
-        print(f"Plotting slice {slice_index} of volume...")
+        logger.info("Plotting slice %d of volume...", slice_index)
         utils.plot_slice(self.volume.image_data, self.volume.label_data, slice_index)
         utils.plot_mixed_slice(self.volume.image_data, self.volume.label_data, slice_index)
 
@@ -853,7 +986,7 @@ class DatasetSummary:
         # Use Unix newlines for reproducible text files across platforms.
         df.to_csv(output_path, index=False, lineterminator="\n")
 
-        print(f"CSV exported to: {output_path} ({len(df)} rows, {len(df.columns)} columns)")
+        logger.info("CSV exported to: %s (%d rows, %d columns)", output_path, len(df), len(df.columns))
 
 def analyse_dataset(
         datasources: List[Dict[str, str]],
