@@ -1,15 +1,38 @@
 # Test modules
 
-This package contains a set of unit tests to assure the quality of the code
-is the same across development.
+This package contains the unit-test suite for `idssp.sonk`. The tests assure
+that code behaviour remains consistent across development.
 
-It has the following modules:
+All tests are CPU-only and deterministic. They use synthetic data only:
+in-memory pandas objects, tiny NumPy/torch tensors, and fake LiTS-like file
+trees under pytest's `tmp_path`. No GPU, network access, real LiTS volumes,
+real credentials, or the real `.env` file is required.
 
-## First series
+Shared fixtures (config-singleton reset and a minimal frozen `Config`) live
+in `tests/conftest.py`.
+
+| Series | Scope | Files | Tests |
+|---|---|---|---|
+| Series 1 (Plan 1) | Stratification, CSV/data helpers, training control logic, LiTS loader, affine correction, evaluation post-processing | 6 | 191 |
+| Series 2 (Plan 2) | Configuration, model factory, inference checkpoint alignment | 3 | 70 |
+
+Run the whole suite from the repository root:
+
+```bash
+~/envs/dev-thesis/bin/python -m pytest tests/ -v
+```
+
+Notification dispatch (mail/Telegram) is intentionally out of scope. Heavier
+smoke/integration tests (real model forward passes, transform-pipeline
+execution, `Invertd` inversion) are deferred to a later plan; those paths are
+currently verified via the `--fast-run` entrypoint and server-side scripts,
+as described in `AGENTS.md`.
+
+## Series 1 — Pure-logic unit tests (Plan 1)
 
 ### `tests/test_stratification.py`
 
-### Purpose
+#### Purpose
 
 This test file verifies the dataset stratification logic used to divide LiTS cases into training, validation, and test subsets. The module under test is `idssp/sonk/stats/stratification.py`.
 
@@ -19,7 +42,7 @@ The tests therefore protect the correctness and reproducibility of the split-gen
 
 ---
 
-### Scope
+#### Scope
 
 The file tests pure and mostly pure helper functions involved in:
 
@@ -35,7 +58,7 @@ The file does **not** run the full split-generation notebook, load real LiTS dat
 
 ---
 
-### Main behaviours tested
+#### Main behaviours tested
 
 | Area | Functions tested | Behaviour verified |
 |---|---|---|
@@ -49,7 +72,7 @@ The file does **not** run the full split-generation notebook, load real LiTS dat
 
 ---
 
-### Why this test file matters
+#### Why this test file matters
 
 The stratification module sits upstream of model training and evaluation. If it misclassifies a boundary case, masks tumour volumes incorrectly, or saves inconsistent split metadata, the error can propagate into every downstream experiment.
 
@@ -63,10 +86,9 @@ This test file is important because it catches:
 
 These are high-value checks because they are cheap to run and protect the experimental foundation of the thesis.
 
-
 ---
 
-### How to run
+#### How to run
 
 From the repository root:
 
@@ -78,13 +100,13 @@ The test suite is fast and should complete in a few seconds on CPU.
 
 ---
 
-### Limitations
+#### Limitations
 
 This file tests the stratification helper functions and metadata export logic. It does not verify the broader scientific suitability of the chosen stratification strategy, nor does it regenerate or validate the official split JSON files under `files/splits/`.
 
 ### `tests/test_data_csv.py`
 
-### Purpose
+#### Purpose
 
 This test file verifies the CSV/data-helper logic in `idssp/sonk/model/data.py`.
 
@@ -94,7 +116,7 @@ The tests use only synthetic pandas objects, NumPy arrays, and temporary files. 
 
 ---
 
-### Scope
+#### Scope
 
 The file tests pure and mostly pure helper functions involved in:
 
@@ -110,7 +132,7 @@ The file does not load real NIfTI volumes or run model training/inference.
 
 ---
 
-### Main behaviours tested
+#### Main behaviours tested
 
 | Area | Functions/classes tested | Behaviour verified |
 |---|---|---|
@@ -125,7 +147,7 @@ The file does not load real NIfTI volumes or run model training/inference.
 
 ---
 
-### Why this test file matters
+#### Why this test file matters
 
 This file protects the data-reporting layer of the project.
 
@@ -152,7 +174,7 @@ The tests preserve the schema used by the executable code rather than imposing a
 
 ---
 
-### Important conventions preserved by the tests
+#### Important conventions preserved by the tests
 
 - The tests do not modify production source code.
 - The tests do not normalise `tumor` / `tumour` spelling.
@@ -163,7 +185,7 @@ The tests preserve the schema used by the executable code rather than imposing a
 
 ---
 
-### How to run
+#### How to run
 
 From the repository root:
 
@@ -173,7 +195,7 @@ From the repository root:
 
 ---
 
-### Limitations
+#### Limitations
 
 This file tests CSV/data-helper behaviour and slice-threshold logic. It does not validate the medical correctness of the underlying per-case measurements, nor does it load real medical images.
 
@@ -181,7 +203,7 @@ Full volume loading, NIfTI metadata handling, and heavier integration checks are
 
 ### `tests/test_training_logic.py`
 
-### Purpose
+#### Purpose
 
 This test file verifies the training control logic in `idssp/sonk/model/training.py`.
 
@@ -193,7 +215,7 @@ The tests use only mocks, synthetic values, and lightweight config objects. They
 
 ---
 
-### Scope
+#### Scope
 
 The file tests logic-only methods in `idssp/sonk/model/training.py`:
 
@@ -207,7 +229,7 @@ The file does not test model construction, data loading, transform pipelines, or
 
 ---
 
-### Main behaviours tested
+#### Main behaviours tested
 
 | Area | Function/class tested | Behaviour verified |
 |---|---|---|
@@ -219,7 +241,7 @@ The file does not test model construction, data loading, transform pipelines, or
 
 ---
 
-### Why this test file matters
+#### Why this test file matters
 
 This file protects the decision-making layer of the training pipeline.
 
@@ -239,7 +261,7 @@ The early stopping tests are especially important because `AGENTS.md` specifies 
 
 ---
 
-### Important conventions preserved by the tests
+#### Important conventions preserved by the tests
 
 - The tests do not modify production source code.
 - The tests do not call `config.init()` or depend on the real `.env` file.
@@ -252,7 +274,7 @@ The early stopping tests are especially important because `AGENTS.md` specifies 
 
 ---
 
-### How to run
+#### How to run
 
 From the repository root:
 
@@ -262,7 +284,7 @@ From the repository root:
 
 ---
 
-### Limitations
+#### Limitations
 
 This file tests training control logic only. It does not verify:
 
@@ -277,7 +299,7 @@ Full pipeline integration is verified separately via `python main.py --fast-run`
 
 ### `tests/test_loader.py`
 
-### Purpose
+#### Purpose
 
 This test file verifies the data discovery, pairing, and split-loading logic in `idssp/sonk/disk/loader.py`.
 
@@ -287,7 +309,7 @@ The tests use only synthetic LiTS-like file trees created under pytest's `tmp_pa
 
 ---
 
-### Scope
+#### Scope
 
 The file tests the `CustomDataset` and `DataCollector` classes in `idssp/sonk/disk/loader.py`:
 
@@ -301,7 +323,7 @@ The file does not load real NIfTI volumes, parse image headers, or run model tra
 
 ---
 
-### Main behaviours tested
+#### Main behaviours tested
 
 | Area | Functions/classes tested | Behaviour verified |
 |---|---|---|
@@ -313,7 +335,7 @@ The file does not load real NIfTI volumes, parse image headers, or run model tra
 
 ---
 
-### Why this test file matters
+#### Why this test file matters
 
 This file protects the data ingestion layer of the project.
 
@@ -331,7 +353,7 @@ By enforcing strict validation and explicit warnings, these tests ensure that th
 
 ---
 
-### Important conventions preserved by the tests
+#### Important conventions preserved by the tests
 
 - The tests do not modify production source code.
 - The tests do not load real LiTS volumes or parse real NIfTI headers.
@@ -341,7 +363,7 @@ By enforcing strict validation and explicit warnings, these tests ensure that th
 
 ---
 
-### How to run
+#### How to run
 
 From the repository root:
 
@@ -351,7 +373,7 @@ From the repository root:
 
 ---
 
-### Limitations
+#### Limitations
 
 This file tests file discovery, pairing, and split loading. It does not verify:
 
@@ -362,7 +384,7 @@ This file tests file discovery, pairing, and split loading. It does not verify:
 
 ### `tests/test_force_matching_affined.py`
 
-### Purpose
+#### Purpose
 
 This test file verifies the `ForceMatchingAffined` transform in `idssp/sonk/model/transforms.py`.
 
@@ -372,7 +394,7 @@ The tests use synthetic affines, lightweight fake metadata objects, and real MON
 
 ---
 
-### Scope
+#### Scope
 
 The file tests the `ForceMatchingAffined` class and its internal helpers:
 
@@ -385,7 +407,7 @@ The tests deliberately preserve the production invariants: `_ALLOWED_LITS_VOLUME
 
 ---
 
-### Main behaviours tested
+#### Main behaviours tested
 
 | Area | Functions tested | Behaviour verified |
 |---|---|---|
@@ -397,9 +419,9 @@ The tests deliberately preserve the production invariants: `_ALLOWED_LITS_VOLUME
 
 ---
 
-### Why this test file matters
+#### Why this test file matters
 
-This file protects a critical data-handling safeguard. 
+This file protects a critical data-handling safeguard.
 
 As noted in `AGENTS.md`, LiTS volumes 48–52 have severe affine mismatches. If the correction logic is too broad, it could silently overwrite valid affines on other volumes, corrupting spatial metadata and ruining downstream metrics. If it is too narrow or fails to trigger, the model will train on geometrically misaligned masks for those specific cases.
 
@@ -407,7 +429,7 @@ These tests ensure that the correction is applied **only** to the explicitly app
 
 ---
 
-### Important conventions preserved by the tests
+#### Important conventions preserved by the tests
 
 - The tests do not modify production source code.
 - The tests do not widen `_ALLOWED_LITS_VOLUMES` or change `_IDENTITY_AFFINE_THRESHOLD`.
@@ -416,7 +438,7 @@ These tests ensure that the correction is applied **only** to the explicitly app
 
 ---
 
-### How to run
+#### How to run
 
 From the repository root:
 
@@ -426,23 +448,23 @@ From the repository root:
 
 ---
 
-### Limitations
+#### Limitations
 
 This file tests the affine correction logic in isolation. It does not verify the full MONAI transform pipeline, the actual loading of NIfTI files from disk, or the downstream impact of the corrected affines on model training.
 
 ### `tests/test_evaluator_postprocess.py`
 
-### Purpose
+#### Purpose
 
 This test file verifies the post-processing and report-export logic in the evaluation pipeline (specifically `_post_process_class_map` and `MetricsEvaluator.generate_report`).
 
-The tested code is responsible for enforcing anatomical realism on the model's raw 3D segmentation predictions (e.g., removing disconnected liver fragments and stray tumours) and for exporting the final per-case metrics to CSV files for thesis reporting. 
+The tested code is responsible for enforcing anatomical realism on the model's raw 3D segmentation predictions (e.g., removing disconnected liver fragments and stray tumours) and for exporting the final per-case metrics to CSV files for thesis reporting.
 
 These tests are critical because incorrect post-processing can silently alter final Dice and HD95 scores, and incorrect CSV export can lead to incomplete or misaligned thesis tables. The tests use small synthetic 3D NumPy arrays and in-memory pandas DataFrames, requiring no GPU, real LiTS data, or network access.
 
 ---
 
-### Scope
+#### Scope
 
 The file tests two main components:
 
@@ -453,7 +475,7 @@ The file does not run full-volume inference, load real NIfTI files, or compute a
 
 ---
 
-### Main behaviours tested
+#### Main behaviours tested
 
 | Area | Functions/classes tested | Behaviour verified |
 |---|---|---|
@@ -461,11 +483,11 @@ The file does not run full-volume inference, load real NIfTI files, or compute a
 | Liver retention | `_post_process_class_map` | Retains only the largest connected component of the liver; removes small, disconnected stray liver voxels |
 | Tumour anchoring | `_post_process_class_map` | Preserves tumour voxels that are inside or immediately adjacent to the retained liver anatomy; strips tumour voxels that are disconnected from the main anatomy |
 | Fragmentation warning | `_post_process_class_map` | Emits a warning if more than 50% of predicted liver voxels are discarded during LCC cleanup; remains silent when the liver is mostly retained or absent |
-| Report export | `MetricsEvaluator.generate_report` | Raises `ValueError` on empty input dictionaries; skips empty DataFrames without crashing; writes correctly named raw and post-processed CSVs; sorts rows lexicographically by `case_name`; respects custom output directories or falls back to `config.RUN_DIR` |
+| Report export | `MetricsEvaluator.generate_report` | Raises `ValueError` on empty input dictionaries; skips empty DataFrames without crashing; writes correctly named raw and post-processed CSVs; sorts rows lexicographically by `case_name`; respects custom output directories or falls back to a reports directory under `config.RUN_DIR` |
 
 ---
 
-### Why this test file matters
+#### Why this test file matters
 
 This file protects the integrity of your final reported metrics and thesis tables.
 
@@ -483,7 +505,7 @@ By verifying both the anatomical logic and the export mechanics, this file ensur
 
 ---
 
-### Important conventions preserved by the tests
+#### Important conventions preserved by the tests
 
 - The tests do not modify production source code.
 - The tests strictly enforce the 3-class layout defined in `AGENTS.md`: `0` (background), `1` (liver), `2` (tumour).
@@ -493,7 +515,7 @@ By verifying both the anatomical logic and the export mechanics, this file ensur
 
 ---
 
-### How to run
+#### How to run
 
 From the repository root:
 
@@ -503,11 +525,11 @@ From the repository root:
 
 ---
 
-### Limitations
+#### Limitations
 
 This file tests the post-processing logic and CSV export in isolation. It does not verify the end-to-end sliding-window inference pipeline, the MONAI metric calculations (Dice/HD95), or the `Invertd` transform used to map predictions back to the original scanner space. Those integration steps are verified via the `--fast-run` entrypoint and server-side validation scripts.
 
-## Second series
+## Series 2 — Config, factory, and inference unit tests (Plan 2)
 
 ### `tests/test_config.py`
 
@@ -515,7 +537,7 @@ This file tests the post-processing logic and CSV export in isolation. It does n
 
 This test file verifies the configuration, environment detection, and serialisation logic in `idssp/sonk/config.py`.
 
-The tested code is the foundation of the pipeline, responsible for reading environment variables, detecting hardware capabilities (CPU/GPU/RAM), validating required paths, and providing a frozen `Config` singleton to all downstream modules. 
+The tested code is the foundation of the pipeline, responsible for reading environment variables, detecting hardware capabilities (CPU/GPU/RAM), validating required paths, and providing a frozen `Config` singleton to all downstream modules.
 
 These tests are critical because a silent failure in configuration (e.g., misidentifying a limited environment or leaking credentials into a checkpoint) can invalidate training runs or compromise security. The tests use mocked hardware detection, controlled environment variables, and temporary directories, requiring no GPU, network access, or real `.env` file.
 
@@ -559,6 +581,7 @@ This file protects the foundational configuration layer of the project.
 Every downstream module (data loading, training, inference) relies on the `Config` singleton to determine execution paths. If `is_limited_env()` incorrectly identifies a machine, the pipeline might attempt GPU-only sliding-window inference on a CPU, or fail to invert spatial transforms correctly, resulting in geometrically invalid NIfTI files. If `to_dict()` fails to exclude secrets, credentials could be written into checkpoint files.
 
 These tests catch problems such as:
+
 - silent acceptance of missing or invalid environment variables,
 - incorrect hardware detection leading to out-of-memory crashes or invalid outputs,
 - credentials leaking into serialised config snapshots,
@@ -655,9 +678,11 @@ From the repository root:
 ~/envs/dev-thesis/bin/python -m pytest tests/test_models_factory.py -v
 ```
 
-This file tests factory dispatch and weight-loading logic in isolation. It does not 
-verify that the constructed models produce correct output shapes, nor does it test
-the integration of these models into the ModelBuilder training loop.
+---
+
+#### Limitations
+
+This file tests factory dispatch and weight-loading logic in isolation. It does not verify that the constructed models produce correct output shapes, nor does it test the integration of these models into the `ModelBuilder` training loop.
 
 ### `tests/test_inferer_checkpoint.py`
 
@@ -728,4 +753,4 @@ From the repository root:
 
 #### Limitations
 
-This file tests checkpoint loading and config alignment in isolation. It does not verify full-volume sliding-window inference, the `Invertd` spatial inversion pipeline, or NIfTI export correctness. Those integration paths are verified via `do_inference.py --fast-run` on the server.
+This file tests checkpoint loading and config alignment in isolation. It does not verify full-volume sliding-window inference, the `Invertd` spatial inversion pipeline, or NIfTI export correctness. Those integration paths are verified via `scripts/validate.sh` (which runs `do_inference.py`) on the server.
