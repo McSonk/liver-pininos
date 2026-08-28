@@ -12,3 +12,5 @@ notebooks/*
 pendientes.md
 .agents
 skills-lock.json
+
+test_plan/*
