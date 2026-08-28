@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import torch
 import torch.nn as nn
 
 from idssp.sonk.config import AvailableModels
@@ -161,16 +162,13 @@ def test_load_accepts_wrapped_state_dict(monkeypatch, wrapper_key):
     assert set(call_args[0].keys()) == {"linear.weight", "linear.bias"}
 
 
-def test_load_accepts_full_module_checkpoint(monkeypatch):
-    source = _TinyModule()
-    target = _TinyModule()
-    _make_torch_load(monkeypatch, source)
-    spy = _patch_load_state(target, monkeypatch)
-
-    models._load_monai_pretrained_weights(target, Path("pretrained.pth"))
-
-    call_args, _ = spy.call_args
-    assert set(call_args[0].keys()) == set(source.state_dict().keys())
+def test_load_full_module_checkpoint_raises_runtime_error(tmp_path):
+    """A full-module checkpoint is rejected under weights_only=True."""
+    model = _TinyModule()
+    path = tmp_path / "full_module.pth"
+    torch.save(model, path)
+    with pytest.raises(RuntimeError):
+        models._load_monai_pretrained_weights(model, path)
 
 
 def test_load_strips_module_prefix(monkeypatch):

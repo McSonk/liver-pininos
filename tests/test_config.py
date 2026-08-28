@@ -210,15 +210,10 @@ def _patch_cgroup_files(monkeypatch, files):
     monkeypatch.setattr(config_module.os.path, "exists", lambda p: p in files)
 
 
-def test_cgroup_limit_v2_numeric():
+def test_cgroup_limit_v2_numeric(monkeypatch):
     """A numeric cgroup v2 limit is returned directly."""
-    import os as _os
-
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(config_module.os.path, "exists", lambda p: p in {"/sys/fs/cgroup/memory.max": "1"})
-    monkeypatch.setattr(builtins, "open", lambda p, *a, **k: io.StringIO("8589934592") if p.endswith("memory.max") else (_ for _ in ()).throw(FileNotFoundError(p)))
+    _patch_cgroup_files(monkeypatch, {"/sys/fs/cgroup/memory.max": "8589934592"})
     assert config_module.get_cgroup_memory_limit_bytes() == 8589934592
-    monkeypatch.undo()
 
 
 def test_cgroup_limit_v2_max_falls_back_to_v1(monkeypatch):

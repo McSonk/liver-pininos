@@ -7,17 +7,13 @@ no GPU, network, real LiTS data, or real .env is used.
 """
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-import torch
 
-from idssp.sonk.model.training import (
-    AugmentedDataset,
-    EarlyStopper,
-    ModelBuilder,
-)
-
+from idssp.sonk.config import AvailableModels
+from idssp.sonk.model.training import (AugmentedDataset, EarlyStopper,
+                                       ModelBuilder)
 
 # ---------------------------------------------------------------------------
 # AugmentedDataset
@@ -134,11 +130,10 @@ def test_should_notify_boundary_epochs(epoch, expected):
 
 class MockConfig:
     def __init__(self):
-        self.MODEL = MagicMock()
-        self.MODEL.value = "SEG_RES_NET"
+        self.MODEL = AvailableModels.SEG_RES_NET
         self.NUM_CLASSES = 3
         self.NUM_EPOCHS = 200
-        self.ISO_SPACING = 1.0
+        self.ISO_SPACING = (1.0, 1.0, 1.0)
         self.HU_WINDOW_MIN = -175
         self.HU_WINDOW_MAX = 250
 
@@ -160,7 +155,7 @@ def test_validate_checkpoint_model_mismatch_raises():
     mb = _make_builder_with_config()
     checkpoint = {
         "model_state_dict": {},
-        "config_snapshot": {"MODEL": "U_NET", "NUM_CLASSES": 3},
+        "config_snapshot": {"MODEL": "u-net", "NUM_CLASSES": 3},
     }
     with pytest.raises(ValueError, match="MODEL mismatch"):
         mb._validate_checkpoint(checkpoint, Path("fake.pth"))
@@ -170,7 +165,7 @@ def test_validate_checkpoint_num_classes_mismatch_raises():
     mb = _make_builder_with_config()
     checkpoint = {
         "model_state_dict": {},
-        "config_snapshot": {"MODEL": "SEG_RES_NET", "NUM_CLASSES": 2},
+        "config_snapshot": {"MODEL": "seg-res-net", "NUM_CLASSES": 2},
     }
     with pytest.raises(ValueError, match="NUM_CLASSES mismatch"):
         mb._validate_checkpoint(checkpoint, Path("fake.pth"))
@@ -181,7 +176,7 @@ def test_validate_checkpoint_preprocessing_mismatch_warns(caplog):
     checkpoint = {
         "model_state_dict": {},
         "config_snapshot": {
-            "MODEL": "SEG_RES_NET",
+            "MODEL": "seg-res-net",
             "NUM_CLASSES": 3,
             "ISO_SPACING": 2.0,
             "HU_WINDOW_MIN": -100,
@@ -208,7 +203,7 @@ def test_validate_checkpoint_epoch_ge_num_epochs_raises():
     mb = _make_builder_with_config()
     checkpoint = {
         "model_state_dict": {},
-        "config_snapshot": {"MODEL": "SEG_RES_NET", "NUM_CLASSES": 3},
+        "config_snapshot": {"MODEL": "seg-res-net", "NUM_CLASSES": 3},
         "epoch": 200,  # equal to NUM_EPOCHS
     }
     with pytest.raises(RuntimeError, match="Checkpoint epoch.*>=.*current NUM_EPOCHS"):
@@ -223,7 +218,7 @@ def test_validate_checkpoint_valid_passes():
     mb = _make_builder_with_config()
     checkpoint = {
         "model_state_dict": {},
-        "config_snapshot": {"MODEL": "SEG_RES_NET", "NUM_CLASSES": 3},
+        "config_snapshot": {"MODEL": "seg-res-net", "NUM_CLASSES": 3},
         "epoch": 50,
     }
     mb._validate_checkpoint(checkpoint, Path("fake.pth"))  # should not raise

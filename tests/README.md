@@ -327,7 +327,7 @@ The file does not load real NIfTI volumes, parse image headers, or run model tra
 
 | Area | Functions/classes tested | Behaviour verified |
 |---|---|---|
-| File pairing | `CustomDataset.get_lits_paths` | Correctly pairs `volume-X.nii.gz` with `segmentation-X.nii.gz`; warns and skips when labels are missing; ignores non-volume files without reporting them as unpaired |
+| File pairing | `CustomDataset.get_lits_paths` | Correctly pairs `volume-X.nii.gz` with `segmentation-X.nii.gz`; warns and skips when labels are missing; excludes non-volume files from pairing and logs a warning for each |
 | Source validation | `CustomDataset.discover_and_pair` | Raises `ValueError` for unsupported dataset sources or when files have not been set |
 | Directory reading | `DataCollector.read_dir` | Raises `FileNotFoundError` for missing directories; raises `ValueError` for empty directories; warns when the file count is odd (indicating unpaired files) |
 | Split loading | `DataCollector._load_split` | Returns correct train/val lists; raises `FileNotFoundError` when the JSON references files missing from disk; warns when disk contains files not listed in the JSON |

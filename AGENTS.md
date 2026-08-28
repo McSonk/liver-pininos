@@ -64,8 +64,11 @@ default without explicit instruction; the Mamba model class does not exist in
 - **Compute**: DGX Station A100 (80 GB VRAM, 503 GB RAM) is the primary server;
   TWCC V100 was used previously — this is why the TWCC fallback branches exist in the
   scripts, don't strip them.
-- **No automated tests / linters / CI exist in this repo.** Verify changes by running
-  the entrypoints above (use `--fast-run` for a cheap smoke test).
+- A CPU-only pytest suite lives under `tests/` (see `tests/README.md`).
+  Run `~/envs/dev-thesis/bin/python -m pytest tests/ -v` before and after
+  changes (`pytest` and `pytest-cov` are assumed installed in the dev venv).
+  No linters or CI exist. Also verify runtime changes via the entrypoints
+  above (use `--fast-run` for a cheap smoke test).
 
 ### Mandatory `.env` Variables
 `config.init()` will hard-fail if these are missing:
