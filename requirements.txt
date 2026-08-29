@@ -11,7 +11,7 @@
 #    (Check server CUDA version with 'nvidia-smi' and use cu121 if needed)
 #
 # 2. Install mamba:
-#    pip install -c constraints-mamba.txt --no-cache-dir --no-build-isolation "causal-conv1d>=1.4.0"
+#    pip install --no-cache-dir --no-build-isolation "causal-conv1d>=1.4.0"
 #    pip install -c constraints-mamba.txt --no-cache-dir --no-build-isolation mamba-ssm
 #
 # 3. Verify:
