@@ -68,6 +68,6 @@ pandas==2.3.3
 requests==2.34.2
 
 # For mamba-ssm
-huggingface_hub=1.29.0
-transformers=5.16.1
-causal-conv1d=1.7.0
+huggingface_hub==1.29.0
+transformers==5.16.1
+causal-conv1d==1.7.0
