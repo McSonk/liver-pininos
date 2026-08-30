@@ -11,12 +11,33 @@
 #    (Check server CUDA version with 'nvidia-smi' and use cu121 if needed)
 #
 # 2. Install mamba:
-#    pip install --no-cache-dir --no-build-isolation "causal-conv1d>=1.4.0"
-#    pip install -c constraints-mamba.txt --no-cache-dir --no-build-isolation mamba-ssm
+#    pip install --no-deps --no-cache-dir --no-build-isolation mamba-ssm
 #
 # 3. Verify:
+#    ~/mamba-env/bin/python - <<'PY'
+#    print("*" * 80)
+#    print("Verifying Mamba installation...")
+#    import torch
+#    import causal_conv1d
+#    from mamba_ssm import Mamba
 #
-#    python -c "import torch; print('CUDA: %s\nTorch: %s\nCUDA available? %s' % (torch.version.cuda, torch.__version__, torch.cuda.is_available()))"
+#    print("torch:", torch.__version__)
+#    print("cuda:", torch.cuda.is_available())
+#
+#    layer = Mamba(
+#        d_model=16,
+#        d_state=16,
+#        d_conv=4,
+#        expand=2,
+#    ).cuda()
+#
+#    x = torch.randn(2, 8, 16, device="cuda")
+#    y = layer(x)
+#
+#    print("output shape:", y.shape)
+#    print("Mamba test OK")
+#    PY
+#
 #
 # 4. Install the rest of the dependencies:
 #    pip install -r requirements.txt
@@ -45,3 +66,8 @@ pandas==2.3.3
 
 # For sending notifications
 requests==2.34.2
+
+# For mamba-ssm
+huggingface_hub=1.29.0
+transformers=5.16.1
+causal-conv1d=1.7.0
