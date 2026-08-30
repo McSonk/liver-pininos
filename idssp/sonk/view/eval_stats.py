@@ -186,17 +186,17 @@ def _draw_metric_boxplot(ax, data_list, colors, title, ylabel, y_lim=None):
         # Filter out the outliers from the main dataset for the grey jitter
         non_outlier_data = data[~is_outlier]
 
-        # Jitter ONLY for non-outlier points (Grey)
+        # Jitter ONLY for non-outlier points (Ink colour with white edge ring)
         if len(non_outlier_data) > 0:
             x_jitter = np.random.normal(i, 0.06, size=len(non_outlier_data))
-            ax.scatter(x_jitter, non_outlier_data, alpha=0.5, color='#333333', s=20, zorder=2, edgecolors='none')
+            ax.scatter(x_jitter, non_outlier_data, alpha=0.5, color=FONT_COLOUR, s=20, zorder=2, edgecolors='white', linewidths=0.6)
 
-        # Re-plot ALL outliers specifically in RED
+        # Re-plot ALL outliers specifically in RED (white edge ring for separation)
         outlier_values = data[is_outlier]
         if len(outlier_values) > 0:
             x_outliers = np.random.normal(i, 0.06, size=len(outlier_values))
             ax.scatter(x_outliers, outlier_values, color=COLOR_OUTLIER, s=60, zorder=5, 
-                        edgecolors='white', linewidth=1.5)
+                        edgecolors='white', linewidths=0.6)
 
         # --- STATISTICAL LABELS ---
         med_val = np.median(data)
@@ -265,6 +265,25 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model", attach_hd95:
         h_liv = df['hd95_liver_mm'].dropna().values
         h_tum = df['hd95_tumour_mm'].dropna().values
 
+        # Prevent silent clipping: expand Y-limit if data exceeds the default maximum.
+        # HD95 can exceed 500 mm if a model fails catastrophically on a volume.
+        hd95_max = 0.0
+        for arr in (h_liv, h_tum):
+            if len(arr) > 0:
+                valid_vals = arr[np.isfinite(arr)]
+                if len(valid_vals) > 0:
+                    hd95_max = max(hd95_max, float(np.max(valid_vals)))
+
+        hd95_y_lim = list(HD95_Y_LIM)
+        if hd95_max > HD95_Y_LIM[1]:
+            logger.warning(
+                "HD95 maximum value (%.2f mm) exceeds the default plot limit (%.2f mm). "
+                "Expanding Y-axis to prevent silent clipping of data and labels.",
+                hd95_max, HD95_Y_LIM[1]
+            )
+            # Add 15% headroom so statistical labels and outlier markers are not cut off
+            hd95_y_lim[1] = hd95_max * 1.15
+
         # Defensive check: IoU columns may not exist in older evaluation CSVs
         has_iou = 'iou_liver' in df.columns and 'iou_tumour' in df.columns
         if has_iou:
@@ -294,7 +313,7 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model", attach_hd95:
         _draw_metric_boxplot(ax2, [h_liv, h_tum], [COLOR_LIVER, COLOR_TUMOUR],
                              f'{model_name} Test Set: Boundary Distance (HD95)',
                              '95th Percentile Hausdorff Distance (mm)',
-                             y_lim=HD95_Y_LIM)
+                             y_lim=hd95_y_lim)
     else:
         fig, ax1 = plt.subplots(1, 1, figsize=(7, 6))
 

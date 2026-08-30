@@ -398,23 +398,30 @@ class VolumeWrapper:
                     f"Channel dimension may not have been removed."
                 )
 
+            # 1. Calculate z_axis FIRST.
+            # Row 2 of the affine gives each voxel axis's contribution to physical Z
+            # (z = affine[2,0]*i + affine[2,1]*j + affine[2,2]*k + affine[2,3]).
+            # The voxel axis with the largest absolute weight is the slice axis.
+            # Default to 2 (standard NIfTI Z-axis convention) if affine is missing.
+            z_axis = 2
+            if affine is not None:
+                z_axis = int(np.argmax(np.abs(affine[2, :3])))
+
+            # 2. Check for empty mask AFTER calculating z_axis.
+            # This prevents returning None for z_axis, which would cause a 
+            # TypeError in downstream logging (e.g., logger.info("%d", z_axis)).
             mask = volume == class_idx
             if not np.any(mask):
-                return None, None, None
+                return None, None, z_axis
 
-            # Dynamically find the Z-axis (depth) from the affine matrix
-            z_axis = 0  # Default fallback
-            if affine is not None:
-                # affine[:3, :3] columns are the physical directions of voxel axes 0, 1, 2
-                # Physical Z is the 3rd row (index 2). We find which voxel axis aligns most with it.
-                z_axis = int(np.argmax(np.abs(affine[:3, 2])))
-
-            # Collapse the non-Z axes
+            # 3. Collapse the non-Z axes dynamically
             axes_to_collapse = tuple(i for i in range(3) if i != z_axis)
             slices_with_class = np.any(mask, axis=axes_to_collapse)
             indices = np.where(slices_with_class)[0]
+
             if len(indices) == 0:
                 return None, None, z_axis
+
             return int(indices[0]), int(indices[-1]), z_axis
 
         logger.info("Image affine:\n%s", self.image.affine)

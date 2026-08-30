@@ -215,7 +215,7 @@ This computes both raw and post-processed Dice and HD95, and generates thesis-re
 
 ## Project Structure
 
-```
+```text
 pininos/
 ├── main.py                         # Training entry point
 ├── do_evaluation.py                # Local test-time evaluation and metrics
