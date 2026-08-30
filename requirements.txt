@@ -4,21 +4,44 @@
 # 1. Install PyTorch FIRST (Choose one based on your machine):
 #
 #    FOR LOCAL CPU:
-#    pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cpu
+#    pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cpu
 #
 #    FOR LAB SERVER (A100 GPU):
-#    pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu126
+#    pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu128
 #    (Check server CUDA version with 'nvidia-smi' and use cu121 if needed)
 #
-# 2. Install the rest of the dependencies:
+# 2. Install dependencies:
 #    pip install -r requirements.txt
 #
-# (Optional) For VSCode development:
-# pip install "ipython==8.39.0"
-# pip install ipykernel
+# 3. Install mamba:
+#    wget https://github.com/state-spaces/mamba/releases/download/v2.3.2.post1/mamba_ssm-2.3.2.post1+cu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
+#    pip install --no-deps   "./mamba_ssm-2.3.2.post1+cu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl"
 #
-# (Optional) For stratification:
-# pip install "iterative-stratification==0.1.9"
+# 4. Verify:
+#    ~/mamba-env/bin/python - <<'PY'
+#    print("*" * 80)
+#    print("Verifying Mamba installation...")
+#    import torch
+#    import causal_conv1d
+#    from mamba_ssm import Mamba
+#
+#    print("torch:", torch.__version__)
+#    print("cuda:", torch.cuda.is_available())
+#
+#    layer = Mamba(
+#        d_model=16,
+#        d_state=16,
+#        d_conv=4,
+#        expand=2,
+#    ).cuda()
+#
+#    x = torch.randn(2, 8, 16, device="cuda")
+#    y = layer(x)
+#
+#    print("output shape:", y.shape)
+#    print("Mamba test OK")
+#    PY
+#
 # ==============================================================================
 
 
@@ -27,13 +50,16 @@ monai==1.5.2
 nibabel==5.4.2
 scipy==1.15.3
 einops==0.8.2
+numpy==2.4.6
 
 # Visualization
 matplotlib==3.10.8
 tensorboard==2.20.0
 
-# Environments
+# Environments & Utilities
 python-dotenv==1.2.2
+packaging==26.3
+ninja==1.13.0
 
 # For logging stats
 psutil==6.0.0
@@ -44,3 +70,8 @@ pandas==2.3.3
 
 # For sending notifications
 requests==2.34.2
+
+# For mamba-ssm
+huggingface_hub==1.29.0
+transformers==5.16.1
+causal-conv1d==1.7.0

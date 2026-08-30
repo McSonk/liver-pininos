@@ -26,7 +26,7 @@ Master's thesis: automated liver tumour segmentation using deep learning.
 | SegResNet | `SEG_RES_NET` / Baseline, **current `MODEL_TO_USE` default** | Best baseline so far. |
 | SwinUNETR | `SWIN_UNETR` / Baseline | Underperforms SegResNet by ~9–12 Dice points at this dataset scale (~79 training volumes). |
 | SwinUNETR Pretrain | `SWIN_UNETR_PRETRAIN` | Loads MONAI pretrained weights. |
-| **2.5D Mamba-hybrid** | **Primary target (supervisor-approved), not yet in `AvailableModels`** | 2D CNN/UNet encoder + `mamba_ssm.Mamba`/`Mamba2` block aggregating along z. Used as a raw component, not a wholesale published network. **Current phase (Week 1):** dummy-tensor prototype of the z-axis aggregation strategy in `~/denv_mamba`. |
+| **2.5D Mamba-hybrid** | **Primary target (supervisor-approved), not yet in `AvailableModels`** | 2D CNN/UNet encoder + `mamba_ssm.Mamba`/`Mamba2` block aggregating along z. Used as a raw component, not a wholesale published network. **Current phase (Week 1):** dummy-tensor prototype of the z-axis aggregation strategy in `~/mamba_env`. |
 | U-Mamba, SegMamba | **Design references only** | Cited in literature review for architectural ideas. **Not implementation targets** — do not add training/eval code for either unless explicitly asked. |
 
 **Current default in `config.py` (`MODEL_TO_USE`) is `SEG_RES_NET`** — the last
@@ -44,7 +44,7 @@ default without explicit instruction; the Mamba model class does not exist in
 - **Local**: `~/envs/thesis` (or similar). Used for local development, debugging, and running `do_evaluation.py`.
 - **Server baseline**: `~/denv`. Validated thesis baseline. **DO NOT** install
   `mamba-ssm` or `causal-conv1d` here.
-- **Server Mamba**: `~/denv_mamba`. Isolated clone of `~/denv` with Mamba dependencies
+- **Server Mamba**: `~/mamba-env`. Isolated clone of `~/denv` with Mamba dependencies
   added, for the new architecture work. Keep isolated so baseline reproducibility isn't
   put at risk.
 
@@ -183,7 +183,7 @@ All `matplotlib` figures (e.g., in `idssp/sonk/view/eval_stats.py`) must adhere 
 
 ## 7. What NOT to do without explicit confirmation
 
-- Do not install `mamba-ssm` / `causal-conv1d` into `~/denv` (use `~/denv_mamba`).
+- Do not install `mamba-ssm` / `causal-conv1d` into `~/denv` (use `~/mamba-env`).
 - Do not change `MODEL_TO_USE` in `config.py`.
 - Do not widen `ForceMatchingAffined`'s `_ALLOWED_LITS_VOLUMES` set.
 - Do not move WAW-TACE/HCC-TACE-Seg from eval-only to full training extension.

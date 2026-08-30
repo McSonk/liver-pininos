@@ -67,7 +67,7 @@ python analyse_dataset.py --no-verbose --output-csv data.csv
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.10+
 - PyTorch with CUDA support (for GPU training)
 - MONAI framework
 - Other dependencies listed in `requirements.txt`
@@ -83,18 +83,50 @@ python analyse_dataset.py --no-verbose --output-csv data.csv
 2. Install PyTorch **first** (choose based on your machine):
    ```bash
    # CPU only
-   pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cpu
+   pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cpu
 
    # GPU (CUDA 11.8 — check with `nvidia-smi` and use cu121 if needed)
-   pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu118
+   pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu128
    ```
 
-3. Install the remaining dependencies:
+3. (Optional) Install mamba
+    ```bash
+    # Download
+    wget https://github.com/state-spaces/mamba/releases/download/v2.3.2.post1/mamba_ssm-2.3.2.post1+cu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
+    # Install
+    pip install --no-deps   "./mamba_ssm-2.3.2.post1+cu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl"
+    # Verify
+    python - <<'PY'
+    print("*" * 80)
+    print("Verifying Mamba installation...")
+    import torch
+    import causal_conv1d
+    from mamba_ssm import Mamba
+
+    print("torch:", torch.__version__)
+    print("cuda:", torch.cuda.is_available())
+
+    layer = Mamba(
+        d_model=16,
+        d_state=16,
+        d_conv=4,
+        expand=2,
+    ).cuda()
+
+    x = torch.randn(2, 8, 16, device="cuda")
+    y = layer(x)
+
+    print("output shape:", y.shape)
+    print("Mamba test OK")
+    PY
+```
+
+4. Install the remaining dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-4. Create your `.env` file and fill in the required paths:
+5. Create your `.env` file and fill in the required paths:
    ```bash
    cp .env.example .env
    ```
