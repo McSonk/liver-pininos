@@ -93,10 +93,51 @@ This explicit conversion ensures that the prediction tensor inherits the necessa
 
 When the `--post-process` (or `-pp`) flag is enabled in `do_test.py`, an additional heuristic post-processing step is applied to the discrete class maps before metric computation. This step enforces strict anatomical priors:
 
-1. **Largest Connected Component (LCC) Extraction**: The predicted liver mask (class 1) is isolated. A 3D connected component analysis (using 6-connectivity) is performed, and only the largest connected component is retained. All other disconnected liver voxels are discarded.
+1. The liver is a single, contiguous organ.
+2. Primary liver tumours (such as Hepatocellular Carcinoma) must originate within or be physically attached to the liver parenchyma.
+
+These are applied in the following steps:
+
+1. **Largest Connected Component (LCC) Extraction**: The predicted liver mask (class 1) is isolated. A 3D **Connected Component Analysis (CCA)** via `scipy.ndimage` is performed, and only the largest connected component is retained. All other disconnected liver voxels are discarded.
+    * **Action:** The code isolates all voxels predicted as "liver" (class 1). It groups them into disconnected 3D islands (components) and calculates the volume (voxel count) of each island. It retains only the **Largest Connected Component (LCC)** and reclassifies all smaller islands as background (class 0).
+    * **Root Cause Addressed:** CT scans contain significant noise, and adjacent organs (stomach, spleen, bowel) can share similar Hounsfield Units (HU) with the liver, especially in non-contrast or poorly timed contrast phases. The neural network often outputs "salt-and-pepper" noise or small false-positive blobs of liver tissue in these adjacent areas. The LCC filter acts as a strict morphological sieve, removing these scattered artefacts.
 2. **Stray Voxel Removal**: Any isolated liver predictions that do not belong to the main anatomical structure are removed.
-3. **Anatomical Constraint for Tumours**: Since HCC tumours are intrahepatic (occurring strictly within the liver), any predicted tumour voxels (class 2) that do not intersect with the retained main liver component are discarded.
+    * **Action:** The code creates a unified mask combining the *purified* liver (from Phase 1) and *all* predicted tumours (class 2). It runs CCA on this combined mask. It then identifies which connected component contains the main liver mass. Finally, it deletes any predicted tumour voxel that does not belong to this specific connected component.
+    * **Root Cause Addressed:** The network might mistake a lesion in the right kidney, a fluid pocket in the bowel, or a vessel cross-section for a tumour. Because these false positives are physically separated from the liver by background tissue (fat, fluid, or air), they form distinct connected components. By demanding that a tumour must be physically contiguous with the main liver mass, the algorithm aggressively prunes false positives located in adjacent anatomy.
+3. **Anatomical Constraint for Tumours**: HCC tumours arise from the liver, so the pipeline
+   retains only tumour voxels that are attached to it. Concretely, a predicted tumour voxel
+   (class 2) is kept only if it belongs to the same 6-connected component as the retained main
+   liver component in the combined (liver + tumour) mask. This is a **connectivity** constraint,
+   not a **containment** constraint: a tumour may extend beyond the liver boundary and is not
+   required to lie inside the liver mask, provided it remains connected to it. Disconnected
+   tumour islands are discarded.
 4. **Fragmentation Warning**: If the LCC filtering discards more than 50% of the originally predicted liver voxels, a warning is logged, as this indicates highly fragmented predictions or atypical anatomy.
+
+### 4.1 Limitations
+
+The function relies on `scipy.ndimage.label`, which defaults to **6-connectivity** in 3D space.
+
+| Connectivity Type | Neighbourhood Definition | Medical Imaging Use Case |
+| :--- | :--- | :--- |
+| **6-Connectivity** | Face-sharing only (Up, Down, Left, Right, Front, Back). | **Standard for solid organs.** Prevents diagonal noise from falsely bridging distinct structures (e.g., liver and spleen touching at a single diagonal corner). |
+| **18-Connectivity** | Face and edge-sharing. | Rarely used; risks merging closely adjacent but distinct structures. |
+| **26-Connectivity** | Face, edge, and corner-sharing. | Used for thin, winding structures (e.g., blood vessels, nerves, airways) where diagonal continuity is expected. |
+
+By using 6-connectivity, post-processing ensures that a tumour is retained only if it is linked
+to the liver component through a face-connected path of liver and/or tumour voxels. A tumour
+voxel is **not** required to share a face directly with a liver voxel; a chain of tumour voxels
+leading back to the liver is sufficient. This guards against diagonal noise bridging distinct
+structures while still permitting exophytic or partially extrahepatic tumour growth that remains
+attached to the liver.
+
+#### Edge cases:
+
+1. **Exophytic Tumours with Thin Pedicles:** 
+   Some tumours grow outward from the liver surface (exophytic) and are attached by a very thin stalk of tissue. If the neural network misses just *one voxel* in that stalk, the 6-connectivity rule will sever the connection. The post-processing will then classify the true tumour as "disconnected" and delete it, resulting in a false negative.
+2. **Severe Model Fragmentation:**
+   If the model performs poorly on a specific, difficult scan (e.g., severe cirrhosis or massive artefacts from metal implants), the liver prediction might be shattered into dozens of small pieces. The LCC algorithm will simply pick the largest piece of noise, and the true liver volume will be discarded.
+3. **Post-Surgical Anatomy:**
+   In patients who have undergone partial hepatectomy (liver resection), the remaining liver tissue might genuinely exist in disconnected lobes. The LCC assumption that "the liver is one single mass" would incorrectly delete the smaller resected lobe. (Note: This is less relevant if your dataset, like LiTS, primarily features intact livers, but it shows clinical awareness).
 
 ## 5. Raw vs. Post-Processed Results
 
@@ -106,14 +147,15 @@ The application of post-processing fundamentally alters the characteristics of t
 | :--- | :--- | :--- |
 | **Methodology** | Direct output of the neural network (Softmax + Argmax). | Neural network output + heuristic anatomical constraints (LCC). |
 | **Liver Morphology** | May contain fragmented islands or disconnected false positive clusters far from the true liver. | Guaranteed to be a single, contiguous 3D structure. |
-| **Tumour Location** | May predict tumours outside the liver boundary (anatomically implausible). | Strictly constrained to exist only within the main liver mask. |
+| **Tumour Location** | May predict disconnected tumour islands far from the liver (anatomically implausible). | Constrained to be 6-connected to the main liver component. Retained tumours may extend beyond the liver boundary, but disconnected islands are removed. |
 | **Impact on Dice** | Reflects the pure voxel-wise overlap learned by the network. | Typically shows a modest improvement or remains stable, as small false positive islands have a negligible effect on the Dice denominator. |
 | **Impact on HD95** | Highly sensitive to stray voxels. A single false positive island 200 mm away from the liver will catastrophically inflate the HD95 score. | Drastically reduces HD95 by eliminating the distant outlier voxels that drive the 95th percentile distance. |
 
 ## 6. Post-processing Rationale and Scientific Validity
 
 ### Why Post-Processing was Included
-During initial evaluations, a significant performance gap was observed between the validation and test sets, characterised by extreme per-case variance and catastrophically high HD95 scores (e.g., >200 mm). Investigation revealed that the sliding window inference mechanism occasionally produced disconnected false positive islands in regions containing bowel or abdominal wall tissue. While these stray voxels barely affected the Dice score, they severely inflated the HD95 metric. The post-processing step was introduced to mitigate these sliding window artifacts and enforce the anatomical reality that the liver is a single connected organ and that HCC tumours are intrahepatic.
+During initial evaluations, a significant performance gap was observed between the validation and test sets, characterised by extreme per-case variance and catastrophically high HD95 scores (e.g., >200 mm). Investigation revealed that the sliding window inference mechanism occasionally produced disconnected false positive islands in regions containing bowel or abdominal wall tissue. While these stray voxels barely affected the Dice score, they severely inflated the HD95 metric. The post-processing step was introduced to mitigate these sliding window artifacts and enforce the anatomical reality that the liver is a single connected organ and that HCC tumours arise from and remain attached to the liver (approximated here by a
+connectivity constraint rather than strict voxel-wise containment).
 
 ### Scientific Validity and Comparability
 Applying heuristic post-processing shifts the evaluated system from a pure end-to-end deep learning model to a hybrid pipeline (neural network + classical computer vision algorithms). 

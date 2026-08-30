@@ -10,35 +10,24 @@ from idssp.sonk.utils.logger import get_logger
 # ==========================================
 # THEME CONFIGURATION
 # ==========================================
-# Set this to True if you are using a Dark Jupyter Theme (e.g., JupyterLab Dark)
-# Set this to False if you are using the default Light/White Theme
-USE_DARK_THEME = False
 
 logger = get_logger(__name__)
 
-if USE_DARK_THEME:
-    # --- DARK THEME PALETTE ---
-    BACKGROUND_COLOUR = '#1E1E1E'       # Dark Grey Background
-    FONT_COLOUR = '#F1F1F1'             # Almost White Text
-    GRID_COLOUR = '#DDDDDD'             # Light Grey Gridlines
-    
-    COLOR_TUMOUR = '#E63946'            # Vibrant Red
-    COLOR_LIVER = '#457B9D'             # Muted Blue
-    COLOR_TIME = '#E9C46A'              # Sand/Yellow
-    COLOR_OUTLIER = '#FF0000'           # Bright Red for failures
-    MEAN_COLOUR = '#FFD700'             # Gold/Yellow for Mean marker
+# --- THEME CONFIGURATION (iDSSP slide convention, plot usage) ---
+BACKGROUND_COLOUR = "#f4f4f4"   # Slide canvas; lets white boxplot elements show
+FONT_COLOUR = '#33383B'         # Ink: titles, ticks, statistical labels
+GRID_COLOUR = '#E0E0E0'         # Neutral grey gridlines
 
-else:
-    # --- LIGHT THEME PALETTE ---
-    BACKGROUND_COLOUR = '#FFFFFF'       # Pure White Background
-    FONT_COLOUR = '#2D3748'             # Deep Charcoal (Professional & Readable)
-    GRID_COLOUR = '#E2E8F0'             # Very Subtle Blue-Grey Gridlines
-    
-    COLOR_TUMOUR = '#C53030'            # Deeper Red (Better contrast on white)
-    COLOR_LIVER = '#2B6CB0'             # Stronger Blue (Better contrast on white)
-    COLOR_TIME = '#B7791F'              # Darker Amber (Visible on white)
-    COLOR_OUTLIER = '#E53E3E'           # Standard Red for outliers
-    MEAN_COLOUR = '#D69E2E'             # Mustard/Gold (Visible on white)
+COLOR_LIVER = '#159AA3'         # Teal: liver series
+COLOR_TUMOUR = '#E8483C'        # Red: tumour series
+COLOR_TIME = '#004AAD'          # Deep blue: training-time panel
+COLOR_OUTLIER = '#E53E3E'       # Red: flagged outlier markers (white ring for separation)
+MEAN_COLOUR = '#D69E2E'         # Gold: mean annotation
+
+# Fixed HD95 axis (mm) so boundary-distance plots are comparable across models.
+# Chosen to cover the worst case observed across all compared models; if a
+# future run exceeds it, raise the value and re-render every figure.
+HD95_Y_LIM = (0.0, 500.0)
 
 
 @dataclass
@@ -90,8 +79,9 @@ def plot_results(model_list):
     fig2, (ax2_top, ax2_bot) = plt.subplots(
         2, 1, figsize=(9, 8),
         gridspec_kw={'height_ratios': [3, 1], 'hspace': 0.2},
-        layout='constrained'  # <--- Add this
+        layout='constrained'
     )
+    fig2.patch.set_facecolor(BACKGROUND_COLOUR)
 
     # --- Top Plot: Dice Scores ---
     rects2 = ax2_top.bar(x - width, liver_dice, width, label='Liver Dice', color=COLOR_LIVER, edgecolor='white', linewidth=1.2)
@@ -129,7 +119,8 @@ def plot_results(model_list):
     return fig2
 
 def style_ax(ax):
-    """Removes top/right spines and adds subtle gridlines."""
+    """Applies themed background, removes top/right spines, adds subtle gridlines."""
+    ax.set_facecolor(BACKGROUND_COLOUR)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.spines['left'].set_color('#CCCCCC')
@@ -156,9 +147,9 @@ def _draw_metric_boxplot(ax, data_list, colors, title, ylabel, y_lim=None):
     # 1. Draw the boxplot
     bp = ax.boxplot(data_list, patch_artist=True, widths=0.4,
                     showfliers=False,
-                    boxprops=dict(linewidth=1.5, edgecolor='white'),
-                    whiskerprops=dict(linewidth=1.5, color='white', linestyle='--'),
-                    capprops=dict(linewidth=1.5, color='white'),
+                    boxprops=dict(linewidth=1.5, edgecolor=FONT_COLOUR),
+                    whiskerprops=dict(linewidth=1.5, color=FONT_COLOUR, linestyle='--'),
+                    capprops=dict(linewidth=1.5, color=FONT_COLOUR),
                     medianprops=dict(linewidth=2, color=FONT_COLOUR))
 
     for patch, color in zip(bp['boxes'], colors):
@@ -195,17 +186,17 @@ def _draw_metric_boxplot(ax, data_list, colors, title, ylabel, y_lim=None):
         # Filter out the outliers from the main dataset for the grey jitter
         non_outlier_data = data[~is_outlier]
 
-        # Jitter ONLY for non-outlier points (Grey)
+        # Jitter ONLY for non-outlier points (Ink colour with white edge ring)
         if len(non_outlier_data) > 0:
             x_jitter = np.random.normal(i, 0.06, size=len(non_outlier_data))
-            ax.scatter(x_jitter, non_outlier_data, alpha=0.5, color='#333333', s=20, zorder=2, edgecolors='none')
+            ax.scatter(x_jitter, non_outlier_data, alpha=0.5, color=FONT_COLOUR, s=20, zorder=2, edgecolors='white', linewidths=0.6)
 
-        # Re-plot ALL outliers specifically in RED
+        # Re-plot ALL outliers specifically in RED (white edge ring for separation)
         outlier_values = data[is_outlier]
         if len(outlier_values) > 0:
             x_outliers = np.random.normal(i, 0.06, size=len(outlier_values))
             ax.scatter(x_outliers, outlier_values, color=COLOR_OUTLIER, s=60, zorder=5, 
-                        edgecolors='white', linewidth=1.5)
+                        edgecolors='white', linewidths=0.6)
 
         # --- STATISTICAL LABELS ---
         med_val = np.median(data)
@@ -274,6 +265,25 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model", attach_hd95:
         h_liv = df['hd95_liver_mm'].dropna().values
         h_tum = df['hd95_tumour_mm'].dropna().values
 
+        # Prevent silent clipping: expand Y-limit if data exceeds the default maximum.
+        # HD95 can exceed 500 mm if a model fails catastrophically on a volume.
+        hd95_max = 0.0
+        for arr in (h_liv, h_tum):
+            if len(arr) > 0:
+                valid_vals = arr[np.isfinite(arr)]
+                if len(valid_vals) > 0:
+                    hd95_max = max(hd95_max, float(np.max(valid_vals)))
+
+        hd95_y_lim = list(HD95_Y_LIM)
+        if hd95_max > HD95_Y_LIM[1]:
+            logger.warning(
+                "HD95 maximum value (%.2f mm) exceeds the default plot limit (%.2f mm). "
+                "Expanding Y-axis to prevent silent clipping of data and labels.",
+                hd95_max, HD95_Y_LIM[1]
+            )
+            # Add 15% headroom so statistical labels and outlier markers are not cut off
+            hd95_y_lim[1] = hd95_max * 1.15
+
         # Defensive check: IoU columns may not exist in older evaluation CSVs
         has_iou = 'iou_liver' in df.columns and 'iou_tumour' in df.columns
         if has_iou:
@@ -298,13 +308,17 @@ def plot_test_boxplots(df: pd.DataFrame, model_name: str = "Model", attach_hd95:
                 2, 1, figsize=(10, 10),
                 gridspec_kw={'height_ratios': [1, 1], 'hspace': 0.3}
             )
-        
+
         # Middle plot: Hausdorff Distance 95th percentile
         _draw_metric_boxplot(ax2, [h_liv, h_tum], [COLOR_LIVER, COLOR_TUMOUR],
-                            f'{model_name} Test Set: Boundary Distance (HD95)',
-                            '95th Percentile Hausdorff Distance (mm)')
+                             f'{model_name} Test Set: Boundary Distance (HD95)',
+                             '95th Percentile Hausdorff Distance (mm)',
+                             y_lim=hd95_y_lim)
     else:
         fig, ax1 = plt.subplots(1, 1, figsize=(7, 6))
+
+    # Apply themed background to the figure (axes are themed via style_ax).
+    fig.patch.set_facecolor(BACKGROUND_COLOUR)
 
     # Top plot (always present): Dice Similarity Coefficient
     _draw_metric_boxplot(ax1, [d_liv, d_tum], [COLOR_LIVER, COLOR_TUMOUR],

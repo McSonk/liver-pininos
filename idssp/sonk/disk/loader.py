@@ -143,7 +143,7 @@ class DataCollector:
 
         if ds_source not in CustomDataset.SUPPORTED_SOURCES:
             raise ValueError(f"Dataset source [{ds_source}] is not supported. "
-                             "Please choose from {CustomDataset.SUPPORTED_SOURCES}")
+                             f"Please choose from {CustomDataset.SUPPORTED_SOURCES}")
         logger.info("Reading directory: %s", ds_dir)
         if not ds_dir.exists():
             raise FileNotFoundError(f"Data root directory does not exist: {ds_dir}")

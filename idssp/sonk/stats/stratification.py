@@ -69,7 +69,7 @@ def bin_tumour_vol(vol: float, has_tumour: bool) -> str:
     ----------
     vol : float
         Tumour volume in ml.
-    has_tumor : bool
+    has_tumour : bool
         Whether the case contains a tumour.
 
     Returns

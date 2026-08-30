@@ -80,6 +80,19 @@ def _post_process_class_map(pred_np: np.ndarray) -> np.ndarray:
 
     return result
 
+def _sanitise_hd95(hd95_val, dice_val, pred_mask: np.ndarray, gt_mask: np.ndarray) -> Optional[float]:
+    """
+    Enforce the HD95 omission rule (AGENTS.md, Data Handling Rules).
+
+    MONAI 1.5.2 returns inf when exactly one mask is empty and a finite
+    (large) value for disjoint non-empty masks, so nan checks alone do not
+    enforce the rule.
+    """
+    if pred_mask.sum() == 0 or gt_mask.sum() == 0 or dice_val is None or not dice_val > 0.0:
+        return None
+    hd95_val = float(hd95_val)
+    return hd95_val if np.isfinite(hd95_val) else None
+
 class MetricsEvaluator:
     """
     Handles metric computation and result export for test datasets.
@@ -142,6 +155,10 @@ class MetricsEvaluator:
                 )
             # ======
 
+            # Pre-compute masks for HD95 sanitisation
+            pred_tumour_mask = pred_np == self.config.TUMOUR_CLASS_INDEX
+            label_tumour_mask = label_np == self.config.TUMOUR_CLASS_INDEX
+
             # --- RAW METRICS ---
             # Convert to one-hot (C, D, H, W) for MONAI metrics,
             # then add a batch dimension → (1, C, D, H, W).
@@ -182,16 +199,25 @@ class MetricsEvaluator:
 
             row_raw = {"case_name": case_name}
             if self.config.NUM_CLASSES == 3:
-                row_raw["dice_liver"] = float(case_dice[0]) if not np.isnan(case_dice[0]) else None
-                row_raw["dice_tumour"] = float(case_dice[1]) if not np.isnan(case_dice[1]) else None
+                pred_liver_mask = pred_np == 1
+                label_liver_mask = label_np == 1
+
+                d_liver = float(case_dice[0]) if not np.isnan(case_dice[0]) else None
+                d_tumour = float(case_dice[1]) if not np.isnan(case_dice[1]) else None
+
+                row_raw["dice_liver"] = d_liver
+                row_raw["dice_tumour"] = d_tumour
                 row_raw["iou_liver"] = float(case_iou[0]) if not np.isnan(case_iou[0]) else None
                 row_raw["iou_tumour"] = float(case_iou[1]) if not np.isnan(case_iou[1]) else None
-                row_raw["hd95_liver_mm"] = float(case_hd95[0]) if not np.isnan(case_hd95[0]) else None
-                row_raw["hd95_tumour_mm"] = float(case_hd95[1]) if not np.isnan(case_hd95[1]) else None
+
+                row_raw["hd95_liver_mm"] = _sanitise_hd95(case_hd95[0], d_liver, pred_liver_mask, label_liver_mask)
+                row_raw["hd95_tumour_mm"] = _sanitise_hd95(case_hd95[1], d_tumour, pred_tumour_mask, label_tumour_mask)
             else:  # binary mode
-                row_raw["dice_tumour"] = float(case_dice[0]) if not np.isnan(case_dice[0]) else None
+                d_tumour = float(case_dice[0]) if not np.isnan(case_dice[0]) else None
+
+                row_raw["dice_tumour"] = d_tumour
                 row_raw["iou_tumour"] = float(case_iou[0]) if not np.isnan(case_iou[0]) else None
-                row_raw["hd95_tumour_mm"] = float(case_hd95[0]) if not np.isnan(case_hd95[0]) else None
+                row_raw["hd95_tumour_mm"] = _sanitise_hd95(case_hd95[0], d_tumour, pred_tumour_mask, label_tumour_mask)
 
             results_raw.append(row_raw)
 
@@ -219,12 +245,30 @@ class MetricsEvaluator:
                 case_hd95_pp = self.hd95_metric.aggregate().cpu().numpy().flatten()
 
                 row_pp = {"case_name": case_name}
-                row_pp["dice_liver"] = float(case_dice_pp[0]) if not np.isnan(case_dice_pp[0]) else None
-                row_pp["dice_tumour"] = float(case_dice_pp[1]) if not np.isnan(case_dice_pp[1]) else None
+
+                pred_tumour_mask_pp = pred_np_pp == self.config.TUMOUR_CLASS_INDEX
+                pred_liver_mask_pp = pred_np_pp == 1
+
+                d_liver_pp = float(case_dice_pp[0]) if not np.isnan(case_dice_pp[0]) else None
+                d_tumour_pp = float(case_dice_pp[1]) if not np.isnan(case_dice_pp[1]) else None
+
+                row_pp["dice_liver"] = d_liver_pp
+                row_pp["dice_tumour"] = d_tumour_pp
                 row_pp["iou_liver"] = float(case_iou_pp[0]) if not np.isnan(case_iou_pp[0]) else None
                 row_pp["iou_tumour"] = float(case_iou_pp[1]) if not np.isnan(case_iou_pp[1]) else None
-                row_pp["hd95_liver_mm"] = float(case_hd95_pp[0]) if not np.isnan(case_hd95_pp[0]) else None
-                row_pp["hd95_tumour_mm"] = float(case_hd95_pp[1]) if not np.isnan(case_hd95_pp[1]) else None
+
+                row_pp["hd95_liver_mm"] = _sanitise_hd95(
+                    case_hd95_pp[0],
+                    d_liver_pp,
+                    pred_liver_mask_pp,
+                    label_liver_mask,
+                )
+                row_pp["hd95_tumour_mm"] = _sanitise_hd95(
+                    case_hd95_pp[1],
+                    d_tumour_pp,
+                    pred_tumour_mask_pp,
+                    label_tumour_mask,
+                )
 
                 results_pp.append(row_pp)
 
