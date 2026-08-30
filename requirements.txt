@@ -4,10 +4,10 @@
 # 1. Install PyTorch FIRST (Choose one based on your machine):
 #
 #    FOR LOCAL CPU:
-#    pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cpu
+#    pip install torch==2.10.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cpu
 #
 #    FOR LAB SERVER (A100 GPU):
-#    pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu126
+#    pip install torch==2.10.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu126
 #    (Check server CUDA version with 'nvidia-smi' and use cu121 if needed)
 #
 # 2. Install mamba:
@@ -56,8 +56,10 @@ numpy==2.4.6
 matplotlib==3.10.8
 tensorboard==2.20.0
 
-# Environments
+# Environments & Utilities
 python-dotenv==1.2.2
+packaging==26.3
+ninja==1.13.0
 
 # For logging stats
 psutil==6.0.0
