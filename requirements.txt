@@ -10,11 +10,14 @@
 #    pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu128
 #    (Check server CUDA version with 'nvidia-smi' and use cu121 if needed)
 #
-# 2. Install mamba:
+# 2. Install dependencies:
+#    pip install -r requirements.txt
+#
+# 3. Install mamba:
 #    wget https://github.com/state-spaces/mamba/releases/download/v2.3.2.post1/mamba_ssm-2.3.2.post1+cu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
 #    pip install --no-deps   "./mamba_ssm-2.3.2.post1+cu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl"
 #
-# 3. Verify:
+# 4. Verify:
 #    ~/mamba-env/bin/python - <<'PY'
 #    print("*" * 80)
 #    print("Verifying Mamba installation...")
@@ -39,9 +42,6 @@
 #    print("Mamba test OK")
 #    PY
 #
-#
-# 4. Install the rest of the dependencies:
-#    pip install -r requirements.txt
 # ==============================================================================
 
 
