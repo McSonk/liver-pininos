@@ -102,6 +102,9 @@ idssp/sonk/
   model/
     transforms.py           # Deterministic + random MONAI transform pipelines
     models.py               # Model factory (get_model); AvailableModels enum
+    mamba_axis.py           # Axis-handling helpers for 2.5D Mamba-hybrid:
+                              # AxialSliceMeta, split_into_axial_slices,
+                              # merge_axial_slices
     training.py             # ModelBuilder, EarlyStopper, training/validation loop
     inferer.py              # Full-volume inference + Invertd (original scanner space)
     evaluator.py            # MetricsEvaluator: Dice/HD95/IoU, raw + post-processed
