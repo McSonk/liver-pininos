@@ -1,24 +1,26 @@
 """
 verify_z_axis.py
 
-Confirms, against a REAL sample from the LiTS pipeline, which array axis
-carries the z (superior-inferior / slice) direction after `Orientationd`
-with axcodes="LAS". This must be checked directly rather than assumed,
-because a wrong assumption here silently corrupts the entire premise of the
-2.5D Mamba-hybrid architecture (2D-per-axial-slice + Mamba-across-z) without
-ever raising a shape error.
+Confirms, against a real sample from the LiTS pipeline, whether the deterministic
+preprocessing output has the spatial convention required by the 2.5D Mamba-hybrid
+pipeline.
 
-Three independent checks are run and cross-referenced:
-  1. MONAI's own axis-code metadata after Orientationd ("LAS" -> per-axis
-     anatomical labels), read directly from the transformed MetaTensor.
-  2. The raw affine matrix's dominant-weight row for the S/I direction,
-     computed the same way `idssp/sonk/model/data.py::get_slice_range`
-     already does it dynamically (not hardcoded).
-  3. `nib.aff2axcodes`, as an independent library-level cross-check against
-     (1) and (2).
+Required convention:
 
-Run this in the project's real environment (`~/denv` or `~/denv_mamba`) with
-PIN_ENV and the LiTS env vars set, since it uses the real config/loader.
+    unbatched tensor: (C, X, Y, Z)
+    batched tensor:   (B, C, X, Y, Z)
+    z-axis:           last spatial axis
+
+For Orientationd(axcodes="LAS"):
+
+    X = left-right
+    Y = posterior-anterior
+    Z = inferior-superior / slice direction
+
+This script prints PASS/FAIL for each check and exits with:
+
+    0 if all checks pass
+    1 if any check fails
 
 Run this when:
 
@@ -29,12 +31,15 @@ Run this when:
 - begin Mamba model implementation.
 - modify the deterministic transform order.
 
-Usage
------
+Run in the real environment with LiTS environment variables set:
+
     source ~/denv/bin/activate
     python verify_z_axis.py
 """
+
+import nibabel as nib
 import numpy as np
+import torch
 from monai.transforms import Compose
 
 from idssp.sonk import config
@@ -42,21 +47,88 @@ from idssp.sonk.disk.loader import DataCollector
 from idssp.sonk.model.transforms import get_deterministic_transforms
 
 
+def _as_4x4_affine(affine_source) -> np.ndarray | None:
+    """
+    Convert an affine stored as Tensor/ndarray into a CPU float64 ndarray
+    with shape (4, 4). Returns None if the affine cannot be normalised.
+    """
+    if affine_source is None:
+        return None
+
+    if isinstance(affine_source, torch.Tensor):
+        affine_source = affine_source.detach().cpu()
+
+    try:
+        affine = np.asarray(affine_source, dtype=np.float64)
+    except Exception:
+        return None
+
+    # Handle possible batched affine, e.g. (1, 4, 4).
+    if affine.ndim == 3:
+        if affine.shape[0] != 1:
+            return None
+        affine = affine[0]
+
+    if affine.shape != (4, 4):
+        return None
+
+    return affine
+
+
 def _dominant_axis_from_affine(affine: np.ndarray, physical_row: int) -> int:
     """
-    Given a 4x4 affine and the physical-axis row index (0=L/R, 1=A/P, 2=S/I),
-    returns which ARRAY axis (0, 1, or 2) contributes most to that physical
-    direction. This mirrors get_slice_range()'s dynamic z-axis detection in
-    idssp/sonk/model/data.py exactly, so the two should always agree.
+    Given a 4x4 affine and a physical-axis row index:
+
+        0 = L/R
+        1 = A/P
+        2 = S/I
+
+    return the array axis (0, 1, or 2) that contributes most to that physical
+    direction.
     """
     return int(np.argmax(np.abs(affine[physical_row, :3])))
 
 
-def main() -> None:
+def main() -> int:
     cfg = config.init()
 
+    checks: list[tuple[str, bool, str]] = []
+
+    def record(name: str, passed: bool, details: str = "") -> bool:
+        status = "PASS" if passed else "FAIL"
+        print(f"[{status}] {name}")
+        if details:
+            print(f"       {details}")
+        checks.append((name, passed, details))
+        return passed
+
+    def finish() -> int:
+        failed = [check for check in checks if not check[1]]
+
+        print("\n" + "=" * 80)
+        if failed:
+            print("RESULT: FAILED")
+            print(
+                "The deterministic pipeline output is NOT compatible with the "
+                "Mamba z-axis convention."
+            )
+            print("=" * 80)
+            for name, _, details in failed:
+                print(f"  - {name}")
+                if details:
+                    print(f"    {details}")
+            return 1
+
+        print("RESULT: PASSED")
+        print(
+            "The deterministic pipeline output is compatible with the Mamba "
+            "z-axis convention."
+        )
+        print("=" * 80)
+        return 0
+
     print("=" * 80)
-    print("Loading one real training sample to verify axis ordering...")
+    print("Loading one real LiTS sample to verify Mamba axis requirements...")
     print("=" * 80)
 
     collector = DataCollector()
@@ -64,88 +136,158 @@ def main() -> None:
     collector.extract_images_and_labels()
 
     if not collector.datasources:
-        raise RuntimeError("No paired image/label files found. Check LITS_CT_ROOT.")
+        print("RESULT: FAILED")
+        print("No paired image/label files found. Check LITS_CT_ROOT.")
+        return 1
 
     sample_pair = collector.datasources[0]
     print(f"Sample: {sample_pair['image']}")
 
-    # Run the REAL deterministic pipeline (LoadImaged -> ForceMatchingAffined
-    # -> Orientationd(axcodes='LAS') -> Spacingd -> ... -> SpatialPadd),
-    # exactly as training does it. No shortcuts.
     transform = Compose(get_deterministic_transforms(cfg))
-    data = transform({"image": sample_pair["image"], "label": sample_pair["label"]})
+    data = transform(
+        {
+            "image": sample_pair["image"],
+            "label": sample_pair["label"],
+        }
+    )
 
-    image = data["image"]  # MetaTensor, shape (C, dim0, dim1, dim2) — no batch dim yet
-    print(f"\nTransformed image tensor shape (C, dim0, dim1, dim2): {tuple(image.shape)}")
+    image = data["image"]
+    label = data["label"]
 
-    affine = np.asarray(image.affine)
-    if affine.ndim == 3:  # defensive: some MONAI versions may add a leading batch dim
-        affine = affine[0]
-    print(f"\nAffine matrix after Orientationd(axcodes='LAS'):\n{affine}")
+    # ------------------------------------------------------------------
+    # Basic tensor-shape checks
+    # ------------------------------------------------------------------
+    record(
+        "Image tensor is 4D (C, X, Y, Z)",
+        image.ndim == 4,
+        f"shape={tuple(image.shape)}",
+    )
 
-    # --- Check 1: MONAI's own metadata after Orientationd ---
-    # After axcodes="LAS", MONAI guarantees: array axis 0 -> L/R, axis 1 ->
-    # A/P, axis 2 -> S/I, in that fixed order. This is what "LAS" MEANS.
-    monai_expected_axis_labels = ["L/R (Left-Right)", "A/P (Anterior-Posterior)", "S/I (Superior-Inferior, z)"]
-    print("\n--- Check 1: MONAI axcodes='LAS' contract ---")
-    for arr_axis, label in enumerate(monai_expected_axis_labels):
-        print(f"  Array axis {arr_axis} (tensor dim {arr_axis + 1}, after channel) -> {label}")
-    monai_z_array_axis = 2  # guaranteed by axcodes="LAS", not assumed
+    if image.ndim != 4:
+        return finish()
 
-    # --- Check 2: dominant-weight row of the affine (same method as data.py) ---
-    print("\n--- Check 2: affine dominant-weight detection (matches get_slice_range) ---")
-    li_ap_si_labels = ["L/R", "A/P", "S/I (z)"]
-    affine_detected_axes = {}
-    for physical_row, label in enumerate(li_ap_si_labels):
-        arr_axis = _dominant_axis_from_affine(affine, physical_row)
-        affine_detected_axes[label] = arr_axis
-        print(f"  Physical direction {label} (affine row {physical_row}) -> array axis {arr_axis}")
-    affine_z_array_axis = affine_detected_axes["S/I (z)"]
+    record(
+        "Image has exactly one input channel",
+        image.shape[0] == 1,
+        f"C={image.shape[0]}",
+    )
 
-    # --- Check 3: nibabel's independent axis-code reading ---
-    import nibabel as nib
-    nib_codes = nib.aff2axcodes(affine)
-    print(f"\n--- Check 3: nib.aff2axcodes independent cross-check ---")
-    print(f"  nib.aff2axcodes(affine) = {nib_codes}")
-    # aff2axcodes returns the anatomical direction each array axis POINTS TOWARDS
-    # (endpoint convention), e.g. ('L','A','S') for LAS orientation.
-    nib_z_array_axis = nib_codes.index("S") if "S" in nib_codes else nib_codes.index("I")
+    spatial_shape = tuple(image.shape[1:])
+    patch_size = tuple(cfg.TRAIN_PATCH_SIZE)
 
-    # --- Cross-reference all three ---
-    print("\n" + "=" * 80)
-    print("CROSS-REFERENCE")
-    print("=" * 80)
-    print(f"  Check 1 (MONAI axcodes contract):        array axis {monai_z_array_axis}")
-    print(f"  Check 2 (affine dominant-weight, dynamic): array axis {affine_z_array_axis}")
-    print(f"  Check 3 (nib.aff2axcodes):                array axis {nib_z_array_axis}")
+    spatial_ok = (
+        len(spatial_shape) == 3
+        and all(spatial_shape[i] >= patch_size[i] for i in range(3))
+    )
 
-    all_agree = monai_z_array_axis == affine_z_array_axis == nib_z_array_axis
-    if not all_agree:
-        raise AssertionError(
-            "Z-axis detection DISAGREES between methods. Do not proceed with "
-            "the Mamba merge/un-merge logic until this is resolved — silent "
-            "misalignment here corrupts the architecture without a shape error."
+    record(
+        "Spatial shape is 3D and at least TRAIN_PATCH_SIZE",
+        spatial_ok,
+        f"spatial_shape={spatial_shape}, required_min={patch_size}",
+    )
+
+    # ------------------------------------------------------------------
+    # Affine checks
+    # ------------------------------------------------------------------
+    affine = _as_4x4_affine(getattr(image, "affine", None))
+
+    if affine is None:
+        record(
+            "Image affine is a valid 4x4 matrix",
+            False,
+            "Could not read a 4x4 affine from the transformed image.",
+        )
+        return finish()
+
+    record(
+        "Image affine is a valid 4x4 matrix",
+        True,
+        f"shape={affine.shape}",
+    )
+
+    physical_labels = ["L/R", "A/P", "S/I (z)"]
+    detected_axes: dict[str, int] = {}
+
+    for physical_row, physical_label in enumerate(physical_labels):
+        detected_axes[physical_label] = _dominant_axis_from_affine(
+            affine,
+            physical_row,
         )
 
-    print(f"\nAll three checks AGREE: z-axis is array axis {monai_z_array_axis} "
-          f"(within the (C, dim0, dim1, dim2) tensor, i.e. tensor dim {monai_z_array_axis + 1}).")
+    record(
+        "Affine dominant axes are unique",
+        len(set(detected_axes.values())) == 3,
+        f"detected_axes={detected_axes}",
+    )
 
-    # --- Translate to the batched 5D tensor used throughout the stage table ---
-    batched_z_tensor_dim = monai_z_array_axis + 1 + 1  # +1 for channel, +1 for batch
-    print(f"\nIn the batched 5D tensor (B, C, dim0, dim1, dim2), z is tensor "
-          f"dim {batched_z_tensor_dim} (0-indexed) — i.e. the LAST spatial "
-          f"dimension, not the first.")
-    print("This means: the stage-1 merge must fold B together with the array "
-          "axis that ends up LAST after channel, not the one immediately "
-          "after channel.")
+    z_axis_affine = detected_axes["S/I (z)"]
+    record(
+        "Affine places z on array axis 2",
+        z_axis_affine == 2,
+        f"detected_z_axis={z_axis_affine}",
+    )
 
-    # --- Sanity-print the actual per-axis physical extent, for a human check ---
-    print(f"\nFor reference, image_shape (excl. channel) after all deterministic "
-          f"transforms: {tuple(image.shape[1:])}")
-    print("Cross-check this against per_case_summary.csv / stratified_*.csv "
-          "for this volume's spacing_x/y/z if you want a fourth, fully "
-          "independent confirmation from the precomputed dataset stats.")
+    # ------------------------------------------------------------------
+    # nibabel cross-check
+    # ------------------------------------------------------------------
+    nib_codes = tuple(nib.aff2axcodes(affine))
+
+    record(
+        "Orientation codes are ('L', 'A', 'S')",
+        nib_codes == ("L", "A", "S"),
+        f"nib_codes={nib_codes}",
+    )
+
+    if "S" in nib_codes:
+        z_axis_nib = nib_codes.index("S")
+    elif "I" in nib_codes:
+        z_axis_nib = nib_codes.index("I")
+    else:
+        z_axis_nib = -1
+
+    record(
+        "nibabel places z on array axis 2",
+        z_axis_nib == 2,
+        f"nib_codes={nib_codes}, z_axis={z_axis_nib}",
+    )
+
+    # ------------------------------------------------------------------
+    # Label alignment check
+    # ------------------------------------------------------------------
+    label_affine = _as_4x4_affine(getattr(label, "affine", None))
+
+    if label_affine is None:
+        record(
+            "Label affine is a valid 4x4 matrix",
+            False,
+            "Could not read a 4x4 affine from the transformed label.",
+        )
+    else:
+        record(
+            "Label affine is a valid 4x4 matrix",
+            True,
+            f"shape={label_affine.shape}",
+        )
+
+        record(
+            "Label affine matches image affine",
+            np.allclose(affine, label_affine, atol=1e-4),
+            "Image and label remain spatially aligned after deterministic transforms.",
+        )
+
+    print("\nRequired Mamba convention:")
+    print("  unbatched tensor: (C, X, Y, Z)")
+    print("  batched tensor:   (B, C, X, Y, Z)")
+    print("  z axis:           last spatial axis (unbatched dim 3, batched dim 4)")
+
+    return finish()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        raise SystemExit(main())
+    except Exception as exc:
+        print("\n" + "=" * 80)
+        print("RESULT: FAILED")
+        print(f"Unexpected error during verification: {type(exc).__name__}: {exc}")
+        raise SystemExit(1) from exc
