@@ -92,8 +92,10 @@ def main() -> None:
     #     row = b * Z + z
     # -------------------------------------------------------------------------
     print("Stage 1")
-    print(f"    permuted shape (B, Z, C, X, Y): {tuple(volume.permute(*PERMUTATION_ORDER).shape)}")
-    slices = volume.permute(*PERMUTATION_ORDER).reshape(B * Z, C, X, Y)
+    volume_permuted = volume.permute(*PERMUTATION_ORDER)
+
+    print(f"    permuted shape (B, Z, C, X, Y): {tuple(volume_permuted.shape)}")
+    slices = volume_permuted.reshape(B * Z, C, X, Y)
 
     print(f"    axial slices (B * Z, C, X, Y): {tuple(slices.shape)}")
     assert slices.shape == (B * Z, C, X, Y)
