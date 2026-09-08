@@ -37,7 +37,7 @@ default without explicit instruction; the Mamba model class does not exist in
 ## 3. Environment & Execution
 
 ### Framework Pins
-- PyTorch 2.11.0, MONAI 1.5.2. (See `requirements.txt` for exact install order — torch
+- PyTorch 2.10.0, MONAI 1.5.2. (See `requirements.txt` for exact install order — torch
   must be installed first with the correct CUDA/CPU wheel.)
 
 ### Virtual Environments
