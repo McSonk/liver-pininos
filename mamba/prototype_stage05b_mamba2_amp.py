@@ -66,6 +66,7 @@ D_MODEL = 64
 
 NUM_STEPS = 3
 LEARNING_RATE = 1e-4
+WEIGHT_DECAY = 1e-5
 MAX_GRAD_NORM = 1.0
 
 
@@ -125,7 +126,7 @@ def main() -> None:
     optimizer = torch.optim.AdamW(
         mamba_block.parameters(),
         lr=LEARNING_RATE,
-        weight_decay=1e-5,
+        weight_decay=WEIGHT_DECAY,
     )
 
     # Mirrors the GradScaler usage pattern in training.py.
@@ -228,6 +229,12 @@ def main() -> None:
 
         scaler.step(optimizer)
         scaler.update()
+
+        for name, param in mamba_block.named_parameters():
+            assert torch.isfinite(param).all(), (
+                f"Mamba2 parameter '{name}' became non-finite "
+                f"after step {step + 1}."
+            )
 
         new_scale = scaler.get_scale()
 
