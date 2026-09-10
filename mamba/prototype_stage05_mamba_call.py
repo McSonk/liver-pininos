@@ -330,9 +330,12 @@ def main() -> None:
         # Mamba2 has different internal defaults from Mamba1, so we avoid
         # hard-coding Mamba1-style assumptions such as d_state=16 unless we
         # specifically validate them later.
+        print(f"    Mamba2 constructor: d_model={D_MODEL}")
         mamba_block = Mamba2(d_model=D_MODEL).to(device)
+        print(f"    Mamba2 parameters: {sum(p.numel() for p in mamba_block.parameters())}")
         mamba_block.eval()
 
+        print(f"    Mamba2 input sequence: {tuple(seq.shape)}")
         # CUDA/Triton kernels often prefer contiguous inputs.
         seq = seq.contiguous()
 
@@ -341,15 +344,19 @@ def main() -> None:
         # if the installed Mamba2 build rejects fp32 inputs.
         with torch.no_grad():
             try:
+                print("    [INFO] Attempting Mamba2 forward pass in fp32.")
                 z_context = mamba_block(seq)
+                print("    [INFO] Mamba2 fp32 forward pass succeeded.")
             except (RuntimeError, NotImplementedError, AssertionError) as exc:
                 print(f"    [WARNING] Mamba2 fp32 forward failed: {exc}")
                 print("    [WARNING] Retrying Mamba2 forward pass in fp16.")
 
                 mamba_block = mamba_block.half()
                 z_context = mamba_block(seq.half())
+                print("    [INFO] Mamba2 fp16 forward pass succeeded.")
 
         # Normalise back to fp32 for downstream prototype assertions.
+        print("    [INFO] Converting Mamba2 output to fp32 for downstream prototype.")
         z_context = z_context.float()
     else:
         if device.type != "cuda":
