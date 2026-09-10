@@ -3,15 +3,19 @@ prototype_stage05_mamba_call.py
 
 Stage 5 prototype for the 2.5D Mamba-hybrid architecture.
 
-This validates the Mamba input/output contract:
+This version uses Mamba2:
+
+    from mamba_ssm import Mamba2
+
+This validates the Mamba2 input/output contract:
 
     Stage 4 output:
         (B, Z, D_MODEL)
 
-    Stage 5 Mamba output:
+    Stage 5 Mamba2 output:
         (B, Z, D_MODEL)
 
-Mamba is expected to process the sequence dimension Z and preserve the
+Mamba2 is expected to process the sequence dimension Z and preserve the
 tensor shape.
 
 This deliberately does not include:
@@ -31,17 +35,19 @@ Run locally:
 Notes
 -----
 - mamba_ssm requires CUDA.
-- If CUDA or mamba_ssm is unavailable, this script bypasses Mamba with an
+- If CUDA or mamba_ssm is unavailable, this script bypasses Mamba2 with an
   identity path so the surrounding reshape logic can still be smoke-tested.
+- This is still the fp32/shape prototype. AMP validation is deferred to
+  Stage 5b, after Stage 6.
 """
 
 import torch
 import torch.nn.functional as F
 
 try:
-    from mamba_ssm import Mamba
+    from mamba_ssm import Mamba2
 except ImportError:
-    Mamba = None
+    Mamba2 = None
 
 
 # -----------------------------------------------------------------------------
@@ -169,12 +175,12 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     print("=" * 80)
-    print("Stage 5 prototype: Mamba call")
+    print("Stage 5 prototype: Mamba2 call")
     print("=" * 80)
 
     print("Environment:")
     print(f"    Device:                          {device}")
-    print(f"    mamba_ssm available:             {Mamba is not None}")
+    print(f"    mamba_ssm Mamba2 available:      {Mamba2 is not None}")
 
     print("Intended shapes:")
     print(f"    Batch size (B):                  {B}")
@@ -299,9 +305,9 @@ def main() -> None:
     print("    Stage 4 row order verified: seq[b, z] == pooled[b * Z + z]")
 
     # -------------------------------------------------------------------------
-    # Stage 5: Mamba call.
+    # Stage 5: Mamba2 call.
     #
-    # Mamba expects:
+    # Mamba2 expects:
     #     (batch, sequence_length, d_model)
     #
     # In this architecture:
@@ -312,31 +318,33 @@ def main() -> None:
     # The expected output shape is unchanged:
     #     (B, Z, D_MODEL)
     # -------------------------------------------------------------------------
-    use_mamba = device.type == "cuda" and Mamba is not None
+    use_mamba = device.type == "cuda" and Mamba2 is not None
 
     print("Stage 5")
 
     if use_mamba:
-        print("    Running real Mamba forward pass...")
+        print("    Running real Mamba2 forward pass...")
 
-        mamba_block = Mamba(
-            d_model=D_MODEL,
-            d_state=16,
-            d_conv=4,
-            expand=2,
-        ).to(device)
-
+        # Use the minimal Mamba2 constructor.
+        #
+        # Mamba2 has different internal defaults from Mamba1, so we avoid
+        # hard-coding Mamba1-style assumptions such as d_state=16 unless we
+        # specifically validate them later.
+        mamba_block = Mamba2(d_model=D_MODEL).to(device)
         mamba_block.eval()
 
-        # Mamba's CUDA kernels are commonly used under mixed precision.
-        # Try fp32 first for simplicity, then fall back to fp16 if the
-        # installed mamba_ssm build rejects fp32 inputs.
+        # CUDA/Triton kernels often prefer contiguous inputs.
+        seq = seq.contiguous()
+
+        # Mamba2 kernels are commonly used under mixed precision.
+        # Try fp32 first for prototype simplicity, then fall back to fp16
+        # if the installed Mamba2 build rejects fp32 inputs.
         with torch.no_grad():
             try:
                 z_context = mamba_block(seq)
-            except (RuntimeError, NotImplementedError) as exc:
-                print(f"    [WARNING] Mamba fp32 forward failed: {exc}")
-                print("    [WARNING] Retrying Mamba forward pass in fp16.")
+            except (RuntimeError, NotImplementedError, AssertionError) as exc:
+                print(f"    [WARNING] Mamba2 fp32 forward failed: {exc}")
+                print("    [WARNING] Retrying Mamba2 forward pass in fp16.")
 
                 mamba_block = mamba_block.half()
                 z_context = mamba_block(seq.half())
@@ -347,16 +355,16 @@ def main() -> None:
         if device.type != "cuda":
             reason = "CUDA is not available"
         else:
-            reason = "mamba_ssm is not installed"
+            reason = "mamba_ssm.Mamba2 is not installed"
 
-        print(f"    [WARNING] Bypassing Mamba branch: {reason}.")
+        print(f"    [WARNING] Bypassing Mamba2 branch: {reason}.")
         print("    [WARNING] Using identity z-context for local smoke testing.")
         print("    [WARNING] Run this script on the server inside ~/mamba-env")
-        print("              to validate the real Mamba call.")
+        print("              to validate the real Mamba2 call.")
 
         z_context = seq
 
-    print(f"    Mamba output sequence: {tuple(z_context.shape)}")
+    print(f"    Mamba2 output sequence: {tuple(z_context.shape)}")
 
     assert z_context.shape == (B, Z, D_MODEL), (
         f"Stage 5 shape mismatch. Expected {(B, Z, D_MODEL)}, "
@@ -375,9 +383,9 @@ def main() -> None:
     print("    Stage 5 shape contract verified: (B, Z, D_MODEL) -> (B, Z, D_MODEL)")
 
     print("=" * 80)
-    print("Stage 5 prototype passed.")
+    print("Stage 5 prototype passed with Mamba2.")
     print("Next step: prototype Stage 6:")
-    print("    re-merge Mamba output for fusion:")
+    print("    re-merge Mamba2 output for fusion:")
     print("    (B, Z, D_MODEL) -> (B * Z, D_MODEL)")
     print("=" * 80)
 
