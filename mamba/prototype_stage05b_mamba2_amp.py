@@ -227,6 +227,10 @@ def main() -> None:
         # Optimizer step through GradScaler.
         previous_scale = scaler.get_scale()
 
+        # Capture parameter state BEFORE the step so we can verify that
+        # GradScaler did not silently skip the optimizer update.
+        params_before = [p.detach().clone() for p in mamba_block.parameters()]
+
         scaler.step(optimizer)
         scaler.update()
 
@@ -236,7 +240,22 @@ def main() -> None:
                 f"after step {step + 1}."
             )
 
+        # Verify that at least one parameter actually changed.
+        # If GradScaler detected inf/NaN gradients after unscaling, it skips
+        # optimizer.step() entirely, leaving weights unchanged. This check
+        # catches that silent skip.
+        params_changed = any(
+            not torch.equal(before, p.detach())
+            for before, p in zip(params_before, mamba_block.parameters())
+        )
+        assert params_changed, (
+            f"No Mamba2 parameter changed after optimizer step {step + 1}. "
+            "GradScaler may have skipped the update due to inf/NaN gradients."
+        )
+
         new_scale = scaler.get_scale()
+
+        print("        Parameters updated:      True")
 
         print(f"        GradScaler scale:        {previous_scale} -> {new_scale}")
 
