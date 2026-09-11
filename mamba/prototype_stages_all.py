@@ -152,17 +152,27 @@ def main() -> None:
     # Stage 4 & 6: Sequence reshape round-trip
     # =========================================================================
     print("\n--- Stage 4 & 6: Sequence reshape round-trip ---")
-    seq = reshape_pooled_to_sequence(pooled, B, Z)
+
+    # Use a pure arange tensor to isolate the reshape logic from upstream operations.
+    # This strictly follows the checklist requirement for an "arange-based pooled tensor".
+    identifiable_pooled = torch.arange(
+        B * Z * D_MODEL, dtype=torch.float32, device=device
+    ).reshape(B * Z, D_MODEL)
+
+    seq = reshape_pooled_to_sequence(identifiable_pooled, B, Z)
     assert seq.shape == (B, Z, D_MODEL)
-    
-    # Row order check
+
+    # Explicit row-order check
     for b in range(B):
         for z in range(Z):
-            assert torch.equal(seq[b, z], pooled[b * Z + z])
-            
+            row = b * Z + z
+            assert torch.equal(seq[b, z], identifiable_pooled[row]), \
+                f"Stage 4 row-order mismatch at b={b}, z={z}, row={row}"
+
     flat_back = reshape_sequence_to_pooled(seq)
-    assert torch.equal(pooled, flat_back), "Sequence round-trip failed."
-    print("    Sequence reshape round-trip verified.")
+    assert torch.equal(identifiable_pooled, flat_back), "Stage 4/6 sequence round-trip failed."
+
+    print("    Sequence reshape round-trip (arange-based) verified.")
 
     # =========================================================================
     # Stage 5: Mamba2 call
