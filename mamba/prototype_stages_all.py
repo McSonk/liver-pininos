@@ -176,9 +176,13 @@ def main() -> None:
             try:
                 z_context = mamba_block(seq_c)
             except Exception:
+                print("    [WARNING] Mamba2 fp32 failed, retrying in fp16.")
                 z_context = mamba_block.half()(seq_c.half()).float()
+        print("    Real Mamba2 forward pass executed.")
     else:
         z_context = seq  # Identity bypass for local smoke testing
+        print("    [WARNING] Mamba2 bypassed (identity). Run on server for real Mamba2.")
+
     assert z_context.shape == (B, Z, D_MODEL)
     print("    Mamba2 forward pass (or bypass) shape verified.")
 
