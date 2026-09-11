@@ -483,6 +483,8 @@ def main() -> None:
     print("    verifying Stage 7a broadcast canary...")
 
     row_ids = torch.arange(B * Z, dtype=torch.float32, device=device)
+    print(f"    Canary row IDs: {row_ids.tolist()}")
+    print(f"    Canary row IDs shape: {tuple(row_ids.shape)}")
 
     canary_flat = row_ids.unsqueeze(1).expand(B * Z, D_MODEL)
     canary_spatial = broadcast_z_context(canary_flat, BOTTLENECK_X, BOTTLENECK_Y)
@@ -510,6 +512,8 @@ def main() -> None:
     )
 
     canary_mean = canary_spatial.mean(dim=(2, 3))
+
+    print(f"    Canary spatial mean shape: {tuple(canary_mean.shape)}")
 
     assert torch.allclose(canary_mean, row_ids, rtol=0.0, atol=1e-6), (
         "Stage 7a broadcast canary failed: spatial mean does not preserve "
