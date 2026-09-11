@@ -18,7 +18,7 @@ It includes all recommended assertions:
 
 Run on the server:
     source ~/mamba-env/bin/activate
-    python prototype_stages00_to_08_unified.py
+    python prototype_stages_all.py
 """
 import torch
 import torch.nn as nn
