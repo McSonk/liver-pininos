@@ -95,14 +95,14 @@ def main() -> None:
     print(f"    Device:                    {device}")
     print(f"    CUDA device name:           {torch.cuda.get_device_name(0)}")
     print(f"    torch version:              {torch.__version__}")
-    print(f"    Mamba2 available:           True")
+    print("    Mamba2 available:           True")
 
     print("Mamba2 AMP test shape:")
     print(f"    B:                          {B}")
     print(f"    Z / sequence length:         {Z}")
     print(f"    D_MODEL:                    {D_MODEL}")
     print(f"    Input shape:                {(B, Z, D_MODEL)}")
-    print(f"    AMP dtype:                  torch.float16")
+    print("    AMP dtype:                  torch.float16")
     print(f"    Number of optimizer steps:  {NUM_STEPS}")
 
     torch.manual_seed(123)
