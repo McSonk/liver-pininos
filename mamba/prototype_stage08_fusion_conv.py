@@ -364,8 +364,8 @@ def main() -> None:
     # -------------------------------------------------------------------------
     # Stage 8 row-order canary.
     #
-    # A 1x1 convolution acts independently on each batch row. It must not mix
-    # or reorder merged slice rows.
+    # A 1×1 Conv2d operates independently at each spatial location and does not
+    # mix the batch dimension.. It must not mix or reorder merged slice rows.
     #
     # This canary uses a separate Conv2d with known weights. Each input row is
     # filled with a unique constant equal to its row index. With all weights
