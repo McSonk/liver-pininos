@@ -515,8 +515,19 @@ def main() -> None:
 
     print(f"    Canary spatial mean shape: {tuple(canary_mean.shape)}")
 
-    assert torch.allclose(canary_mean, row_ids, rtol=0.0, atol=1e-6), (
+    assert torch.allclose(
+        canary_mean,
+        canary_flat,
+        rtol=0.0,
+        atol=1e-6,
+    ), (
         "Stage 7a broadcast canary failed: spatial mean does not preserve "
+        "row identities."
+    )
+
+    # Optional additional per-row check.
+    assert torch.allclose(canary_mean.mean(dim=1), row_ids, rtol=0.0, atol=1e-6), (
+        "Stage 7a broadcast canary failed: per-row spatial mean does not preserve "
         "row identities."
     )
 
