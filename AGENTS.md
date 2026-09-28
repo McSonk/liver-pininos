@@ -26,7 +26,7 @@ Master's thesis: automated liver tumour segmentation using deep learning.
 | SegResNet | `SEG_RES_NET` / Baseline, **current `MODEL_TO_USE` default** | Best baseline so far. |
 | SwinUNETR | `SWIN_UNETR` / Baseline | Underperforms SegResNet by ~9–12 Dice points at this dataset scale (~79 training volumes). |
 | SwinUNETR Pretrain | `SWIN_UNETR_PRETRAIN` | Loads MONAI pretrained weights. |
-| **2.5D Mamba-hybrid** | **Primary target (supervisor-approved), not yet in `AvailableModels`** | 2D CNN/UNet encoder + `mamba_ssm.Mamba`/`Mamba2` block aggregating along z. Used as a raw component, not a wholesale published network. **Current phase (Week 1):** dummy-tensor prototype of the z-axis aggregation strategy in `~/mamba_env`. |
+| **2.5D Mamba-hybrid** | **Primary target (supervisor-approved), not yet in `AvailableModels`** | 2D CNN/UNet encoder + `mamba_ssm.Mamba2` block aggregating along z. Used as a raw component, not a wholesale published network. **Prototype phase complete (Week 2).** Reshape logic, Mamba2 forward, AMP compatibility, and fusion path validated. Model class not yet implemented. See Section 8. |
 | U-Mamba, SegMamba | **Design references only** | Cited in literature review for architectural ideas. **Not implementation targets** — do not add training/eval code for either unless explicitly asked. |
 
 **Current default in `config.py` (`MODEL_TO_USE`) is `SEG_RES_NET`** — the last
@@ -69,6 +69,11 @@ default without explicit instruction; the Mamba model class does not exist in
   code (to establish a baseline) and again after; verify all tests pass before
   committing. No linters or CI exist. Also verify runtime changes via the
   entrypoints above (use `--fast-run` for a cheap smoke test).
+- **Mamba-specific tests**: a CUDA-only pytest suite lives under `mamba/tests/`.
+  Run `~/mamba-env/bin/python -m pytest mamba/tests/ -v` on the server only.
+  These tests require CUDA and `mamba_ssm`. They are never triggered by the
+  CPU-only suite in `tests/` and must not be run with `~/denv` or
+  `~/envs/dev-thesis`.
 
 ### Mandatory `.env` Variables
 `config.init()` will hard-fail if these are missing:
@@ -118,6 +123,15 @@ notebooks/                  # strat_dataset.ipynb regenerates the split JSONs
 files/splits/               # LiTS_split_seed42.json, LiTS_split_seed_42_no_faulty.json
 files/stats/lits/           # Per-case CSV stats, dictionary.md, problems.md
 tests/                      # CPU-only pytest suite (see tests/README.md)
+mamba/                      # Mamba-hybrid prototype scripts (throwaway validation)
+  prototype_stages00_to_08_unified.py
+  prototype_stage05b_mamba2_amp.py
+  prototype_stage09_placeholder_decoder_canary.py
+  prototype_stage11_logits_unmerge.py
+mamba_tests/                # CUDA-only pytest suite for Mamba (server, ~/mamba-env)
+  conftest.py               # Skip-all guard if CUDA/mamba_ssm unavailable
+  test_mamba2_forward.py
+  test_mamba2_amp.py
 ```
 
 ## 5. Data Handling Rules (Strict Invariants)
@@ -197,3 +211,59 @@ All `matplotlib` figures (e.g., in `idssp/sonk/view/eval_stats.py`) must adhere 
   unless explicitly requested.
 - Do not run `scripts/*.sh` locally; they contain server-specific GPU PCI bindings and
   tmux logic.
+- Do not pass Mamba1-style kwargs (`d_state`, `d_conv`, `expand`) to `Mamba2` unless
+  the installed version's signature is explicitly verified. Use `Mamba2(d_model=...)`.
+- Do not run `mamba_tests/` with `~/denv` or `~/envs/dev-thesis`.
+- Do not delete prototype scripts in `mamba/` until the real model passes integration
+  tests.
+
+## 8. 2.5D Mamba-Hybrid — Settled Design Decisions (Prototype Phase Complete)
+
+Do not re-litigate these decisions unless explicitly instructed.
+
+### 8.1 Axis Convention (CRITICAL)
+
+- External tensor contract: `(B, C, X, Y, Z)`. Z is the LAST spatial axis (dim 4).
+- Z = S/I direction after `Orientationd(axcodes="LAS")`.
+
+### 8.2 Mamba Variant
+
+- Primary: `mamba_ssm.Mamba2`. Fallback: `mamba_ssm.Mamba` (v1).
+- Constructor: `Mamba2(d_model=D_MODEL)` — minimal args only.
+- Contract: `(B, Z, D_MODEL) -> (B, Z, D_MODEL)`. Shape-preserving. Causal.
+- Bidirectionality deferred to extension work.
+
+### 8.3 Stage Table
+
+| Stage | Operation | Output shape |
+|---|---|---|
+| 0 | Input patch | `(B, 1, X, Y, Z)` |
+| 1 | Permute + merge B·Z | `(B*Z, 1, X, Y)` |
+| 2 | 2D encoder down path | `(B*Z, C_bot, X', Y')` |
+| 3 | Global average pool | `(B*Z, C_bot)` |
+| 4 | Reshape to sequence | `(B, Z, C_bot)` |
+| 5 | Mamba2 forward | `(B, Z, C_bot)` |
+| 6 | Re-merge | `(B*Z, C_bot)` |
+| 7a | Broadcast spatially | `(B*Z, C_bot, X', Y')` |
+| 7b | Concat with bottleneck | `(B*Z, 2*C_bot, X', Y')` |
+| 8 | 1×1 fusion conv | `(B*Z, C_bot, X', Y')` |
+| 9 | 2D decoder up path | `(B*Z, C_base, X, Y)` |
+| 10 | Final 1×1 head | `(B*Z, NUM_CLASSES, X, Y)` |
+| 11 | Un-merge to 3D | `(B, NUM_CLASSES, X, Y, Z)` |
+
+### 8.4 AMP / Mixed Precision
+
+- Mamba2 validated under fp16 autocast + GradScaler (Stage 5b, A100).
+
+
+### 8.7 Prototype Scripts — Purpose and Disposal
+
+| Script | Purpose | Keep? |
+|---|---|---|
+| `mamba/prototype_stages00_to_08_unified.py` | Validates Stages 0–8 reshape/fusion logic | Keep as reference |
+| `mamba/prototype_stage05b_mamba2_amp.py` | Validates Mamba2 AMP training compatibility | Keep as reference |
+| `mamba/prototype_stage09_placeholder_decoder_canary.py` | Validates conv-based upsampling preserves row order | Keep as reference |
+| `mamba/prototype_stage11_logits_unmerge.py` | Validates Stage 11 un-merge round-trip | Keep as reference |
+
+These scripts are NOT imported by any production code. They are standalone validation
+artefacts. Do not delete them until the real model passes equivalent integration tests.
