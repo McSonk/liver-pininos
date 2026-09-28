@@ -7,8 +7,14 @@ import pytest
 import torch
 from torch.amp import GradScaler, autocast
 
-from mamba_ssm import Mamba2
-
+try:
+    from mamba_ssm import Mamba2
+except ImportError:
+    pytest.skip(
+        "mamba_ssm is not installed or does not expose Mamba2. "
+        "Run inside ~/mamba-env.",
+        allow_module_level=True,
+    )
 
 def test_mamba2_amp_forward_backward_step() -> None:
     """Full AMP training step must complete without error and update weights."""

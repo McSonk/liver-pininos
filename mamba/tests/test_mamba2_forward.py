@@ -5,7 +5,14 @@ Validates that Mamba2 preserves the sequence shape contract under forward pass.
 import pytest
 import torch
 
-from mamba_ssm import Mamba2
+try:
+    from mamba_ssm import Mamba2
+except ImportError:
+    pytest.skip(
+        "mamba_ssm is not installed or does not expose Mamba2. "
+        "Run inside ~/mamba-env.",
+        allow_module_level=True,
+    )
 
 
 @pytest.mark.parametrize("B,Z,D_MODEL", [
