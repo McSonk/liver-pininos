@@ -26,7 +26,7 @@ Master's thesis: automated liver tumour segmentation using deep learning.
 | SegResNet | `SEG_RES_NET` / Baseline, **current `MODEL_TO_USE` default** | Best baseline so far. |
 | SwinUNETR | `SWIN_UNETR` / Baseline | Underperforms SegResNet by ~9–12 Dice points at this dataset scale (~79 training volumes). |
 | SwinUNETR Pretrain | `SWIN_UNETR_PRETRAIN` | Loads MONAI pretrained weights. |
-| **2.5D Mamba-hybrid** | **Primary target (supervisor-approved), not yet in `AvailableModels`** | 2D CNN/UNet encoder + `mamba_ssm.Mamba2` block aggregating along z. Used as a raw component, not a wholesale published network. **Prototype phase complete (Week 2).** Reshape logic, Mamba2 forward, AMP compatibility, and fusion path validated. Model class not yet implemented. See Section 8. |
+| **2.5D Mamba-hybrid** | **Primary target (supervisor-approved), not yet in `AvailableModels`** | 2D CNN/UNet encoder + `mamba_ssm.Mamba2` block aggregating along z. Used as a raw component, not a wholesale published network. **Prototype phase complete (Week 2):** reshape logic, Mamba2 forward, AMP compatibility, and fusion path all validated. Model class not yet implemented. See Section 8 for settled design decisions. |
 | U-Mamba, SegMamba | **Design references only** | Cited in literature review for architectural ideas. **Not implementation targets** — do not add training/eval code for either unless explicitly asked. |
 
 **Current default in `config.py` (`MODEL_TO_USE`) is `SEG_RES_NET`** — the last
@@ -123,15 +123,17 @@ notebooks/                  # strat_dataset.ipynb regenerates the split JSONs
 files/splits/               # LiTS_split_seed42.json, LiTS_split_seed_42_no_faulty.json
 files/stats/lits/           # Per-case CSV stats, dictionary.md, problems.md
 tests/                      # CPU-only pytest suite (see tests/README.md)
-mamba/                      # Mamba-hybrid prototype scripts (throwaway validation)
-  prototype_stages00_to_08_unified.py
-  prototype_stage05b_mamba2_amp.py
-  prototype_stage09_placeholder_decoder_canary.py
-  prototype_stage11_logits_unmerge.py
-mamba_tests/                # CUDA-only pytest suite for Mamba (server, ~/mamba-env)
-  conftest.py               # Skip-all guard if CUDA/mamba_ssm unavailable
-  test_mamba2_forward.py
-  test_mamba2_amp.py
+mamba/                      # Mamba-hybrid prototype + roadmap (throwaway validation)
+  mamba-basic-roadmap.md    # Design roadmap for the 2.5D Mamba-hybrid
+  prototype_stages_all.py   # Unified Stage 0–8 reshape/fusion validation
+  prototype_stage05b_mamba2_amp.py            # Mamba2 AMP forward/backward/step
+  prototype_stage09_placeholder_decoder_canary.py  # ConvTranspose2d row-order canary
+  prototype_stage11_logits_unmerge.py         # Logits un-merge round-trip
+  tests/                    # CUDA-only pytest suite for Mamba (server, ~/mamba-env)
+    conftest.py             # Skip-all guard if CUDA/mamba_ssm unavailable
+    README.md
+    test_mamba2_amp.py      # AMP training step, GradScaler, weight update
+    test_mamba2_forward.py  # Shape contract, batch independence
 ```
 
 ## 5. Data Handling Rules (Strict Invariants)
@@ -180,6 +182,10 @@ mamba_tests/                # CUDA-only pytest suite for Mamba (server, ~/mamba-
   exit. Preserve this distinction.
 - **Reporting**: prefer plain markdown tables over interactive visualisation code.
   "No visualisation tooling or extra compute unless asked" policy.
+- **Mamba axis helpers** (`mamba_axis.py`): `split_into_axial_slices` returns
+  `(slices, AxialSliceMeta)`. `merge_axial_slices` accepts `(slices, AxialSliceMeta)`.
+  The meta object stores `batch_size`, `x`, `y`, `z` for inverse reconstruction.
+  Do not pass raw integers for spatial dims — always use the meta object.
 
 ### Plotting and Visualisation Convention
 All `matplotlib` figures (e.g., in `idssp/sonk/view/eval_stats.py`) must adhere to the iDSSP slide convention to ensure visual consistency across advisor presentations and thesis documents.
@@ -211,11 +217,15 @@ All `matplotlib` figures (e.g., in `idssp/sonk/view/eval_stats.py`) must adhere 
   unless explicitly requested.
 - Do not run `scripts/*.sh` locally; they contain server-specific GPU PCI bindings and
   tmux logic.
+- Do not use `permute(0, 2, 1, 3, 4)` for z-axis splitting. The z-axis is the LAST
+  spatial dimension (dim 4). Correct forward permute is `(0, 4, 1, 2, 3)`.
 - Do not pass Mamba1-style kwargs (`d_state`, `d_conv`, `expand`) to `Mamba2` unless
   the installed version's signature is explicitly verified. Use `Mamba2(d_model=...)`.
-- Do not run `mamba_tests/` with `~/denv` or `~/envs/dev-thesis`.
+- Do not run `mamba/tests/` with `~/denv` or `~/envs/dev-thesis`.
 - Do not delete prototype scripts in `mamba/` until the real model passes integration
   tests.
+- Do not manually cast Mamba2 to `.half()` in model code. Let `torch.amp.autocast`
+  handle dtype selection.
 
 ## 8. 2.5D Mamba-Hybrid — Settled Design Decisions (Prototype Phase Complete)
 
@@ -225,6 +235,10 @@ Do not re-litigate these decisions unless explicitly instructed.
 
 - External tensor contract: `(B, C, X, Y, Z)`. Z is the LAST spatial axis (dim 4).
 - Z = S/I direction after `Orientationd(axcodes="LAS")`.
+- Forward permute (split): `(0, 4, 1, 2, 3)` then reshape to `(B*Z, C, X, Y)`.
+- Inverse permute (merge): reshape to `(B, Z, C, X, Y)` then permute `(0, 2, 3, 4, 1)`.
+- Merged row order: `row = b * Z + z` (volume-major, Z-minor).
+- All inter-stage reshapes are plain `.reshape()`. No additional permutes.
 
 ### 8.2 Mamba Variant
 
@@ -254,13 +268,30 @@ Do not re-litigate these decisions unless explicitly instructed.
 ### 8.4 AMP / Mixed Precision
 
 - Mamba2 validated under fp16 autocast + GradScaler (Stage 5b, A100).
+- Do NOT manually cast Mamba2 to half. Let autocast handle dtype.
+- Training loop (`training.py`) already uses `torch.amp.autocast` + `GradScaler`.
+  No changes needed for Mamba AMP compatibility.
 
+### 8.5 Ablation Flag
+
+- Real model must include `use_z_context: bool = True`.
+- When `False`: bypass Stages 3–8, feed bottleneck directly to decoder.
+- Decoder input channels remain `C_bot` regardless of flag value.
+
+### 8.6 Outstanding Obligations
+
+- [ ] Re-run row-order canary against the REAL Stage 9 decoder once implemented.
+- [ ] Add `MAMBA_HYBRID_25D` to `AvailableModels` (requires explicit instruction).
+- [ ] Implement `get_model()` factory branch.
+- [ ] Parameter-match base channel width against SegResNet before comparisons.
+- [ ] Align `~/mamba-env` torch version with the baseline pin (currently 2.10.0+cu128
+      vs 2.11.0).
 
 ### 8.7 Prototype Scripts — Purpose and Disposal
 
 | Script | Purpose | Keep? |
 |---|---|---|
-| `mamba/prototype_stages00_to_08_unified.py` | Validates Stages 0–8 reshape/fusion logic | Keep as reference |
+| `mamba/prototype_stages_all.py` | Validates Stages 0–8 reshape/fusion logic | Keep as reference |
 | `mamba/prototype_stage05b_mamba2_amp.py` | Validates Mamba2 AMP training compatibility | Keep as reference |
 | `mamba/prototype_stage09_placeholder_decoder_canary.py` | Validates conv-based upsampling preserves row order | Keep as reference |
 | `mamba/prototype_stage11_logits_unmerge.py` | Validates Stage 11 un-merge round-trip | Keep as reference |
