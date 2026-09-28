@@ -6,7 +6,7 @@ inside `~/mamba-env`. They are NOT part of the CPU-only suite in `tests/`.
 ## Running
 
     source ~/mamba-env/bin/activate
-    python -m pytest mamba_tests/ -v
+    python -m pytest mamba/tests/ -v
 
 ## Requirements
 
@@ -19,4 +19,4 @@ inside `~/mamba-env`. They are NOT part of the CPU-only suite in `tests/`.
 | Directory | Environment | Requires CUDA? | Requires mamba_ssm? |
 |---|---|---|---|
 | `tests/` | `~/envs/dev-thesis` | No | No |
-| `mamba_tests/` | `~/mamba-env` (server only) | Yes | Yes |
+| `mamba/tests/` | `~/mamba-env` (server only) | Yes | Yes |
