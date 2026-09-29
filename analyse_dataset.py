@@ -1,25 +1,26 @@
 """
 Standalone script to run LiTS dataset-wide analysis.
 
-This script analyses all paired volumes in the LiTS dataset, producing:
-1. A terminal table with per-case metadata
-2. Aggregate statistics (shapes, spacing, orientations, tumor prevalence, etc.)
-3. CSV exports for thesis analysis
+This script analyses all paired volumes in the LiTS dataset (train + test sources
+combined) and produces:
+1. Per-case progress logging
+2. A per-case CSV export (metadata, spacing, orientation, CT range, liver/tumour
+   extents, voxel counts) sorted lexicographically by case name
 
 Usage
 -----
-python analyze_lits_dataset.py [--output-csv PATH] [--output-agg-csv PATH] [--no-verbose]
+python analyse_dataset.py [--output-csv PATH] [--dummy]
 
 Examples
 --------
-# Run with default output files
-python analyze_lits_dataset.py
+# Run with the default output path (<STATS_DIR>/train/per_case_summary.csv)
+python analyse_dataset.py
 
-# Custom output paths
-python analyze_lits_dataset.py --output-csv my_per_case.csv --output-agg-csv my_stats.csv
+# Custom per-case output path
+python analyse_dataset.py --output-csv my_per_case.csv
 
-# Quiet mode (only CSV export)
-python analyze_lits_dataset.py --no-verbose --output-csv data.csv
+# Dummy mode (analyse only the first 3 volumes, for a quick smoke test)
+python analyse_dataset.py --dummy
 """
 print("[analyse_dataset.py] Importing torch. This may take a moment...")
 import argparse
@@ -85,10 +86,10 @@ def main():
     '''
     Main function to execute dataset analysis.
      - Parses command-line arguments
-     - Loads and pairs LiTS data
-     - Runs analysis and outputs results
-     - Exports CSV files for further use
-     - Provides terminal output unless --no-verbose is set
+     - Loads and pairs LiTS data (train + test sources)
+     - Runs the per-case analysis
+     - Exports a single per-case CSV (default <STATS_DIR>/train/per_case_summary.csv)
+     - Logs progress through the configured console/file loggers
     '''
     # Parse CLI arguments (was previously defined but never called)
     args = _parse_args()

@@ -340,8 +340,8 @@ class ModelBuilder:
             lambda_ce=1.0,
             # weight is vector penalisation (how aggressive the penalisation)
             # is for that class. [background_weight, liver_weight, tumour_weight]
-            # NOTE: weight should be ce_weight, but apparently pytorch version 2.11.0
-            # doesn't expose it yet 
+            # NOTE: MONAI's DiceCELoss `weight` argument applies to the Cross-Entropy 
+            # component. Verified against pinned PyTorch 2.10.0 / MONAI 1.5.2.
             weight=torch.tensor(self.config.DICE_CE_WEIGHTS, device=self.device)
         )
         self.optimizer = optim.AdamW(
