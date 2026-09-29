@@ -111,3 +111,39 @@ During the prototype phase, any assertion failure was treated as a bug in the pr
 | Validation memory | Rely on the existing OOM fallback in `training.py` / `inferer.py` | Check VRAM at `sw_batch_size=16` → 2048 merged rows; lower `SLIDING_WINDOW_BATCH_SIZE` if needed | First full-volume validation run |
 | Ablation switch | A simple boolean flag (e.g. `use_z_context`) that bypasses stages 3–8 and feeds the bottleneck straight to the decoder | Separate registered model variant if the flag proves awkward | When writing `models.py` |
 | Pipeline integration | Prototype validation complete; production integration pending | Add an enum entry and a `get_model()` branch only with explicit instruction; `MODEL_TO_USE` default stays `SEG_RES_NET` per `AGENTS.md` | When starting the real model implementation |
+
+
+## Normalisation decision for the 2.5D Mamba-hybrid — revised
+
+Decision: keep the current preprocessing unchanged.
+
+Current pipeline:
+- Clip CT to [-175, 250] HU.
+- Scale clipped intensities to [0, 1].
+- Use the same deterministic transforms for training, validation, and inference.
+
+Do not introduce Z-score normalisation for the Mamba-hybrid model at this stage.
+
+Reasons:
+1. Mamba2 receives encoder bottleneck features, not raw CT intensities.
+2. Changing preprocessing only for Mamba would confound architectural comparison.
+3. The current pipeline assumes zero means background/air in several places:
+   - CropForegroundd uses x > 0.
+   - RandCropByPosNegLabeld uses image_threshold=0.
+   - SpatialPadd pads with 0.
+4. Per-volume Z-score removes absolute HU information that may be useful.
+5. The expected benefit is speculative and has not been observed as a failure mode.
+
+If Mamba training is unstable, investigate in this order:
+1. Internal normalisation in the 2D encoder/decoder.
+2. Avoid BatchNorm over merged B*Z rows; prefer InstanceNorm2d or torch.nn.GroupNorm.
+3. Test LayerNorm(C_bot) before Mamba2 in a toy run.
+4. Adjust learning rate/warm-up.
+5. Only then consider input normalisation as a full ablation applied to all models.
+
+If a future preprocessing variant is introduced:
+- Add it to config.
+- Include it in PersistentDataset cache keys.
+- Include it in config_snapshot.
+- Include it in inference strict-key validation.
+- Retrain or explicitly isolate the comparison.
