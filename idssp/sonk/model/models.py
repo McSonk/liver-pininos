@@ -6,6 +6,7 @@ import torch.nn as nn
 from monai.networks.nets import SegResNet, SwinUNETR, UNet
 
 from idssp.sonk import config
+from idssp.sonk.model.mamba_hybrid import MambaHybrid
 from idssp.sonk.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -189,11 +190,42 @@ def get_swin_unetr_pretrain(config_obj: config.Config) -> SwinUNETR:
 
     return model
 
+def get_mamba_hybrid_temp(config_obj: config.Config) -> MambaHybrid:
+    '''Creates the temporary MVP MambaHybrid model for integration testing only.'''
+    logger.info(
+        "Creating temporary MambaHybrid model with %d output classes.",
+        config_obj.NUM_CLASSES,
+    )
+
+    # TODO: Once the complete MambaHybrid model is verified, evaluate
+    # base_channels=32 for the main experimental configuration if computational
+    # cost and the planned SegResNet comparison justify it.
+    base_channels = 16
+
+    return MambaHybrid(
+        in_channels=1,
+        num_classes=config_obj.NUM_CLASSES,
+        base_channels=base_channels,
+        use_z_context=False,
+    )
+
 def get_model(cfg: Optional[config.Config] = None) -> nn.Module:
     '''Factory function to create the segmentation model based
        on the current configuration.'''
     cfg = cfg or config.get()
-    if cfg.MODEL == config.AvailableModels.U_NET:
+
+    # TEMPORARY integration branch.
+    # This is intentionally not added to AvailableModels and must not be used
+    # for real experiments, checkpoint resume, or inference until the official
+    # model registration is approved.
+    if cfg.TEMP_MAMBA_HYBRID:
+        logger.warning(
+            "Temporary TEMP_MAMBA_HYBRID flag is enabled. "
+            "Using MambaHybrid MVP instead of %s.",
+            cfg.MODEL.value,
+        )
+        return get_mamba_hybrid_temp(cfg)
+    elif cfg.MODEL == config.AvailableModels.U_NET:
         return get_unet(cfg)
     elif cfg.MODEL == config.AvailableModels.SEG_RES_NET:
         return get_seg_res_net(cfg)
