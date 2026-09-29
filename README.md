@@ -10,6 +10,8 @@ The aim of this thesis is to develop a model that can automatically segment live
 from CT scans. The primary benchmark is the LiTS dataset (131 labelled volumes), with
 external (cross-dataset) evaluation on CHAOS CT, WAW-TACE, and HCC-TACE-Seg.
 
+![Project Architecture Diagram](diagram.png)
+
 ## Features
 
 - 3D medical image segmentation using MONAI framework
