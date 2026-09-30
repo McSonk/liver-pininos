@@ -157,8 +157,10 @@ def test_full_split_merge_permutation_equivariance(b, c, x, y, z, base_channels,
     slices, meta = split_into_axial_slices(volume)
     assert slices.shape == (rows, c, x, y)
 
-    # Fixed permutation on the flat row axis
+    # Fixed permutation on the flat row axis (reversed order)
     perm = torch.arange(rows - 1, -1, -1)
+    unperm = torch.argsort(perm)  # inverse permutation
+
     slices_permuted = slices[perm]
 
     with torch.no_grad():
@@ -171,31 +173,22 @@ def test_full_split_merge_permutation_equivariance(b, c, x, y, z, base_channels,
         bottleneck_perm, skips_perm = encoder(slices_permuted)
         logits_perm = decoder(bottleneck_perm, skips_perm)
 
-    # logits_perm must be logits_orig permuted along the row axis
+    # Flat-row equivariance: permuted logits must be original logits permuted
     assert torch.allclose(logits_perm, logits_orig[perm], atol=1e-5), (
         "Full pipeline logits are not equivariant to row permutation."
     )
 
-    # Additionally verify the merge round-trip preserves the permuted structure.
-    # We construct a permuted meta to merge the permuted logits and check that
-    # un-permuting recovers the original merged volume.
-    # Since merge_axial_slices uses meta (batch_size, x, y, z) and does not
-    # depend on row content, we verify by checking that:
-    #   merge(logits[perm]) un-permuted == merge(logits)
-    # This is equivalent to checking that merge is a pure reshape/permute
-    # (no content-dependent reordering).
-    merged_perm = merge_axial_slices(logits_perm, meta)
+    # Un-permute the flat logits and verify merge recovers the original volume.
+    # This proves merge_axial_slices is a pure, content-preserving reshape/permute.
+    logits_perm_unpermuted = logits_perm[unperm]
+    assert torch.allclose(logits_perm_unpermuted, logits_orig, atol=1e-5), (
+        "Un-permuting flat logits does not recover the original order."
+    )
 
-    # merged_perm should be merged_orig with the (b, z) axes permuted accordingly.
-    # Since perm reverses the flat row axis (b*Z), we reconstruct what the
-    # permuted volume should look like.
-    # For the reverse permutation on flat rows: row = b_idx * z + z_idx
-    # reversed means new_row[i] = old_row[rows - 1 - i]
-    # This corresponds to reversing both the volume and z order jointly.
-    # Rather than computing the expected permuted volume analytically,
-    # we verify the simpler invariant: merge is deterministic and shape-correct.
-    assert merged_perm.shape == merged_orig.shape, (
-        f"Merged shape mismatch: {tuple(merged_perm.shape)} vs {tuple(merged_orig.shape)}"
+    merged_recovered = merge_axial_slices(logits_perm_unpermuted, meta)
+    assert torch.allclose(merged_recovered, merged_orig, atol=1e-5), (
+        "merge_axial_slices produced different content for identical flat logits. "
+        "The merge operation may not be a pure reshape/permute."
     )
 
 
