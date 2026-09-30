@@ -202,11 +202,13 @@ def get_mamba_hybrid_temp(config_obj: config.Config) -> MambaHybrid:
     # cost and the planned SegResNet comparison justify it.
     base_channels = 16
 
+    # The temporary scaffold exercises the z-context path with an identity
+    # placeholder at Stage 5. This validates Stages 3 to 8 on CPU.
     return MambaHybrid(
         in_channels=1,
         num_classes=config_obj.NUM_CLASSES,
         base_channels=base_channels,
-        use_z_context=False,
+        use_z_context=True,
     )
 
 def get_model(cfg: Optional[config.Config] = None) -> nn.Module:
