@@ -202,8 +202,9 @@ def get_mamba_hybrid_temp(config_obj: config.Config) -> MambaHybrid:
     # cost and the planned SegResNet comparison justify it.
     base_channels = 16
 
-    # The temporary scaffold exercises the z-context path with an identity
-    # placeholder at Stage 5. This validates Stages 3 to 8 on CPU.
+    # The temporary branch uses the real Mamba z-context path.
+    # This is intended for the CUDA server environment. There is no fallback:
+    # if mamba_ssm is unavailable, MambaHybrid construction fails immediately.
     return MambaHybrid(
         in_channels=1,
         num_classes=config_obj.NUM_CLASSES,

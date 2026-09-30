@@ -1,23 +1,25 @@
 """
-2.5D Mamba-hybrid model with identity z-context scaffold.
+2.5D Mamba-hybrid model.
 
 External tensor contract:
 
     input:  (B, C, X, Y, Z)
     output: (B, NUM_CLASSES, X, Y, Z)
 
-Current status:
+Behaviour:
 
     use_z_context=False:
         Ablation path. The encoder bottleneck is fed directly to the decoder.
+        Stages 3 to 8 are bypassed.
 
     use_z_context=True:
-        Identity scaffold path. Stages 3, 4, 6, 7a, 7b, and 8 from the settled
-        design table are implemented. Stage 5 is currently an `nn.Identity()`
-        placeholder. It will be replaced by `mamba_ssm.Mamba2(d_model=C_bot)`
-        in the next CUDA-only integration step.
+        Full z-context path. Stages 3 to 8 are executed. Stage 5 uses
+        mamba_ssm.Mamba2. This path requires CUDA and mamba_ssm. There is
+        no fallback. If mamba_ssm is unavailable, construction fails
+        immediately.
 
-This module remains CPU-safe and does not import `mamba_ssm`.
+This module does not import mamba_ssm at module import time, so the ablation
+path remains importable in environments without mamba_ssm.
 """
 
 import torch
@@ -29,7 +31,7 @@ from idssp.sonk.model.mamba_axis import merge_axial_slices, split_into_axial_sli
 
 class MambaHybrid(nn.Module):
     """
-    Minimal 2.5D Mamba-hybrid model.
+    2.5D Mamba-hybrid segmentation model.
 
     The decoder input channel count is always `C_bot`, regardless of whether
     `use_z_context` is True or False. This keeps the ablation path decoder
@@ -58,8 +60,8 @@ class MambaHybrid(nn.Module):
         num_downs:
             Number of 2D downsampling steps.
         use_z_context:
-            If True, enable the z-context scaffold path. If False, bypass
-            Stages 3 to 8 and feed the bottleneck directly to the decoder.
+            If True, enable the Mamba z-context path. Requires CUDA and
+            mamba_ssm. If False, bypass Stages 3 to 8.
         norm_type:
             Normalisation type used by the 2D CNN blocks.
         norm_num_groups:
@@ -95,10 +97,26 @@ class MambaHybrid(nn.Module):
         )
 
         if use_z_context:
-            # TODO: Replace nn.Identity() with mamba_ssm.Mamba2(d_model=self.bottleneck_channels)
-            # on the server inside ~/mamba-env after verifying the installed Mamba2 signature.
-            # Do not import mamba_ssm in this CPU-safe module.
-            self.z_context = nn.Identity()
+            try:
+                from mamba_ssm import Mamba2
+            except ImportError as exc:
+                raise ImportError(
+                    "mamba_ssm is required when MambaHybrid is constructed with "
+                    "use_z_context=True. Install it in ~/mamba-env on the server. "
+                    "Do not install it into ~/denv."
+                ) from exc
+
+            if not torch.cuda.is_available():
+                raise RuntimeError(
+                    "MambaHybrid(use_z_context=True) requires CUDA. "
+                    "Use use_z_context=False for a CPU ablation path, or run "
+                    "on the CUDA server environment."
+                )
+
+            # Settled constructor contract from AGENTS.md:
+            # minimal Mamba2 construction with d_model only.
+            self.z_sequence = Mamba2(d_model=self.bottleneck_channels)
+
             self.fusion_conv = nn.Conv2d(
                 in_channels=2 * self.bottleneck_channels,
                 out_channels=self.bottleneck_channels,
@@ -136,11 +154,11 @@ class MambaHybrid(nn.Module):
             pooled = bottleneck.mean(dim=(2, 3))  # (B*Z, C_bot)
 
             # Stage 4: un-merge to sequence form.
-            sequence = pooled.reshape(meta.batch_size, meta.z, channels)  # (B, Z, C_bot)
+            sequence = pooled.reshape(meta.batch_size, meta.z, channels)
+            sequence = sequence.contiguous()  # (B, Z, C_bot)
 
-            # Stage 5: z-context model.
-            # Identity placeholder for now; later Mamba2.
-            sequence = self.z_context(sequence)  # (B, Z, C_bot)
+            # Stage 5: Mamba2 forward along z.
+            sequence = self.z_sequence(sequence)  # (B, Z, C_bot)
 
             # Stage 6: re-merge B·Z.
             z_flat = sequence.reshape(rows, channels)  # (B*Z, C_bot)
@@ -154,10 +172,10 @@ class MambaHybrid(nn.Module):
             )  # (B*Z, C_bot, H_bot, W_bot)
 
             # Stage 7b: concatenate with cached bottleneck.
-            fused = torch.cat((bottleneck, z_spatial), dim=1)  # (B*Z, 2*C_bot, H_bot, W_bot)
+            fused = torch.cat((bottleneck, z_spatial), dim=1)
 
             # Stage 8: 1x1 fusion convolution.
-            decoder_input = self.fusion_conv(fused)  # (B*Z, C_bot, H_bot, W_bot)
+            decoder_input = self.fusion_conv(fused)
         else:
             # Ablation path: bypass Stages 3 to 8.
             decoder_input = bottleneck
