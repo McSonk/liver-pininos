@@ -192,19 +192,14 @@ def get_swin_unetr_pretrain(config_obj: config.Config) -> SwinUNETR:
 
 def get_mamba_hybrid_temp(config_obj: config.Config) -> MambaHybrid:
     '''Creates the temporary MVP MambaHybrid model for integration testing only.'''
-    logger.info(
-        "Creating temporary MambaHybrid model with %d output classes.",
-        config_obj.NUM_CLASSES,
-    )
+    logger.info("Creating temporary MambaHybrid model with %d output classes.",
+                config_obj.NUM_CLASSES)
 
-    # TODO: Once the complete MambaHybrid model is verified, evaluate
-    # base_channels=32 for the main experimental configuration if computational
-    # cost and the planned SegResNet comparison justify it.
-    base_channels = 16
+    # Phase 2 controlled baseline: base_channels=40 gives ~15.7M parameters,
+    # approximately 0.84x the SegResNet baseline (18.8M).
+    # See AGENTS.md Section 2.1 (parameter-comparable MambaHybrid control).
+    base_channels = 40
 
-    # The temporary branch uses the real Mamba z-context path.
-    # This is intended for the CUDA server environment. There is no fallback:
-    # if mamba_ssm is unavailable, MambaHybrid construction fails immediately.
     return MambaHybrid(
         in_channels=1,
         num_classes=config_obj.NUM_CLASSES,
