@@ -15,24 +15,69 @@ Master's thesis: automated liver tumour segmentation using deep learning.
   cases, TCIA, DICOM). Currently eval-only; moving to training is pending supervisor
   approval (~Week 9, mid-October 2026).
 - **Metrics**: Dice and HD95 (primary). IoU is secondary (monotonic with Dice).
-- **Timeline**: Graduation in ~6 months (from August 2026). Full draft ~November 2026.
-  Favour completion over novelty.
+- **Timeline**: graduation target: January. Full draft target: December. Favour completion over novelty.
 
 ## 2. Architecture Status
 
 | Model | Enum / Status | Notes |
 |---|---|---|
 | UNet (residual) | `U_NET` / Baseline | MONAI `UNet` with `num_res_units`. Referred to as "ResUNet" in thesis prose. |
-| SegResNet | `SEG_RES_NET` / Baseline, **current `MODEL_TO_USE` default** | Best baseline so far. |
+| SegResNet | `SEG_RES_NET` / Baseline, **current `MODEL_TO_USE` default** | Best baseline so far. It is the validated CNN baseline and the reference model for controlled comparisons. If the final MambaHybrid is substantially larger, at most one heavier SegResNet variant may be trained as a capacity reference, unless explicitly instructed otherwise. |
 | SwinUNETR | `SWIN_UNETR` / Baseline | Underperforms SegResNet by ~9–12 Dice points at this dataset scale (~79 training volumes). |
 | SwinUNETR Pretrain | `SWIN_UNETR_PRETRAIN` | Loads MONAI pretrained weights. |
-| **2.5D Mamba-hybrid** | **Primary target (supervisor-approved), not yet in `AvailableModels`** | 2D CNN/UNet encoder + `mamba_ssm.Mamba2` block aggregating along z. Used as a raw component, not a wholesale published network. **Prototype phase complete (Week 2):** reshape logic, Mamba2 forward, AMP compatibility, and fusion path all validated. Model class not yet implemented. See Section 8 for settled design decisions. |
+| **2.5D Mamba-hybrid** | **Primary target (supervisor-approved), not yet in `AvailableModels`** | 2D CNN/UNet encoder + `mamba_ssm.Mamba2` block aggregating along z. Used as a raw component, not a wholesale published network. **Prototype phase complete (Week 2):** reshape logic, Mamba2 forward, AMP compatibility, and fusion path all validated. Model class not yet implemented. See Sections 2.1 and 8 for development strategy and settled design decisions. |
 | U-Mamba, SegMamba | **Design references only** | Cited in literature review for architectural ideas. **Not implementation targets** — do not add training/eval code for either unless explicitly asked. |
 
 **Current default in `config.py` (`MODEL_TO_USE`) is `SEG_RES_NET`** — the last
 validated baseline, not evidence of the target architecture. Do not change this
 default without explicit instruction; the Mamba model class does not exist in
 `model/models.py` / `AvailableModels` yet.
+
+### 2.1 MambaHybrid development and comparison strategy
+
+The MambaHybrid work follows a staged strategy. The parameter-comparable model is
+a scientific control, not the final best-effort architecture.
+
+1. **Validated baseline**  
+   SegResNet remains the validated baseline. Its current results, configuration,
+   and checkpoint should be preserved.
+
+2. **Parameter-comparable MambaHybrid control**  
+   The first real MambaHybrid implementation should be minimal and approximately
+   parameter-comparable to SegResNet. This controls for model capacity and makes
+   the comparison more defensible.
+
+3. **Written-result gate**  
+   Before exploring architectural improvements, the parameter-comparable
+   MambaHybrid must produce a complete written result. A complete result includes:
+   - parameter count;
+   - training configuration snapshot;
+   - checkpoint path;
+   - raw Dice and HD95 results;
+   - post-processed Dice and HD95 results;
+   - explicit tumour-sample N;
+   - brief failure analysis if performance is poor.
+
+4. **Targeted improvement after diagnosis**  
+   After the controlled baseline result exists, architectural improvements may be
+   explored one at a time. Each improvement should have a clear hypothesis and a
+   corresponding ablation or comparison row.
+
+5. **Best-effort MambaHybrid**  
+   The final MambaHybrid does not need to remain constrained to SegResNet’s
+   parameter count. It may be scaled or improved to reach the best practical
+   performance, subject to A100 memory limits and the graduation deadline.
+
+6. **Heavier SegResNet reference, if needed**  
+   If the final best-effort MambaHybrid is substantially larger than the current
+   SegResNet baseline, train at most one heavier SegResNet variant as a capacity
+   reference. Do not create a large grid of SegResNet variants unless explicitly
+   instructed.
+
+7. **Completion over novelty**  
+   A weak minimal MambaHybrid result is acceptable if it is recorded, diagnosed,
+   and used to justify the next controlled improvement. Do not pursue unlimited
+   architectural exploration.
 
 ## 3. Environment & Execution
 
@@ -186,6 +231,17 @@ mamba/                      # Mamba-hybrid prototype + roadmap (throwaway valida
   `(slices, AxialSliceMeta)`. `merge_axial_slices` accepts `(slices, AxialSliceMeta)`.
   The meta object stores `batch_size`, `x`, `y`, `z` for inverse reconstruction.
   Do not pass raw integers for spatial dims — always use the meta object.
+- **Experiment discipline**: implement one architectural change at a time for
+  MambaHybrid. Do not combine a new module, capacity scaling, loss changes, and
+  preprocessing changes in a single experimental run unless explicitly approved.
+- **Written-result gate**: before moving from the minimal parameter-comparable
+  MambaHybrid to architectural improvements, produce a complete written result
+  for the minimal model.
+- **Parameter and compute reporting**: for every model comparison, report at
+  least the parameter count, training configuration, raw metrics, post-processed
+  metrics, and tumour-sample N.
+- **Controlled comparison**: the parameter-comparable MambaHybrid is a control.
+  It is not required to be the strongest final model.
 
 ### Plotting and Visualisation Convention
 All `matplotlib` figures (e.g., in `idssp/sonk/view/eval_stats.py`) must adhere to the iDSSP slide convention to ensure visual consistency across advisor presentations and thesis documents.
@@ -226,6 +282,14 @@ All `matplotlib` figures (e.g., in `idssp/sonk/view/eval_stats.py`) must adhere 
   tests.
 - Do not manually cast Mamba2 to `.half()` in model code. Let `torch.amp.autocast`
   handle dtype selection.
+- Do not treat the parameter-comparable MambaHybrid as the final best-effort
+  model. It is a controlled baseline.
+- Do not combine multiple architectural changes in one MambaHybrid variant unless
+  explicitly approved.
+- Do not train a large grid of SegResNet capacity variants. At most one heavier
+  SegResNet reference is permitted unless explicitly instructed otherwise.
+- Do not begin broad architectural exploration before the minimal
+  parameter-comparable MambaHybrid has a complete written result.
 
 ## 8. 2.5D Mamba-Hybrid — Settled Design Decisions (Prototype Phase Complete)
 
@@ -283,7 +347,19 @@ Do not re-litigate these decisions unless explicitly instructed.
 - [ ] Re-run row-order canary against the REAL Stage 9 decoder once implemented.
 - [ ] Add `MAMBA_HYBRID_25D` to `AvailableModels` (requires explicit instruction).
 - [ ] Implement `get_model()` factory branch.
-- [ ] Parameter-match base channel width against SegResNet before comparisons.
+- [ ] Implement a minimal MambaHybrid controlled baseline with a total parameter
+      count approximately comparable to SegResNet. This is a scientific control,
+      not the final best-effort model.
+- [ ] Record a complete written result for the parameter-comparable MambaHybrid
+      before architectural exploration: parameter count, configuration snapshot,
+      checkpoint path, raw metrics, post-processed metrics, tumour-sample N, and
+      brief failure analysis.
+- [ ] After the controlled baseline result exists, develop best-effort MambaHybrid
+      variants one change at a time. Each change requires a hypothesis and a
+      comparison or ablation row.
+- [ ] If the final best-effort MambaHybrid is substantially larger than the
+      current SegResNet baseline, train at most one heavier SegResNet variant as
+      a capacity reference unless explicitly instructed otherwise.
 - [ ] Align `~/mamba-env` torch version with the baseline pin (currently 2.10.0+cu128
       vs 2.11.0).
 
@@ -298,3 +374,26 @@ Do not re-litigate these decisions unless explicitly instructed.
 
 These scripts are NOT imported by any production code. They are standalone validation
 artefacts. Do not delete them until the real model passes equivalent integration tests.
+
+### 8.8 MambaHybrid Experiment Strategy
+
+The old strict obligation to parameter-match MambaHybrid against SegResNet has
+been replaced by a staged comparison strategy.
+
+| Phase | Purpose | Exit criterion |
+|---|---|---|
+| Phase 1: SegResNet baseline | Preserve the validated CNN baseline. | SegResNet metrics, configuration, and checkpoint are recorded. |
+| Phase 2: Parameter-comparable MambaHybrid | Establish a capacity-controlled comparison. | Minimal MambaHybrid trains and produces a complete written result. |
+| Phase 3: Diagnosis | Identify why the minimal MambaHybrid underperforms, if it does. | Clear diagnosis: capacity, spatial bottleneck, z-context, optimisation, or data sampling. |
+| Phase 4: One targeted improvement | Test one architectural change that addresses the diagnosed weakness. | Ablation or comparison row against the minimal MambaHybrid. |
+| Phase 5: Best-effort MambaHybrid | Develop the strongest practical MambaHybrid under memory and deadline constraints. | Best MambaHybrid result, compared against SegResNet and, if needed, one heavier SegResNet. |
+
+Rules:
+
+- Parameter-comparable means approximately similar total parameter count. It
+  does not mean MambaHybrid should imitate SegResNet structurally.
+- Do not start architectural improvements before Phase 2 has a written result.
+- Do not introduce multiple architectural changes simultaneously.
+- Capacity scaling is a valid experiment, but it should be reported explicitly.
+- Always report both raw and post-processed metrics.
+- Always state the effective tumour-sample N.
