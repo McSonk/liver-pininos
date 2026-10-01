@@ -141,7 +141,7 @@ if __name__ == "__main__":
     fast_run = args.fast_run
     resume_path = args.resume
 
-    cfg = config.init(verbose=verbose)
+    cfg = config.init(verbose=verbose, fast_run=fast_run)
     configure_logging(cfg)
     logger = get_logger(__name__)
     # Install global hooks (for logging unhandled exceptions)
@@ -183,7 +183,7 @@ if __name__ == "__main__":
     logger.debug("Initializing model builder...")
 
     if fast_run or config.is_limited_env(include_vram=True):
-        logger.info("Limited environment detected. Using a subset of the data for quick testing.")
+        logger.info("Fast-run or limited environment detected. Using a subset of the data for quick testing.")
         train_files = train_files[:2]  # Use only 2 samples for training
         val_files = val_files[:2]      # Use only 2 samples for validation
 

@@ -187,7 +187,7 @@ class Config:
 # Module-level singleton (lazy)
 _config: Config = None
 
-def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
+def init(verbose: bool = False, mode: Mode = Mode.TRAIN, fast_run: bool = False) -> Config:
     global _config
     if _config is not None:
         if _config.MODE != mode:
@@ -507,6 +507,13 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
         sliding_window_batch_size = cloud_specific["sliding_window_batch_size"]
         warmup_epochs = cloud_specific["warmup_epochs"]
         cosine_eta_min = cloud_specific["cosine_eta_min"]
+
+    # -----------------------------------------------------------------------------
+    # Fast-run override
+    # -----------------------------------------------------------------------------
+    if fast_run:
+        print("[Config] Fast-run mode enabled. Overriding NUM_EPOCHS to 2.")
+        num_epochs = 2
 
     # Ensure warmup does not exceed the total number of epochs.
     # This matters for short debug runs or low-resource cloud fallbacks.
