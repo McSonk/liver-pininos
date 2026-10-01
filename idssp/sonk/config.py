@@ -23,6 +23,7 @@ class AvailableModels(str, Enum):
     SEG_RES_NET = "seg-res-net"
     SWIN_UNETR = "swin-unetr"
     SWIN_UNETR_PRETRAIN = "swin-unetr-pretrain"
+    MAMBA_HYBRID_25D = "mamba-hybrid-25d"
 
 class Mode(str, Enum):
     """
@@ -33,9 +34,9 @@ class Mode(str, Enum):
 
 # Some constant definitions
 
-VERSION_STR = "2.6.1"
+VERSION_STR = "3.1.0"
 '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
-MODEL_TO_USE = AvailableModels.SEG_RES_NET
+MODEL_TO_USE = AvailableModels.MAMBA_HYBRID_25D
 '''The model architecture to use. Choose from the AvailableModels enum.'''
 
 RESOURCE_INTENSIVE_MODELS = {
@@ -184,7 +185,7 @@ class Config:
 # Module-level singleton (lazy)
 _config: Config = None
 
-def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
+def init(verbose: bool = False, mode: Mode = Mode.TRAIN, fast_run: bool = False) -> Config:
     global _config
     if _config is not None:
         if _config.MODE != mode:
@@ -500,6 +501,13 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN) -> Config:
         sliding_window_batch_size = cloud_specific["sliding_window_batch_size"]
         warmup_epochs = cloud_specific["warmup_epochs"]
         cosine_eta_min = cloud_specific["cosine_eta_min"]
+
+    # -----------------------------------------------------------------------------
+    # Fast-run override
+    # -----------------------------------------------------------------------------
+    if fast_run:
+        print("[Config] Fast-run mode enabled. Overriding NUM_EPOCHS to 2.")
+        num_epochs = 2
 
     # Ensure warmup does not exceed the total number of epochs.
     # This matters for short debug runs or low-resource cloud fallbacks.

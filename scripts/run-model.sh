@@ -17,6 +17,10 @@ PROJECT_NAME="liver-pininos"
 VENV_DIR="${HOME}/denv"
 PROJECT_DIR="${HOME}/${PROJECT_NAME}"
 
+# Default Python executable (can be overridden with --python)
+DEFAULT_PYTHON="${VENV_DIR}/bin/python"
+PYTHON_BIN="${DEFAULT_PYTHON}"
+
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_DIR="${HOME}/jobs"
 LOG_FILE="${LOG_DIR}/train_${TIMESTAMP}.log"
@@ -39,11 +43,15 @@ Options:
   -fr, --fast-run       Enable fast run mode with a smaller subset of the data.
   -r, --resume PATH     Resume training from an existing checkpoint file.
                         The provided file path must exist.
+  -p, --python PATH     Python executable to use for training.
+                        Default: ${DEFAULT_PYTHON}.
+                        Example: --python "\${HOME}/mamba-env/bin/python".
 
 Examples:
   $(basename "$0")
   $(basename "$0") -v -fr
   $(basename "$0") -r /path/to/best_model.pth
+  $(basename "$0") --python "\${HOME}/mamba-env/bin/python"
 EOF
 }
 
@@ -78,6 +86,14 @@ while [[ $# -gt 0 ]]; do
             fi
             shift 2
             ;;
+        -p|--python)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: --python requires a file path argument." >&2
+                exit 1
+            fi
+            PYTHON_BIN="$2"
+            shift 2
+            ;;
         *)
             echo "Error: Unknown option: $1" >&2
             usage
@@ -85,6 +101,22 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Resolve the selected Python executable before changing directories.
+PYTHON_BIN="${PYTHON_BIN/#\~/$HOME}"
+
+# If a bare command name was supplied, resolve it from PATH.
+if [[ "$PYTHON_BIN" != */* ]]; then
+    if resolved_python="$(command -v -- "$PYTHON_BIN")"; then
+        PYTHON_BIN="$resolved_python"
+    fi
+fi
+
+# Make the path absolute without resolving symlinks, because venv/conda
+# launchers may rely on the original executable path.
+if [[ "$PYTHON_BIN" != /* ]]; then
+    PYTHON_BIN="${PWD}/${PYTHON_BIN}"
+fi
 
 # ==============================================================================
 # EXECUTION
@@ -128,13 +160,23 @@ fi
 mkdir -p "$LOG_DIR"
 cd "$PROJECT_DIR"
 
-# 3. Activate virtual environment
-if [ -f "${VENV_DIR}/bin/activate" ]; then
-    source "${VENV_DIR}/bin/activate"
-else
-    echo "Error: Virtual environment not found at ${VENV_DIR}" >&2
+# 3. Validate selected Python environment
+if [[ -d "$PYTHON_BIN" ]]; then
+    echo "Error: --python expects an executable file, but this is a directory: $PYTHON_BIN" >&2
+    echo "Hint: try ${PYTHON_BIN%/}/bin/python" >&2
     exit 1
 fi
+
+if [[ ! -f "$PYTHON_BIN" || ! -x "$PYTHON_BIN" ]]; then
+    echo "Error: Python executable not found or not executable: $PYTHON_BIN" >&2
+    exit 1
+fi
+
+ENV_BIN_DIR="$(dirname -- "$PYTHON_BIN")"
+ENV_EXPORT_CMD="export PATH=\"${ENV_BIN_DIR}:${PATH}\" && "
+export PATH="${ENV_BIN_DIR}:${PATH}"
+
+echo "Using Python: $PYTHON_BIN"
 
 # 4. Cleanup old sessions
 echo "Cleaning up old thesis training sessions..."
@@ -185,8 +227,8 @@ if command -v tmux &> /dev/null; then
     # Construct the command
     CMD="cd \"${PROJECT_DIR}\" && \
         ${GPU_EXPORT_CMD} \
-        . \"${VENV_DIR}/bin/activate\" && \
-        python -u main.py ${TMUX_PY_ARGS} 2>&1 | tee \"${LOG_FILE}\""
+        ${ENV_EXPORT_CMD} \
+        \"${PYTHON_BIN}\" -u main.py ${TMUX_PY_ARGS} 2>&1 | tee \"${LOG_FILE}\""
 
     # Start the session
     tmux new-session -d -s "$SESSION" "$CMD"
@@ -210,7 +252,7 @@ if command -v tmux &> /dev/null; then
     fi
 else
     echo "tmux not found. Falling back to nohup..."
-    nohup python -u main.py "${NOHUP_PY_ARGS[@]}" > "${LOG_FILE}" 2>&1 &
+    nohup "$PYTHON_BIN" -u main.py ${NOHUP_PY_ARGS[@]+"${NOHUP_PY_ARGS[@]}"} > "${LOG_FILE}" 2>&1 &
     echo "Training started in background (PID: $!)"
     echo "Follow logs live:    tail -f ${LOG_FILE}"
     echo "Graceful stop:       kill $!"

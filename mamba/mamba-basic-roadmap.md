@@ -13,6 +13,28 @@ The dummy-tensor prototype phase is complete. The reshape logic, Mamba2 forward 
 - Prototype phase complete: dummy-tensor prototypes validated the reshape logic, Mamba2 forward shape contract, AMP compatibility, and fusion path **before** writing the real model code in `idssp/sonk/model/models.py`.
 - Environment isolation: use `~/mamba-env` for all Mamba execution. Keep `~/denv` clean and do not install `mamba-ssm` or `causal-conv1d` into the baseline environment.
 
+## Development and comparison strategy
+
+The MambaHybrid is developed in stages. The first real model is not expected to
+be the final strongest architecture. Its purpose is to provide a controlled and
+reproducible comparison point.
+
+1. Implement a minimal MambaHybrid with a total parameter count approximately
+   comparable to SegResNet.
+2. Treat this parameter-comparable model as a scientific control, not as the
+   final best-effort model.
+3. Produce a complete written result for the parameter-comparable model before
+   exploring architectural improvements.
+4. After that result exists, improve MambaHybrid one change at a time. Each
+   change should have a hypothesis and an ablation or comparison row.
+5. The final best-effort MambaHybrid may exceed SegResNet in parameter count,
+   provided it remains feasible on the A100 and within the graduation deadline.
+6. If the final MambaHybrid is substantially larger than the current SegResNet,
+   train at most one heavier SegResNet variant as a capacity reference.
+
+This strategy preserves scientific fairness while allowing the MambaHybrid to
+reach its best practical performance.
+
 ## Config constants relevant to shapes
 
 - `TRAIN_PATCH_SIZE = (128, 128, 128)` (X, Y, Z) on the A100/cloud config. *(Note: `RandZoomd` defaults to `keep_size=True`, guaranteeing the spatial dimensions remain exactly 128³ after augmentation.)*
@@ -85,8 +107,11 @@ During the prototype phase, any assertion failure was treated as a bug in the pr
 - [ ] Re-run the row-order canary against the **real** Stage 9 decoder once it is implemented. The placeholder decoder canary does not retire this obligation.
 - [ ] Add `MAMBA_HYBRID_25D` to `AvailableModels` and implement the `get_model()` factory branch only with explicit instruction. `MODEL_TO_USE` must remain `SEG_RES_NET` unless explicitly changed.
 - [ ] Include the ablation flag `use_z_context: bool = True`. When `False`, bypass Stages 3–8 and feed the bottleneck directly to the decoder. Decoder input channels must remain `C_bot` regardless of the flag value.
-- [ ] Parameter-match the base channel width against SegResNet before comparison experiments.
-- [ ] Decide bidirectionality before the first real training run. Training already exposes the causal model to both z-orientations through `RandFlipd(spatial_axis=2)`, but validation/inference remain single-direction unless changed.
+- [ ] Implement a minimal MambaHybrid controlled baseline with a total parameter count approximately comparable to SegResNet. This is a scientific control, not the final best-effort model.
+- [ ] Record a complete written result for the parameter-comparable MambaHybrid before architectural exploration. This should include parameter count, configuration snapshot, checkpoint path, raw metrics, post-processed metrics, tumour-sample N, and a brief failure analysis.
+- [ ] After the controlled baseline result exists, develop best-effort MambaHybrid variants one change at a time. Each change requires a hypothesis and a comparison or ablation row.
+- [ ] If the final best-effort MambaHybrid is substantially larger than the current SegResNet baseline, train at most one heavier SegResNet variant as a capacity reference unless explicitly instructed otherwise.
+- [ ] Keep the first real training implementation single-direction/causal unless explicitly instructed otherwise. Bidirectionality remains an extension candidate and should not delay the minimal controlled baseline.
 - [ ] Align the `~/mamba-env` PyTorch version with the baseline pin before serious training runs.
 - [ ] Ensure local `--fast-run` smoke tests bypass the Mamba branch cleanly.
 
@@ -94,10 +119,10 @@ During the prototype phase, any assertion failure was treated as a bug in the pr
 
 | Item | Toy decision (now) | Later option / improvement | When to revisit |
 |---|---|---|---|
-| Mamba directionality | Single forward pass (causal: each slice sees only slices ≤ it) | Bidirectional: second pass over reversed z, sum the outputs to keep all shapes unchanged | Note that `RandFlipd(spatial_axis=2)` already exposes the causal model to both z-orientations during training, but validation/inference remain single-direction — bidirectionality should be decided before the first real training run, not after |
+| Mamba directionality | Single forward pass (causal: each slice sees only slices ≤ it) | Bidirectional: second pass over reversed z, sum the outputs to keep all shapes unchanged | Extension candidate after the minimal controlled baseline. Do not delay the first real implementation unless explicitly instructed. Note that `RandFlipd(spatial_axis=2)` already exposes the causal model to both z-orientations during training, but validation/inference remain single-direction. |
 | Mamba variant | `mamba_ssm.Mamba2` as primary variant | Fallback to `mamba_ssm.Mamba` (v1) only if Mamba2 integration proves difficult | During real model implementation; do not re-litigate unless a concrete integration problem appears |
 | Mamba constructor | Minimal constructor: `Mamba2(d_model=...)` | Pass additional Mamba2 arguments only after verifying the installed version's signature | If Mamba2 behaviour needs tuning |
-| Base channel width | 16 in the full-size settled table; smaller widths used in prototype scripts for speed | 32 or 64, chosen to roughly parameter-match the SegResNet baseline for a fair comparison | Before the comparison experiments in the thesis |
+| Base channel width | 16 in the full-size settled table; smaller widths used in prototype scripts for speed | First choose a width that gives a minimal MambaHybrid approximately comparable to SegResNet. Later, scale width or depth for a best-effort MambaHybrid under A100 memory and deadline constraints. | Before the parameter-comparable controlled baseline, and again before the best-effort phase. |
 | Pooling into the sequence | Global average pool | Max pool, attention pool, or a coarse spatial grid (e.g. 4 tokens per slice) for a richer sequence | Extension chapter candidate; not the first version |
 | Fusion point | Bottleneck only | Multi-level injection into skip connections | Extension; only after the single-point version trains cleanly |
 | Fusion mechanism | Broadcast + concat + 1×1 conv | FiLM modulation or residual addition | Deferred; higher debug risk |
@@ -111,3 +136,42 @@ During the prototype phase, any assertion failure was treated as a bug in the pr
 | Validation memory | Rely on the existing OOM fallback in `training.py` / `inferer.py` | Check VRAM at `sw_batch_size=16` → 2048 merged rows; lower `SLIDING_WINDOW_BATCH_SIZE` if needed | First full-volume validation run |
 | Ablation switch | A simple boolean flag (e.g. `use_z_context`) that bypasses stages 3–8 and feeds the bottleneck straight to the decoder | Separate registered model variant if the flag proves awkward | When writing `models.py` |
 | Pipeline integration | Prototype validation complete; production integration pending | Add an enum entry and a `get_model()` branch only with explicit instruction; `MODEL_TO_USE` default stays `SEG_RES_NET` per `AGENTS.md` | When starting the real model implementation |
+| Convolutional block design | Double conv per level (standard UNet) | Single conv for MVP; residual blocks if deeper; depthwise separable for efficiency | If encoder capacity is suspected bottleneck, or if training instability is observed, or when parameter-matching requires a leaner encoder |
+| Comparison strategy | Parameter-comparable controlled baseline first | Best-effort MambaHybrid after the controlled baseline result; optionally one heavier SegResNet reference if the final MambaHybrid is substantially larger | After the parameter-comparable MambaHybrid has a complete written result. |
+
+
+
+## Normalisation decision for the 2.5D Mamba-hybrid — revised
+
+Decision: keep the current preprocessing unchanged.
+
+Current pipeline:
+- Clip CT to [-175, 250] HU.
+- Scale clipped intensities to [0, 1].
+- Use the same deterministic transforms for training, validation, and inference.
+
+Do not introduce Z-score normalisation for the Mamba-hybrid model at this stage.
+
+Reasons:
+1. Mamba2 receives encoder bottleneck features, not raw CT intensities.
+2. Changing preprocessing only for Mamba would confound architectural comparison.
+3. The current pipeline assumes zero means background/air in several places:
+   - CropForegroundd uses x > 0.
+   - RandCropByPosNegLabeld uses image_threshold=0.
+   - SpatialPadd pads with 0.
+4. Per-volume Z-score removes absolute HU information that may be useful.
+5. The expected benefit is speculative and has not been observed as a failure mode.
+
+If Mamba training is unstable, investigate in this order:
+1. Internal normalisation in the 2D encoder/decoder.
+2. Avoid BatchNorm over merged B*Z rows; prefer InstanceNorm2d or torch.nn.GroupNorm.
+3. Test LayerNorm(C_bot) before Mamba2 in a toy run.
+4. Adjust learning rate/warm-up.
+5. Only then consider input normalisation as a full ablation applied to all models.
+
+If a future preprocessing variant is introduced:
+- Add it to config.
+- Include it in PersistentDataset cache keys.
+- Include it in config_snapshot.
+- Include it in inference strict-key validation.
+- Retrain or explicitly isolate the comparison.

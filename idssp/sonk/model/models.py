@@ -6,6 +6,7 @@ import torch.nn as nn
 from monai.networks.nets import SegResNet, SwinUNETR, UNet
 
 from idssp.sonk import config
+from idssp.sonk.model.mamba_hybrid import MambaHybrid
 from idssp.sonk.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -189,10 +190,32 @@ def get_swin_unetr_pretrain(config_obj: config.Config) -> SwinUNETR:
 
     return model
 
+def get_mamba_hybrid(config_obj: config.Config) -> MambaHybrid:
+    '''Creates the 2.5D Mamba-hybrid model.
+    
+    Phase 2 controlled baseline: base_channels=40 gives ~15.7M parameters,
+    approximately 0.84x the SegResNet baseline (18.8M).
+    See AGENTS.md Section 2.1 (parameter-comparable MambaHybrid control).
+    '''
+
+    base_channels = 40
+
+    logger.info("Creating MambaHybrid model with %d output classes "
+                "and base_channels=%d.",
+                config_obj.NUM_CLASSES, base_channels)
+
+    return MambaHybrid(
+        in_channels=1,
+        num_classes=config_obj.NUM_CLASSES,
+        base_channels=base_channels,
+        use_z_context=True,
+    )
+
 def get_model(cfg: Optional[config.Config] = None) -> nn.Module:
     '''Factory function to create the segmentation model based
        on the current configuration.'''
     cfg = cfg or config.get()
+
     if cfg.MODEL == config.AvailableModels.U_NET:
         return get_unet(cfg)
     elif cfg.MODEL == config.AvailableModels.SEG_RES_NET:
@@ -201,5 +224,7 @@ def get_model(cfg: Optional[config.Config] = None) -> nn.Module:
         return get_swin_unetr(cfg)
     elif cfg.MODEL == config.AvailableModels.SWIN_UNETR_PRETRAIN:
         return get_swin_unetr_pretrain(cfg)
+    elif cfg.MODEL == config.AvailableModels.MAMBA_HYBRID_25D:
+        return get_mamba_hybrid(cfg)
     else:
         raise ValueError(f"Unsupported model type: {cfg.MODEL}")

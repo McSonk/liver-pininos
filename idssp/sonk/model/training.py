@@ -403,7 +403,7 @@ class ModelBuilder:
             self.optimizer,
             start_factor=0.1,
             end_factor=1.0,
-            total_iters=warm_epochs - 1
+            total_iters=max(1, warm_epochs - 1)
         )
         # TODO: UNDERSTAND THIS
         t_max = self.config.NUM_EPOCHS - self.config.WARMUP_EPOCHS
@@ -422,7 +422,7 @@ class ModelBuilder:
                 self.config.WARMUP_EPOCHS
             )
             logger.info("Eta min for cosine annealing: %e", self.config.COSINE_ETA_MIN)
-        logger.info("Warmup scheduler: LinearLR (start_factor=0.1, end_factor=1.0, total_iters=%d)", warm_epochs - 1)
+        logger.info("Warmup scheduler: LinearLR (start_factor=0.1, end_factor=1.0, total_iters=%d)", max(1, warm_epochs - 1))
         cosine = CosineAnnealingLR(
             self.optimizer,
             T_max=t_max,
@@ -619,7 +619,7 @@ class ModelBuilder:
                 self.optimizer,
                 start_factor=0.1,
                 end_factor=1.0,
-                total_iters=warm_epochs - 1
+                total_iters=max(1, warm_epochs - 1)
             )
             cosine = CosineAnnealingLR(
                 self.optimizer,
