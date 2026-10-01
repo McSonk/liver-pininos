@@ -111,6 +111,8 @@ During the prototype phase, any assertion failure was treated as a bug in the pr
 | Validation memory | Rely on the existing OOM fallback in `training.py` / `inferer.py` | Check VRAM at `sw_batch_size=16` → 2048 merged rows; lower `SLIDING_WINDOW_BATCH_SIZE` if needed | First full-volume validation run |
 | Ablation switch | A simple boolean flag (e.g. `use_z_context`) that bypasses stages 3–8 and feeds the bottleneck straight to the decoder | Separate registered model variant if the flag proves awkward | When writing `models.py` |
 | Pipeline integration | Prototype validation complete; production integration pending | Add an enum entry and a `get_model()` branch only with explicit instruction; `MODEL_TO_USE` default stays `SEG_RES_NET` per `AGENTS.md` | When starting the real model implementation |
+| Convolutional block design | Double conv per level (standard UNet) | Single conv for MVP; residual blocks if deeper; depthwise separable for efficiency | If encoder capacity is suspected bottleneck, or if training instability is observed, or when parameter-matching requires a leaner encoder |
+
 
 
 ## Normalisation decision for the 2.5D Mamba-hybrid — revised
