@@ -23,6 +23,7 @@ class AvailableModels(str, Enum):
     SEG_RES_NET = "seg-res-net"
     SWIN_UNETR = "swin-unetr"
     SWIN_UNETR_PRETRAIN = "swin-unetr-pretrain"
+    MAMBA_HYBRID_25D = "mamba-hybrid-25d"
 
 class Mode(str, Enum):
     """
@@ -33,9 +34,9 @@ class Mode(str, Enum):
 
 # Some constant definitions
 
-VERSION_STR = "3.0.2"
+VERSION_STR = "3.1.0"
 '''Version of the training pipeline (and its config) to keep track of changes and experiments.'''
-MODEL_TO_USE = AvailableModels.SEG_RES_NET
+MODEL_TO_USE = AvailableModels.MAMBA_HYBRID_25D
 '''The model architecture to use. Choose from the AvailableModels enum.'''
 
 RESOURCE_INTENSIVE_MODELS = {
@@ -70,9 +71,6 @@ class Config:
        and experiments.'''
     MODEL: AvailableModels = MODEL_TO_USE
     '''The model architecture to use. Choose from the AvailableModels enum.'''
-    TEMP_MAMBA_HYBRID: bool = False
-    '''Temporary unlisted integration flag for the MambaHybrid MVP.
-       Do not use for real experiments, checkpoint resume, or inference.'''
     MODE: Mode = Mode.TRAIN
     '''The mode of operation for the training pipeline. Defaults to TRAIN.'''
 
@@ -232,10 +230,6 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN, fast_run: bool = False)
     # ---------------------------------------
     # `hc_gpu` is a flag to indicate if we are on the High-Compute GPU.
     # Note that this only means the GPU has more than 30GB of VRAM.
-
-    # Temporary integration flag for the unlisted MambaHybrid MVP.
-    # Set to True only for throwaway integration smoke tests, then revert to False.
-    temp_mamba_hybrid = True
 
     # num_classes = 2 or 3
     num_classes = 3
@@ -642,7 +636,6 @@ def init(verbose: bool = False, mode: Mode = Mode.TRAIN, fast_run: bool = False)
         ENABLE_TELEGRAM_NOTIFICATIONS=enable_telegram_notifications,
         TELEGRAM_BOT_TOKEN=telegram_bot_token,
         TELEGRAM_CHAT_ID=telegram_chat_id,
-        TEMP_MAMBA_HYBRID=temp_mamba_hybrid,
     )
 
     # Final validation to catch any issues with the combined configuration
@@ -692,7 +685,6 @@ def to_dict(config: Optional[Config] = None) -> dict:
     return {
         "RUN_ID": config.RUN_ID,
         "MODEL": config.MODEL.value,
-        "TEMP_MAMBA_HYBRID": config.TEMP_MAMBA_HYBRID,
         "VERSION": config.VERSION,
         "cpu_memory": config.cpu_memory,
         "container_memory": config.container_memory,

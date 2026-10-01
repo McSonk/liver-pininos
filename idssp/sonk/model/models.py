@@ -190,16 +190,18 @@ def get_swin_unetr_pretrain(config_obj: config.Config) -> SwinUNETR:
 
     return model
 
-def get_mamba_hybrid_temp(config_obj: config.Config) -> MambaHybrid:
-    '''Creates the temporary MVP MambaHybrid model for integration testing only.'''
+def get_mamba_hybrid(config_obj: config.Config) -> MambaHybrid:
+    '''Creates the 2.5D Mamba-hybrid model.
+    
+    Phase 2 controlled baseline: base_channels=40 gives ~15.7M parameters,
+    approximately 0.84x the SegResNet baseline (18.8M).
+    See AGENTS.md Section 2.1 (parameter-comparable MambaHybrid control).
+    '''
 
-    # Phase 2 controlled baseline: base_channels=40 gives ~15.7M parameters,
-    # approximately 0.84x the SegResNet baseline (18.8M).
-    # See AGENTS.md Section 2.1 (parameter-comparable MambaHybrid control).
     base_channels = 40
 
-    logger.info("Creating temporary MambaHybrid model with %d output classes" \
-    "and base_channels=%d for integration testing.",
+    logger.info("Creating MambaHybrid model with %d output classes "
+                "and base_channels=%d.",
                 config_obj.NUM_CLASSES, base_channels)
 
     return MambaHybrid(
@@ -214,18 +216,7 @@ def get_model(cfg: Optional[config.Config] = None) -> nn.Module:
        on the current configuration.'''
     cfg = cfg or config.get()
 
-    # TEMPORARY integration branch.
-    # This is intentionally not added to AvailableModels and must not be used
-    # for real experiments, checkpoint resume, or inference until the official
-    # model registration is approved.
-    if cfg.TEMP_MAMBA_HYBRID:
-        logger.warning(
-            "Temporary TEMP_MAMBA_HYBRID flag is enabled. "
-            "Using MambaHybrid MVP instead of %s.",
-            cfg.MODEL.value,
-        )
-        return get_mamba_hybrid_temp(cfg)
-    elif cfg.MODEL == config.AvailableModels.U_NET:
+    if cfg.MODEL == config.AvailableModels.U_NET:
         return get_unet(cfg)
     elif cfg.MODEL == config.AvailableModels.SEG_RES_NET:
         return get_seg_res_net(cfg)
@@ -233,5 +224,7 @@ def get_model(cfg: Optional[config.Config] = None) -> nn.Module:
         return get_swin_unetr(cfg)
     elif cfg.MODEL == config.AvailableModels.SWIN_UNETR_PRETRAIN:
         return get_swin_unetr_pretrain(cfg)
+    elif cfg.MODEL == config.AvailableModels.MAMBA_HYBRID_25D:
+        return get_mamba_hybrid(cfg)
     else:
         raise ValueError(f"Unsupported model type: {cfg.MODEL}")
