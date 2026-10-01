@@ -192,13 +192,15 @@ def get_swin_unetr_pretrain(config_obj: config.Config) -> SwinUNETR:
 
 def get_mamba_hybrid_temp(config_obj: config.Config) -> MambaHybrid:
     '''Creates the temporary MVP MambaHybrid model for integration testing only.'''
-    logger.info("Creating temporary MambaHybrid model with %d output classes.",
-                config_obj.NUM_CLASSES)
 
     # Phase 2 controlled baseline: base_channels=40 gives ~15.7M parameters,
     # approximately 0.84x the SegResNet baseline (18.8M).
     # See AGENTS.md Section 2.1 (parameter-comparable MambaHybrid control).
     base_channels = 40
+
+    logger.info("Creating temporary MambaHybrid model with %d output classes" \
+    "and base_channels=%d for integration testing.",
+                config_obj.NUM_CLASSES, base_channels)
 
     return MambaHybrid(
         in_channels=1,
