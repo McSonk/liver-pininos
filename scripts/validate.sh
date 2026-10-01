@@ -17,6 +17,10 @@ PROJECT_NAME="liver-pininos"
 VENV_DIR="${HOME}/denv"
 PROJECT_DIR="${HOME}/${PROJECT_NAME}"
 
+# Default Python executable (can be overridden with --python)
+DEFAULT_PYTHON="${VENV_DIR}/bin/python"
+PYTHON_BIN="${DEFAULT_PYTHON}"
+
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_DIR="${HOME}/jobs"
 LOG_FILE="${LOG_DIR}/inference_${TIMESTAMP}.log"
@@ -41,12 +45,16 @@ Options:
   -o, --output-dir PATH    Directory to save the raw NIfTI predictions.
                            Defaults to <RUN_DIR>/test_predictions if not provided.
                            The path is converted to absolute.
+  -p, --python PATH        Python executable to use for inference.
+                           Default: ${DEFAULT_PYTHON}.
+                           Example: --python "\${HOME}/mamba-env/bin/python".
   
   Any unrecognised arguments are passed directly to do_inference.py.
 
 Examples:
   $(basename "$0") --checkpoint /path/to/best_model.pth
   $(basename "$0") -chk ./checkpoints/last_epoch.pth -o /path/to/custom/output
+  $(basename "$0") --checkpoint /path/to/best_model.pth --python "\${HOME}/mamba-env/bin/python"
 EOF
 }
 
@@ -109,6 +117,14 @@ while [[ "$#" -gt 0 ]]; do
             echo "         Post-processing is applied during local evaluation (do_evaluation.py)." >&2
             shift
             ;;
+        -p|--python)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: --python requires a file path argument." >&2
+                exit 1
+            fi
+            PYTHON_BIN="$2"
+            shift 2
+            ;;
         *)
             # Pass any other argument directly to Python
             ARGS_FOR_PYTHON+=("$1")
@@ -121,6 +137,22 @@ if [ -z "$CHECKPOINT_PATH" ]; then
     echo "Error: --checkpoint is required." >&2
     usage
     exit 1
+fi
+
+# Resolve the selected Python executable before changing directories.
+PYTHON_BIN="${PYTHON_BIN/#\~/$HOME}"
+
+# If a bare command name was supplied, resolve it from PATH.
+if [[ "$PYTHON_BIN" != */* ]]; then
+    if resolved_python="$(command -v -- "$PYTHON_BIN")"; then
+        PYTHON_BIN="$resolved_python"
+    fi
+fi
+
+# Make the path absolute without resolving symlinks, because venv/conda
+# launchers may rely on the original executable path.
+if [[ "$PYTHON_BIN" != /* ]]; then
+    PYTHON_BIN="${PWD}/${PYTHON_BIN}"
 fi
 
 # ==============================================================================
@@ -156,13 +188,23 @@ fi
 mkdir -p "$LOG_DIR"
 cd "$PROJECT_DIR"
 
-# 3. Activate virtual environment
-if [ -f "${VENV_DIR}/bin/activate" ]; then
-    source "${VENV_DIR}/bin/activate"
-else
-    echo "Error: Virtual environment not found at ${VENV_DIR}" >&2
+# 3. Validate selected Python environment
+if [[ -d "$PYTHON_BIN" ]]; then
+    echo "Error: --python expects an executable file, but this is a directory: $PYTHON_BIN" >&2
+    echo "Hint: try ${PYTHON_BIN%/}/bin/python" >&2
     exit 1
 fi
+
+if [[ ! -f "$PYTHON_BIN" || ! -x "$PYTHON_BIN" ]]; then
+    echo "Error: Python executable not found or not executable: $PYTHON_BIN" >&2
+    exit 1
+fi
+
+ENV_BIN_DIR="$(dirname -- "$PYTHON_BIN")"
+ENV_EXPORT_CMD="export PATH=\"${ENV_BIN_DIR}:${PATH}\" && "
+export PATH="${ENV_BIN_DIR}:${PATH}"
+
+echo "Using Python: $PYTHON_BIN"
 
 # 4. Cleanup old sessions
 echo "Cleaning up old thesis inference sessions..."
@@ -219,8 +261,8 @@ if command -v tmux &> /dev/null; then
     # Construct the command
     CMD="cd \"${PROJECT_DIR}\" && \
         ${GPU_EXPORT_CMD} \
-        . \"${VENV_DIR}/bin/activate\" && \
-        python -u do_inference.py ${TMUX_PY_ARGS} 2>&1 | tee \"${LOG_FILE}\""
+        ${ENV_EXPORT_CMD} \
+        \"${PYTHON_BIN}\" -u do_inference.py ${TMUX_PY_ARGS} 2>&1 | tee \"${LOG_FILE}\""
 
     # Start the session
     tmux new-session -d -s "$SESSION" "$CMD"
@@ -244,7 +286,7 @@ if command -v tmux &> /dev/null; then
     fi
 else
     echo "tmux not found. Falling back to nohup..."
-    nohup python -u do_inference.py "${NOHUP_PY_ARGS[@]}" > "${LOG_FILE}" 2>&1 &
+    nohup "$PYTHON_BIN" -u do_inference.py "${NOHUP_PY_ARGS[@]}" > "${LOG_FILE}" 2>&1 &
     echo "Test inference started in background (PID: $!)"
     echo "Follow logs live:    tail -f ${LOG_FILE}"
     echo "Graceful stop:       kill $!"
